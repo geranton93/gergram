@@ -41,6 +41,12 @@ enum ChatMessageShotAction {
             guard let interaction else { return }
             export(ids: ids, selection: selection, interaction: interaction, destination: .file)
         }, itemImage: MenuAnimation.menu_save_as.value))
+        menu.addItem(ContextSeparatorItem())
+        menu.addItem(ContextMenuItem(localizedString("Gergram.Chat.MessageShotShowTimestamps"), handler: {
+            var options = MessageShotOptions()
+            options.showsTimestamps.toggle()
+            options.save()
+        }, state: MessageShotOptions().showsTimestamps ? .on : .off))
         let item = ContextMenuItem(localizedString("Gergram.Chat.MessageShot"), handler: {}, itemImage: MenuAnimation.menu_copy_media.value)
         item.submenu = menu
         return item
@@ -91,6 +97,7 @@ enum ChatMessageShotAction {
     private static func export(ids: Set<MessageId>, selection: Set<MessageId>, interaction: ChatInteraction, destination: Destination) {
         guard supportsChat(interaction), (interaction.presentation.selectionState?.selectedIds ?? []) == selection else { return }
 
+        let options = MessageShotOptions()
         let context = interaction.interactionContext
         let location = interaction.chatLocation
         let mode = interaction.mode
@@ -125,7 +132,7 @@ enum ChatMessageShotAction {
                 return
             }
             guard messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
-                  let png = MessageShotRenderer.png(rows: rows(for: messages, interaction: interaction), background: theme.colors.background) else {
+                  let png = MessageShotRenderer.png(rows: rows(for: messages, interaction: interaction, options: options), background: theme.colors.background) else {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotRenderFailed"))
                 return
             }
@@ -164,13 +171,17 @@ enum ChatMessageShotAction {
         }
     }
 
-    private static func rows(for messages: [Message], interaction: ChatInteraction) -> [MessageShotRenderer.Row] {
+    private static func rows(for messages: [Message], interaction: ChatInteraction, options: MessageShotOptions) -> [MessageShotRenderer.Row] {
         let context = interaction.interactionContext
         let palette = theme
         return messages.sorted { $0.index < $1.index }.map { message in
             let incoming = message.isIncoming(context.account, true)
-            let date = DateSelectorUtil.chatFullDateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(message.timestamp) - context.timeDifference))
-            let title = [message.effectiveAuthor?.displayTitle, date].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " • ")
+            let title = options.headerTitle(
+                author: message.effectiveAuthor?.displayTitle,
+                timestamp: DateSelectorUtil.chatFullDateFormatter.string(
+                    from: Date(timeIntervalSince1970: TimeInterval(message.timestamp) - context.timeDifference)
+                )
+            )
             let header = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: palette.chat.grayText(incoming, true)])
 
             let text = ChatMessageItem.applyMessageEntities(with: message.attributes, for: message.text, message: message, context: context, fontSize: palette.fontSize, openInfo: { _, _, _, _ in }, textColor: palette.chat.textColor(incoming, true), linkColor: palette.chat.linkColor(incoming, true), monospacedPre: palette.chat.monospacedPreColor(incoming, true), monospacedCode: palette.chat.monospacedCodeColor(incoming, true), isDark: palette.colors.isDark, bubbled: true, ignoreLinks: true)

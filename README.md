@@ -1,91 +1,48 @@
 # gergram
 
-gergram is an unofficial native macOS client based on Telegram for macOS. The project ports AyuGram Desktop behavior into the Swift client.
+gergram is an unofficial native macOS client for Telegram. It extends the Swift and AppKit codebase of [Telegram for macOS](https://github.com/TelegramMessenger/telegram-macos).
 
-Start with the [development guide](docs/fork-development.md), [AyuGram parity catalog](docs/ayugram-parity.md), and [repository instructions](AGENTS.md). The upstream README follows.
+The development branch contains the changes below. The integrated macOS build and app-level verification are pending.
 
----
+## Changes in gergram
 
-<div align="center">
-  <img src="Telegram-Mac/Assets.xcassets/AppIcon.appiconset/Logo_1024.png"
-      width="125" 
-      height="125">
-  
-  <h2 align="center">Telegram for macOS</h2>
-</div>
+| Area | What gergram adds to Telegram for macOS |
+| --- | --- |
+| App identity | A gergram name and icon, its own bundle and app-group defaults, local configuration for API credentials and signing, and independent update settings. |
+| Profile IDs and dates | The existing profile ID option can display and copy the Bot API format for users, groups, and channels. User profiles show the registration month and year when Telegram supplies it. |
+| Chat folders | Account-local controls to hide and restore folders, show or hide All Chats, and show or hide folder unread badges. Visible folders can be reordered while hidden folders retain their positions in the saved order. A reachable default folder remains available. |
+| Local message visibility | Hide an individual message or album for the current session and restore hidden messages from the chat menu. The optional blocked-sender filter covers incoming messages in the transcript, including known forwarded and inline bot sources. Each chat can temporarily show its filtered messages. |
+| Message Shot | Copy or save a single message or a selection as a PNG from the message menu. The first renderer includes author and time labels, styled ordinary text, and media placeholders. It checks chat and message export permissions before rendering. |
+| Streamer Mode | A persistent app and menu-bar control requests capture exclusion across gergram windows and suppresses new chat and story notifications while active. Actual capture coverage depends on macOS and the sharing method. |
+| Discovery | Disable remote peer discovery in the main chat-list search while keeping local and message results. Hide the Similar Channels profile tab and start post-join recommendations collapsed. |
+| Bot button inspection | View or copy inline callback data from the message menu without activating the button. Binary payloads use Base64. |
+| Chat appearance | A compact unread divider surrounds its label. Message timestamps can show seconds in the current locale. |
 
-![Telegram macOS screenshot](images/tg.png)
+## Planned additions
 
-[**Telegram**](https://telegram.org) is a messaging app with a focus on speed and security. It’s superfast, simple, and free! This repo contains the official source code for [Telegram for macOS](https://macos.telegram.org/).
+| Area | What gergram adds |
+| --- | --- |
+| Message filters | Apply regular-expression rules globally or per chat, with import and export. Add sender-specific rules and extend filtering to remaining chat surfaces. |
+| Message images | Extend Message Shot with media rendering, rich-message layouts, and controls for themes, timestamps, reactions, and spoilers. |
+| Local message history | Keep an opt-in, account-scoped record of eligible ordinary messages previously seen on this Mac. Browse earlier versions and deletion records, set retention, and clear stored entries. |
+| Chat appearance | Add settings for bubble width and shape, avatar corners, monospace fonts, timestamp precision, and message context-menu visibility. |
+| Composer controls | Choose visible composer actions and media send confirmations. Reorder file attachments and restore edited captions to the draft after cancellation. |
+| On-device transcription | Transcribe received voice messages and round videos on the Mac with supported local recognition, with optional local model support planned separately. |
+| Message and bot tools | Inspect exact message identifiers and timestamps, and look up sticker and emoji pack authors where available. |
 
-## Get it
+## Build from source
 
-[![Download on the Mac App Store](images/mas_badge.png)](https://itunes.apple.com/us/app/telegram/id747648890?mt=12)
+Use a Mac with full Xcode, Homebrew, and a Rust toolchain. Initialize the pinned Git submodules from a checkout of gergram.
 
-### Using `mas-cli`
-
+```sh
+git submodule sync --recursive
+git submodule update --init --recursive
 ```
-mas install 747648890
-```
 
-### Manual download
+The build requires native framework preparation and a `Local.xcconfig` with the fork's API identity and signing team. Open `Telegram-Mac.xcworkspace` and select the `Telegram` scheme after preparation. [Development guide](docs/fork-development.md)
 
-If you would like, you can [download the non-MAS version](https://telegram.org/dl/macos).
+The implementation plan tracks each phase and its verification status. [Implementation plan](docs/development-plan.md)
 
-You can also [download the beta version](https://telegram.org/dl/macos/beta) if you want to try the latest features and you are prepared for bugs and crashes. If you are running the beta, join the [beta testing chat on Telegram](https://t.me/macswift) to report bugs.
+## Upstream and license
 
-## Contributors
-
-### Contributors on GitHub
-See [this repository’s contributors graph](https://github.com/macosswift/telegram/graphs/contributors).
-
-### Bugs and Suggestions
-You can report bug or suggestions feature for Telegram for macOS on [Telegram’s Bugs & Suggestions platform](https://bugs.telegram.org). Read [the platform tip](https://bugs.telegram.org/c/746) before creating first card.
-
-### Translations
-You can help translate Telegram for macOS on [Telegram’s translations platform](https://translations.telegram.org). Pick your language, then look for the macOS translation set.
-
-<!--### Third-party libraries-->
-<!--See [LIBRARIES](LIBRARIES.md).-->
-
-## Permissions
-Telegram strives to protect your privacy.  This app asks for as few permissions as possible:
-
-* **Microphone**: You can send voice messages and make audio calls with Telegram.
-* **Camera**: You can set your profile picture using your Mac’s iSight camera.
-* **Location**: You can send your location to friends.
-* **Outgoing network connections**: Telegram needs to connect to the internet to send your messages to your friends.
-* **Incoming network connections**: Telegram needs to accept incoming connections for peer-to-peer voice calls.
-* **User-selected files**: You can save files or images to your Mac.
-* **Downloads folder**: Telegram can automatically download files or images you receive.
-
-## Shortcuts
-With [Shortcuts](https://github.com/macosswift/telegram/wiki) you can learn how easy is navigate using your devices.
-
-## License
-Telegram for macOS is licensed under the GNU Public License, version 2.0. See [LICENSE](LICENSE) for more information.
-
-## Forking
-You can fork this application and make something awesome! Make sure that your fork follows these five requirements:
-
-1. **Do** [get your own API ID](https://core.telegram.org/api/obtaining_api_id).
-2. **Don’t** call your fork **Telegram** — or at least make sure your users understand that yours is unofficial.
-3. **Don’t** use our standard logo (white paper plane in a blue circle) for your fork.
-3. **Do** read and follow our [security guidelines](https://core.telegram.org/mtproto/security_guidelines) to make sure you take good care of your users’ data and protect their privacy.
-4. **Do** publish your code. The [GPL license](LICENSE) requires it!
-
-## How to Build
-
-Quick start (full details, requirements and troubleshooting are in [INSTALL.md](INSTALL.md)):
-
-1. Install Xcode 16 or newer, Homebrew and a Rust toolchain (rustup). On Xcode 27, apply the local changes in
-   [XCODE27.md](XCODE27.md) first: it supports macOS 12.0 and newer only, and the project targets 10.13.
-2. Clone with submodules:
-   ```
-   git clone --recurse-submodules https://github.com/macosswift/telegram.git
-   ```
-3. Prepare the machine and build the native libraries once:
-   ```
-   sh scripts/setup_build_env.sh --build
-   ```
-4. Open `Telegram-Mac.xcworkspace` in Xcode and build the `Telegram` scheme.
+The initial upstream revision is [`ec221d8560ca`](https://github.com/TelegramMessenger/telegram-macos/commit/ec221d8560ca693cb921b4e8c576da9b87dff9ef). The upstream project and this fork are licensed under the GNU General Public License, version 2. Upstream copyright and third-party license notices apply to the corresponding code. [License](LICENSE)

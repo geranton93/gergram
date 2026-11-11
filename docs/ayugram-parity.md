@@ -1,5 +1,7 @@
 # AyuGram feature parity for macOS
 
+See the [feature audit and implementation backlog](ayugram-feature-audit.md) for priorities, confirmed native overlap, and additional evidence.
+
 The behavior reference is the local `AyuGramDesktop` checkout at `d45ed3d102868d7f492a2f6d5f63319fbc74cbf7`, which includes the Telegram Desktop 7.3.1 merge `9e5d4d0d1e`. The public AyuGram Desktop release `v7.2.9` at `d4b7546e77f93ac4c9bb53a3fcf7e9ffbbecf1b5` provides a secondary reference. The local checkout adds behavior and fixes beyond that public release. The feature target is the behavior available on macOS, including local fork changes. AyuGram4A is an optional reference for shared behavior and Android-only ideas.
 
 Every row below is planned and has source evidence from the reference checkout, public documentation, or both. Source evidence establishes what to investigate. Verification requires exercising the reference and the native fork on matching fixtures. Before closing a row, record the pinned native upstream revision, the exact entry point, the supported configurations, and the verification result. Credit existing native upstream equivalents when they pass the same acceptance criteria. Grouped rows cover several controls and each control needs its own check. This inventory has not established runtime parity or exhausted every integration hook.
@@ -71,14 +73,14 @@ Source paths below start at `Telegram/SourceFiles/` in AyuGram Desktop unless a 
 
 ## Native code starting points
 
-The previous Gergram checkout identifies native Swift surfaces worth rechecking at the selected upstream revision. They are starting points for tracing, with behavior verified against the native fork when the corresponding row is implemented.
+These entry points were located in the selected official upstream revision. The feature audit has the wider native map and separates source evidence from runtime acceptance.
 
 | Parity area | Native files and entry points to inspect |
 | --- | --- |
-| Message reads and story views | `Telegram-Mac/AccountContext.swift` (`applyMaxReadIndex`), `ChatController.swift`, `StoryChatContent.swift` (`markStoryAsSeen`). Trace all reachable paths through TelegramCore and distinguish local state from network requests. |
-| Input activity and scheduled messages | `Telegram-Mac/ChatInputView.swift` and `ChatController.swift` (`updateLocalInputActivity`), `ChatScheduleController.swift`. Inspect presence, upload, message delivery and other engine paths before setting patch boundaries. |
-| Chat presentation | `Telegram-Mac/ChatMessageMenuItems.swift`, `ChatInputActionsView.swift`, `ChatInputAttachView.swift`, `ChatInputMenuView.swift`, and `GroupInfoEntries.swift` (peer ID display). Check account type, topic and menu permissions. |
-| Translation, badges and notifications | `Telegram-Mac/TranslateModalController.swift`, `GlobalBadgeNode.swift`, `SharedNotificationManager.swift`. Trace system and in-app behavior separately. |
+| Message reads and story views | `Telegram-Mac/account/AccountContext.swift` (`applyMaxReadIndex`), ChatUI's `ChatController.swift`, and StoriesUI's `StoryChatContent.swift`. Include notification actions and explicit chat/topic commands when tracing server effects. |
+| Input activity and scheduled messages | `ChatInputView.swift`, `ChatController.swift` and `ChatScheduleController.swift` under `packages/ChatUI/Sources/ChatUI/`. Inspect presence, uploads and engine calls before choosing patch boundaries. |
+| Chat presentation | `ChatMessageMenuItems.swift`, `ChatInputActionsView.swift`, `ChatInputAttachView.swift` and `ChatInputMenuView.swift` in ChatUI. Profile ID display is in PeerInfoUI and configured through SettingsUI. |
+| Translation, badges and notifications | `TranslateModalController.swift` in TranslateUI, `GlobalBadgeNode.swift` in GeneralRows, and `Telegram-Mac/account/SharedNotificationManager.swift`. Trace system and in-app behavior separately. |
 
 The earlier list includes standalone chat zoom, link history, and mass deletion of all chats. Source evidence gathered for the pinned reference establishes per-chat own-message and media deletion. Treat the three broader entries as unverified until a corresponding AyuGram-specific implementation is located.
 
@@ -92,7 +94,7 @@ The earlier list includes standalone chat zoom, link history, and mass deletion 
 | `2a242a57c6`, `7aca997d91`, `29d3ba2ab9`, `91f024325b` | Verify TTL classification and hint behavior, protection flags in ephemeral-message paths, and the Message Shot countdown case. |
 | `2251cae16c`, `51281666c8`, `bb036d9872` | Compose window capture exclusion with content-based protection, including viewer windows. Test on current macOS capture APIs before documenting coverage. |
 | `e43fb5d74c`, `022e6e9b82`, `4d340f9ded`, `a44ebb7a18` | Retain the documented reference distinctions among sponsored surfaces, search refresh, optional Premium promo presentation and ordinary media-streaming behavior. |
-| `d611b65311`, `dbc47bec37`, `1b518e21e5`, `df8d692d36`, `d0b0d808`, `ddfba95fc7` | Carry the regression cases for dismissed views, late callbacks, cover rendering, name-cache updates, idle activity and terminal peer errors into native QA. |
+| `d611b65311`, `dbc47bec37`, `1b518e21e5`, `df8d692d36`, `d0b4b0d808`, `ddfba95fc7` | Carry the regression cases for dismissed views, late callbacks, cover rendering, name-cache updates, idle activity and terminal peer errors into native QA. |
 | `f6ef059dd1`, `7e48bc76dd`, `19eed0fb82` through `d45ed3d102` | Build and update identity, signed remote config, fallbacks, and release verification belong to native fork infrastructure. Reuse the upstream macOS build and update interfaces with independently owned credentials, endpoints and keys. Keep signing material outside Git and verify signatures before enabling auto-update. |
 
 Android-only behavior such as the AyuSync service documented by AyuGram4A, Android notification settings, and device-specific controls can be evaluated if the macOS product needs them. Desktop's similarly named forwarding helper in `ayu/features/forward/ayu_sync*` handles transfer operations in the reference code. Windows/Linux shell integrations, installer formats and Qt-specific rendering details are platform references. Local user data, application identity, storage and release channels are independently owned by the native fork.

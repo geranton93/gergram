@@ -1,6 +1,6 @@
 # gergram development
 
-gergram is an unofficial native macOS client based on [TelegramMessenger/telegram-macos](https://github.com/TelegramMessenger/telegram-macos). The initial upstream baseline is [`ec221d8560ca693cb921b4e8c576da9b87dff9ef`](https://github.com/TelegramMessenger/telegram-macos/commit/ec221d8560ca693cb921b4e8c576da9b87dff9ef). The sibling `AyuGramDesktop` checkout is the behavioral reference for the macOS port.
+gergram is an unofficial native macOS client based on [TelegramMessenger/telegram-macos](https://github.com/TelegramMessenger/telegram-macos). The initial upstream baseline is [`ec221d8560ca693cb921b4e8c576da9b87dff9ef`](https://github.com/TelegramMessenger/telegram-macos/commit/ec221d8560ca693cb921b4e8c576da9b87dff9ef).
 
 ## Repository workflow
 
@@ -46,9 +46,15 @@ git -c url.https://github.com/.insteadOf=git@github.com: \
 
 ## Configure the fork identity
 
-- Obtain the fork's Telegram API ID and hash at [my.telegram.org](https://my.telegram.org). Configure them in the `ApiEnvironment` integration point at `packages/ApiCredentials/Sources/ApiCredentials/Config.swift`. Keep real credentials out of committed files and build logs. Upstream reserves its built-in API identity for binary verification. [Telegram API application setup](https://core.telegram.org/api/obtaining_api_id)
-- Choose the fork's bundle identifiers and your Apple development team. Check the main app, share extension, entitlements, application group, keychain access groups, and any iCloud identifiers together. Search for the upstream app and team identifiers `ru.keepcoder.Telegram` and `6N38VWS5BX` to find references. Confirm that gergram uses its own app container before logging in.
-- Give the app its own display name and icon. Replace or remove the upstream Sparkle feed and key configuration (`SFEED_URL`, `DSA_PEM_FILE`) and App Center configuration (`APPCENTER_SECRET`). Configure release signing, notarization, and updater signing for gergram when preparing distribution. [Upstream build and fork instructions](../INSTALL.md)
+Copy the build configuration template to the ignored local file.
+
+```sh
+cp -n Local.xcconfig.example Local.xcconfig
+```
+
+- Obtain the fork's API ID and hash at [my.telegram.org](https://my.telegram.org). Set `GERGRAM_API_ID` and `GERGRAM_API_HASH` in `Local.xcconfig`. Keep credentials out of committed files and build logs. [Telegram API application setup](https://core.telegram.org/api/obtaining_api_id)
+- Set `GERGRAM_TEAM_ID` to your Apple development team. The default application identity is `org.gergram.macos`. Provision signing and app-group capabilities for the application and share extension, then verify the fork opens its own container before logging in.
+- The fork provides its own display name and icon. Update feeds and crash reporting require fork-owned configuration. Configure signing, notarization, and signed update metadata before distributing a build. [Upstream build and fork instructions](../INSTALL.md)
 
 ## Build the app
 
@@ -80,7 +86,7 @@ Xcode 27 compatibility edits are local. Run `bash scripts/xcode27.sh revert` bef
 | Protocol and persistence | `submodules/telegram-ios/submodules/TelegramCore/` and `submodules/telegram-ios/submodules/Postbox/` |
 | Native libraries | `core-xprojects/` and pinned dependencies in `submodules/` |
 
-Implement feature behavior in the owning Swift package. Follow the existing `AccountContextProtocol` and hook patterns for app-only dependencies and use `FeatureNavigationHooks` for navigation between features. Keep changes to shared TelegramCore and Postbox focused on behavior that genuinely belongs in those layers. Document the observed AyuGram behavior, macOS integration point, and acceptance checks in the parity record. [Agent instructions](../AGENTS.md)
+Implement feature behavior in the owning Swift package. Follow the existing `AccountContextProtocol` and hook patterns for app-only dependencies and use `FeatureNavigationHooks` for navigation between features. Keep changes to shared TelegramCore and Postbox focused on behavior that belongs in those layers. Record the macOS integration point and acceptance checks in the implementation plan. [Implementation plan](development-plan.md)
 
 ## Verify changes
 

@@ -1,3 +1,11 @@
+# gergram
+
+gergram is an unofficial native macOS client based on Telegram for macOS. The project ports AyuGram Desktop behavior into the Swift client.
+
+Start with the [development guide](docs/fork-development.md), [AyuGram parity catalog](docs/ayugram-parity.md), and [repository instructions](AGENTS.md). The upstream README follows.
+
+---
+
 <div align="center">
   <img src="Telegram-Mac/Assets.xcassets/AppIcon.appiconset/Logo_1024.png"
       width="125" 

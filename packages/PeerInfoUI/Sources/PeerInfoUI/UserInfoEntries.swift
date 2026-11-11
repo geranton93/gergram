@@ -1315,6 +1315,7 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
     case phoneNumber(sectionId:Int, index: Int, value: PhoneNumberWithLabel, canCopy: Bool, viewType: GeneralViewType)
     case notes(sectionId:Int, index: Int, value: CachedUserData.Note, viewType: GeneralViewType)
     case peerId(sectionId:Int, value: String, viewType: GeneralViewType)
+    case registrationDate(sectionId: Int, value: String, viewType: GeneralViewType)
     case userName(sectionId:Int, value: [UserInfoAddress], viewType: GeneralViewType)
     case verifiedInfo(sectionId: Int, value: PeerVerification, viewType: GeneralViewType)
     case businessLocation(sectionId:Int, peer: EnginePeer, businessLocation: TelegramBusinessLocation, viewType: GeneralViewType)
@@ -1410,6 +1411,8 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
         case .notes(_, _, _, let viewType):
             return viewType
         case .peerId(_, _, let viewType):
+            return viewType
+        case .registrationDate(_, _, let viewType):
             return viewType
         case .userName(_, _, let viewType):
             return viewType
@@ -1517,6 +1520,7 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
         case let .userName(sectionId, value, _): return .userName(sectionId: sectionId, value: value, viewType: viewType)
         case let .verifiedInfo(sectionId, value, _): return .verifiedInfo(sectionId: sectionId, value: value, viewType: viewType)
         case let .peerId(sectionId, value, _): return .peerId(sectionId: sectionId, value: value, viewType: viewType)
+        case let .registrationDate(sectionId, value, _): return .registrationDate(sectionId: sectionId, value: value, viewType: viewType)
         case let .businessLocation(sectionId, peer, location, _): return .businessLocation(sectionId: sectionId, peer: peer, businessLocation: location, viewType: viewType)
         case let .businessHours(sectionId, peer, businessHours, revealed, displayMyZone, _): return .businessHours(sectionId: sectionId, peer: peer, businessHours: businessHours, revealed: revealed, displayMyZone: displayMyZone, viewType: viewType)
         case let .reportReaction(sectionId, value, _): return .reportReaction(sectionId: sectionId, value: value, viewType: viewType)
@@ -1827,6 +1831,13 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             default:
                 return false
             }
+        case let .registrationDate(sectionId, value, viewType):
+            switch entry {
+            case .registrationDate(sectionId, value, viewType):
+                return true
+            default:
+                return false
+            }
         case let .businessLocation(sectionId, peer, location, viewType):
             switch entry {
             case .businessLocation(sectionId, peer: peer, businessLocation: location, viewType):
@@ -2126,6 +2137,8 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return 125
         case .peerId:
             return 126
+        case .registrationDate:
+            return 165
         case .notes:
             return 127
         case .businessHours:
@@ -2258,6 +2271,8 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
         case let .verifiedInfo(sectionId, _, _):
             return (sectionId * 1000) + stableIndex
         case let .peerId(sectionId, _, _):
+            return (sectionId * 1000) + stableIndex
+        case let .registrationDate(sectionId, _, _):
             return (sectionId * 1000) + stableIndex
         case let .businessHours(sectionId, _, _, _, _, _):
             return (sectionId * 1000) + stableIndex
@@ -2562,6 +2577,10 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return  TextAndLabelItem(initialSize, stableId: stableId.hashValue, label: "PEER ID", copyMenuText: strings().textCopyText, text: value, context: arguments.context, viewType: viewType, canCopy: true, _copyToClipboard: {
                 arguments.copy(value)
             })
+        case let .registrationDate(_, value, viewType):
+            return TextAndLabelItem(initialSize, stableId: stableId.hashValue, label: strings().chatEmptyUserInfoRegistration, copyMenuText: strings().textCopyText, text: value, context: arguments.context, viewType: viewType, canCopy: true, _copyToClipboard: {
+                arguments.copy(value)
+            })
         case let .businessLocation(_, peer, location, viewType):
             return PeerInfoLocationRowItem(initialSize, stableId: stableId.hashValue, context: arguments.context, peer: peer._asPeer(), location: location, viewType: viewType, open: {
                 arguments.openLocation(peer._asPeer(), location)
@@ -2694,7 +2713,7 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
 
 
 
-func userInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments: PeerInfoArguments<Context>, mediaTabsData: PeerMediaTabsData, source: PeerInfoController<Context>.Source, stories: PeerExpiringStoryListContext.State?, personalChannel: UserInfoPersonalChannel?, revenueState: StarsRevenueStatsContextState?, tonRevenueState: StarsRevenueStatsContextState?, webAppPermissionsState: WebAppPermissionsState?, savedMuicProfileState: ProfileSavedMusicContext.State?) -> [PeerInfoEntry] {
+func userInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments: PeerInfoArguments<Context>, mediaTabsData: PeerMediaTabsData, source: PeerInfoController<Context>.Source, stories: PeerExpiringStoryListContext.State?, personalChannel: UserInfoPersonalChannel?, revenueState: StarsRevenueStatsContextState?, tonRevenueState: StarsRevenueStatsContextState?, webAppPermissionsState: WebAppPermissionsState?, savedMuicProfileState: ProfileSavedMusicContext.State?, peerIdFormat: ProfilePeerIdFormat?) -> [PeerInfoEntry] {
     
     if savedMuicProfileState != nil {
         var bp = 0
@@ -3103,10 +3122,20 @@ func userInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments:
                 
             }
             
-            if FastSettings.canViewPeerId, state.editingState == nil {
-                entries.append(UserInfoEntry<Context>.section(sectionId: sectionId))
-                sectionId += 1
-                entries.append(UserInfoEntry<Context>.peerId(sectionId: sectionId, value: "\(user.id.id._internalGetInt64Value())", viewType: .singleItem))
+            if state.editingState == nil {
+                let idText = peerIdFormat.flatMap { profilePeerIdText(user.id, format: $0) }
+                let serverRegistrationDate = (view.cachedData as? CachedUserData)?.peerStatusSettings?.registrationDate
+                let registration = serverRegistrationDate.flatMap { formatMonthYear($0, locale: appAppearance.locale) }
+                if idText != nil || registration != nil {
+                    entries.append(.section(sectionId: sectionId))
+                    sectionId += 1
+                    if let idText {
+                        entries.append(.peerId(sectionId: sectionId, value: idText, viewType: registration == nil ? .singleItem : .firstItem))
+                    }
+                    if let registration {
+                        entries.append(.registrationDate(sectionId: sectionId, value: registration, viewType: idText == nil ? .singleItem : .lastItem))
+                    }
+                }
             }
             
             if mediaTabsData.loaded && !mediaTabsData.collections.isEmpty, let controller = arguments.mediaController() {

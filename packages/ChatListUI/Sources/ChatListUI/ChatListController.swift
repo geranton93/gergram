@@ -670,7 +670,8 @@ public struct FilterData : Equatable {
     public let badges: ChatListFilterBadges
     public let requestTimestamp: TimeInterval
     public var isTop: Bool
-    public init(filter: ChatListFilter = .allChats, tabs: [ChatListFilter] = [], sidebar: Bool = false, showTags: Bool = false, request: ChatListIndexRequest = .Initial(50, nil), badges: ChatListFilterBadges = .init(total: 0, filters: []), requestTimestamp: TimeInterval = CACurrentMediaTime(), isTop: Bool = true) {
+    public let folderPresentation: ChatListFolderPresentation
+    public init(filter: ChatListFilter = .allChats, tabs: [ChatListFilter] = [], sidebar: Bool = false, showTags: Bool = false, request: ChatListIndexRequest = .Initial(50, nil), badges: ChatListFilterBadges = .init(total: 0, filters: []), requestTimestamp: TimeInterval = CACurrentMediaTime(), isTop: Bool = true, folderPresentation: ChatListFolderPresentation = ChatListFolderPresentation()) {
         self.filter = filter
         self.tabs = tabs
         self.sidebar = sidebar
@@ -679,60 +680,74 @@ public struct FilterData : Equatable {
         self.showTags = showTags
         self.requestTimestamp = requestTimestamp
         self.isTop = isTop
+        self.folderPresentation = folderPresentation
     }
     
+    public var visibleTabs: [ChatListFilter] {
+        return folderPresentation.visibleFilters(tabs)
+    }
+
     public var isEmpty: Bool {
-        return self.tabs.isEmpty || (self.tabs.count == 1 && self.tabs[0] == .allChats)
+        return !visibleTabs.contains { $0 != .allChats }
     }
     
     public var isFirst: Bool {
-        return self.tabs.firstIndex(of: filter) == 0
+        return self.visibleTabs.firstIndex(of: filter) == 0
     }
     public func withUpdatedFilterId(_ filterId: Int32?) -> FilterData {
         let filter = self.tabs.first(where: { ChatListUIHooks.shared.chatListFilterId($0) == filterId }) ?? .allChats
-        return FilterData(filter: filter, tabs: self.tabs, sidebar: self.sidebar, showTags: self.showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop)
+        return FilterData(filter: filter, tabs: self.tabs, sidebar: self.sidebar, showTags: self.showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop, folderPresentation: self.folderPresentation)
     }
     public func withUpdatedFilter(_ filter: ChatListFilter?) -> FilterData {
-        let filter = filter ?? self.tabs.first ?? .allChats
-        return FilterData(filter: filter, tabs: self.tabs, sidebar: self.sidebar, showTags: self.showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop)
+        let filter = filter ?? self.visibleTabs.first ?? .allChats
+        return FilterData(filter: filter, tabs: self.tabs, sidebar: self.sidebar, showTags: self.showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop, folderPresentation: self.folderPresentation)
     }
     public func withUpdatedTabs(_ tabs:  [ChatListFilter]) -> FilterData {
-        return FilterData(filter: self.filter, tabs: tabs, sidebar: self.sidebar, showTags: self.showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop)
+        return FilterData(filter: self.filter, tabs: tabs, sidebar: self.sidebar, showTags: self.showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop, folderPresentation: self.folderPresentation)
     }
     public func withUpdatedSidebar(_ sidebar: Bool) -> FilterData {
-        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: sidebar, showTags: self.showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop)
+        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: sidebar, showTags: self.showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop, folderPresentation: self.folderPresentation)
     }
     public func withUpdatedShowTags(_ showTags: Bool) -> FilterData {
-        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: self.sidebar, showTags: showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop)
+        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: self.sidebar, showTags: showTags, request: self.request, badges: self.badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop, folderPresentation: self.folderPresentation)
     }
     public func withUpdatedRequest(_ request: ChatListIndexRequest, removeAnimation: Bool) -> FilterData {
-        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: sidebar, showTags: self.showTags, request: request, badges: self.badges, requestTimestamp: removeAnimation ? CACurrentMediaTime() : self.requestTimestamp, isTop: self.isTop)
+        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: sidebar, showTags: self.showTags, request: request, badges: self.badges, requestTimestamp: removeAnimation ? CACurrentMediaTime() : self.requestTimestamp, isTop: self.isTop, folderPresentation: self.folderPresentation)
     }
     public func withUpdatedIsTop(_ isTop: Bool) -> FilterData {
-        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: sidebar, showTags: self.showTags, request: request, badges: badges, requestTimestamp: self.requestTimestamp, isTop: isTop)
+        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: sidebar, showTags: self.showTags, request: request, badges: badges, requestTimestamp: self.requestTimestamp, isTop: isTop, folderPresentation: self.folderPresentation)
     }
     public func withUpdatedBadges(_ badges: ChatListFilterBadges) -> FilterData {
-        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: sidebar, showTags: self.showTags, request: request, badges: badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop)
+        return FilterData(filter: self.filter, tabs: self.tabs, sidebar: sidebar, showTags: self.showTags, request: request, badges: badges, requestTimestamp: self.requestTimestamp, isTop: self.isTop, folderPresentation: self.folderPresentation)
     }
     
+    public func withUpdatedFolderPresentation(_ presentation: ChatListFolderPresentation) -> FilterData {
+        return FilterData(filter: filter, tabs: tabs, sidebar: sidebar, showTags: showTags, request: request, badges: badges, requestTimestamp: requestTimestamp, isTop: isTop, folderPresentation: presentation)
+    }
 }
-
 
 public class ChatListController<Context: AccountContextProtocol> : PeersListController<Context>, ChatListControllerKind {
     
     private let folderUpdatesDisposable = MetaDisposable()
 
+    private func canSelectFolder(_ folder: ChatListFilter, in data: FilterData) -> Bool {
+        guard !context.isPremium, folder != .allChats, let index = data.tabs.firstIndex(of: folder) else {
+            return true
+        }
+        return index <= context.premiumLimits.dialog_filters_limit_default
+    }
+
+    private func firstAvailableFolder(in data: FilterData) -> ChatListFilter {
+        return data.visibleTabs.first { canSelectFolder($0, in: data) } ?? .allChats
+    }
+
     public func updateFilter(_ f:(FilterData)->FilterData) {
-        
+
         let data = f(stateValue.with { $0.filterData })
-        
-        if !context.isPremium {
-            if let index = data.tabs.firstIndex(of: data.filter) {
-                if index > context.premiumLimits.dialog_filters_limit_default {
-                    FeatureNavigationHooks.shared.showPremiumLimit(context, .folders)
-                    return
-                }
-            }
+
+        guard canSelectFolder(data.filter, in: data) else {
+            FeatureNavigationHooks.shared.showPremiumLimit(context, .folders)
+            return
         }
         
         var changedFolder = false
@@ -1334,19 +1349,25 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
         default:
             var first: Bool = true
             filterDisposable.set(combineLatest(filterView, filterBadges).start(next: { [weak self] filters, badges in
-                self?.updateFilter( { current in
-                    var current = current
-                    current = current.withUpdatedTabs(filters.list)
+                guard let self else {
+                    return
+                }
+                self.updateFilter { current in
+                    let updated = current.withUpdatedTabs(filters.list)
                         .withUpdatedSidebar(filters.sidebar)
                         .withUpdatedShowTags(filters.showTags)
-                    if !first, let updated = filters.list.first(where: { ChatListUIHooks.shared.chatListFilterId($0) == ChatListUIHooks.shared.chatListFilterId(current.filter) }) {
-                        current = current.withUpdatedFilter(updated)
-                    } else {
-                        current = current.withUpdatedFilter(nil)
+                        .withUpdatedFolderPresentation(filters.presentation)
+                    let selected = updated.visibleTabs.first { filter in
+                        ChatListUIHooks.shared.chatListFilterId(filter) == ChatListUIHooks.shared.chatListFilterId(current.filter)
                     }
-                    current = current.withUpdatedBadges(badges)
-                    return current
-                } )
+                    let next: ChatListFilter
+                    if !first, let selected, self.canSelectFolder(selected, in: updated) {
+                        next = selected
+                    } else {
+                        next = self.firstAvailableFolder(in: updated)
+                    }
+                    return updated.withUpdatedFilter(next).withUpdatedBadges(badges)
+                }
                 first = false
             }))
         }
@@ -1832,14 +1853,15 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
             let prefs = chatListFilterPreferences(engine: context.engine) |> deliverOnMainQueue |> take(1)
             
             _ = prefs.start(next: { [weak self] filters in
-                if filters.isEmpty {
+                let visible = filters.visibleList
+                if !filters.hasVisibleFolders {
                     self?._openChat(index)
-                } else if filters.list.count > index {
-                    if self?.filterValue.filter != filters.list[index] {
-                        Analytics.shared.send(AnalyticsEvents.chatListFolderSelect(folderKind: filters.list[index] == .allChats ? .allChats : .custom, via: .shortcut))
+                } else if visible.indices.contains(index) {
+                    if self?.filterValue.filter != visible[index] {
+                        Analytics.shared.send(AnalyticsEvents.chatListFolderSelect(folderKind: visible[index] == .allChats ? .allChats : .custom, via: .shortcut))
                     }
                     self?.updateFilter {
-                        $0.withUpdatedFilter(filters.list[index])
+                        $0.withUpdatedFilter(visible[index])
                     }
                     self?.scrollup(force: true)
                 } else {
@@ -1918,10 +1940,12 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
             navigation.back()
             return .invoked
         }
-        if !self.filterValue.isFirst {
-            Analytics.shared.send(AnalyticsEvents.chatListFolderSelect(folderKind: (self.filterValue.tabs.first ?? .allChats) == .allChats ? .allChats : .custom, via: .shortcut))
+        let current = self.filterValue
+        let fallback = firstAvailableFolder(in: current)
+        if ChatListUIHooks.shared.chatListFilterId(current.filter) != ChatListUIHooks.shared.chatListFilterId(fallback) {
+            Analytics.shared.send(AnalyticsEvents.chatListFolderSelect(folderKind: fallback == .allChats ? .allChats : .custom, via: .shortcut))
             updateFilter {
-                $0.withUpdatedFilter(nil)
+                $0.withUpdatedFilter(fallback)
             }
             return .invoked
         }

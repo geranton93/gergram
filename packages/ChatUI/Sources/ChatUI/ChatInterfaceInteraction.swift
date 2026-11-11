@@ -104,8 +104,26 @@ public final class ChatInteraction : InterfaceObserver  {
     public let disableSelectAbility: Bool
     public let isGlobalSearchMessage: Bool
     public let isPeerSavedMessages: Bool
+    var hideLocalMessage: ((Message) -> Void)?
+
+    var supportsLocalMessageVisibility: Bool {
+        guard !isLogInteraction, !isGlobalSearchMessage, peerId != context.peerId else {
+            return false
+        }
+        switch mode {
+        case .history, .thread:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var canManageLocalMessageVisibility: Bool {
+        supportsLocalMessageVisibility && !context.isFrozen && !presentation.searchMode.inSearch
+    }
     public let bottomInset: Atomic<CGFloat> = Atomic(value: ChatHistoryBottomRowItem.bottomInset(showsInput: true, inputOverlayHeight: 0))
     public var inheritedAnalyticsContext: AnalyticsContext?
+    let channelRecommendationsExpanded = Atomic(value: false)
     private var mediaEditJourney: AnalyticsMediaEditJourney?
     private var mediaReplacementId: UUID?
     private var mediaEditSessionId = UUID()

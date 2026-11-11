@@ -392,6 +392,44 @@ public func messageFileSaveMenuItem(file: TelegramMediaFile, context: any Accoun
     }, itemImage: MenuAnimation.menu_save_as.value, keyEquivalent: keyEquivalent)
 }
 
+private func inlineCallbackDataMenu(_ markup: ReplyMarkupMessageAttribute, window: Window) -> ContextMenuItem? {
+    let title = localizedString("Gergram.Chat.CallbackData")
+    let menu = ContextMenu()
+    for button in markup.rows.flatMap(\.buttons) {
+        guard case let .callback(_, data) = button.action else { continue }
+
+        let payload: String
+        let copyTitle: String
+        switch ChatInlineCallbackPayload(data: data.makeData()) {
+        case let .text(text):
+            payload = text
+            copyTitle = strings().contextCopy
+        case let .base64(base64):
+            payload = base64
+            copyTitle = localizedString("Gergram.Chat.CopyCallbackBase64")
+        }
+
+        let actions = ContextMenu()
+        actions.addItem(ContextMenuItem(localizedString("Gergram.Chat.ViewCallbackData"), handler: { [weak window] in
+            guard let window else { return }
+            let text = payload.isEmpty ? localizedString("Gergram.Chat.EmptyCallbackData") : payload
+            showModalText(for: window, text: text, title: title)
+        }))
+        actions.addItem(ContextMenuItem(copyTitle, handler: {
+            copyToClipboard(payload)
+        }, itemImage: MenuAnimation.menu_copy.value))
+
+        let buttonItem = ContextMenuItem(button.title.isEmpty ? title : button.title.fixed, handler: {})
+        buttonItem.submenu = actions
+        menu.addItem(buttonItem)
+    }
+    guard !menu.items.isEmpty else { return nil }
+
+    let item = ContextMenuItem(title, handler: {}, itemImage: MenuAnimation.menu_show_info.value)
+    item.submenu = menu
+    return item
+}
+
 public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLayout: (TextViewLayout?, LinkType?)?, chatInteraction: ChatInteraction, useGroupIfNeeded: Bool = true, fromAdPromo: Bool = false, source: ChatMenuItemSource = .general) -> Signal<[ContextMenuItem], NoError> {
     
     if chatInteraction.interactionContext.isFrozen {
@@ -531,6 +569,15 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         var fifthBlock:[ContextMenuItem] = []
         var sixBlock:[ContextMenuItem] = []
         var sevenBlock:[ContextMenuItem] = []
+
+        if case .general = source, isNotFailed, !protected, !isService, !isEphemeralNamespace,
+           messageId.peerId.namespace != Namespaces.Peer.SecretChat,
+           !data.message.isCopyProtected(cachedData: data.cachedData),
+           messageId.peerId.namespace != Namespaces.Peer.CloudUser || messageId.peerId == context.peerId || data.cachedData is CachedUserData,
+           let markup = data.message.replyMarkup, markup.flags.contains(.inline),
+           let callbackData = inlineCallbackDataMenu(markup, window: context.window) {
+            zeroBlock.append(callbackData)
+        }
         
         
 
@@ -1391,6 +1438,10 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         
      
         
+        if let messageShot = ChatMessageShotAction.menuItem(for: data.message, selection: selectedIds, selectedMessages: selectedMessages, cachedData: data.cachedData, interaction: chatInteraction) {
+            thirdBlock.append(messageShot)
+        }
+
         let photoMessages = selectedMessages.isEmpty ? data.groupped ?? [] : selectedMessages
         let photos = ChatPhotoSaveAction.items(from: photoMessages, cachedData: data.cachedData)
         if photos.count > 1 {
@@ -1530,6 +1581,19 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
             fifthBlock.append(ContextMenuItem(strings().chatContextCancelEditing, handler: {
                 account.pendingUpdateMessageManager.cancel(messageId: messageId)
             }, itemImage: MenuAnimation.menu_clear_history.value))
+        }
+
+        if case .general = source, !isService, isNotFailed, data.chatState != .selecting,
+           data.chatLocation == chatInteraction.chatLocation, data.message.id.peerId == chatInteraction.peerId,
+           data.chatLocation.threadMessage?.effectiveTopId != messageId,
+           entry?.isFakeMessage == false, chatInteraction.canManageLocalMessageVisibility,
+           chatInteraction.hideLocalMessage != nil {
+            let title = localizedString(message.groupingKey == nil ? "Gergram.Chat.HideMessage" : "Gergram.Chat.HideAlbum")
+            let location = data.chatLocation
+            fifthBlock.append(ContextMenuItem(title, handler: { [weak chatInteraction] in
+                guard let chatInteraction, chatInteraction.chatLocation == location else { return }
+                chatInteraction.hideLocalMessage?(message)
+            }, itemImage: MenuAnimation.menu_hide.value))
         }
 
         if canDeleteMessage(data.message, account: account, chatLocation: data.chatLocation, mode: data.chatMode), !data.isLogInteraction {

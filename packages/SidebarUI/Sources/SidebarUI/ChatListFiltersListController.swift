@@ -48,8 +48,10 @@ private let _id_badge_tabs = InputDataIdentifier("_id_badge_tabs")
 private let _id_header = InputDataIdentifier("_id_header")
 
 private let _id_show_tags = InputDataIdentifier("_id_show_tags")
+private let _id_hide_all_chats = InputDataIdentifier("_id_hide_all_chats")
+private let _id_hide_folder_counters = InputDataIdentifier("_id_hide_folder_counters")
 
-private func chatListPresetEntries(filtersWithCounts: [(ChatListFilter, Int)], sidebar: Bool, showTags: Bool, suggested: ChatListFiltersFeaturedState?, arguments: ChatListPresetArguments) -> [InputDataEntry] {
+private func chatListPresetEntries(filtersWithCounts: [(ChatListFilter, Int)], sidebar: Bool, showTags: Bool, presentation: ChatListFolderPresentation, suggested: ChatListFiltersFeaturedState?, arguments: ChatListPresetArguments) -> [InputDataEntry] {
     var entries: [InputDataEntry] = []
 
     var sectionId:Int32 = 0
@@ -99,7 +101,8 @@ private func chatListPresetEntries(filtersWithCounts: [(ChatListFilter, Int)], s
         case .allChats:
             entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_preset(filter), data: .init(name: filter.title, color: theme.colors.text, icon: FolderIcon(emoticon: .allChats).icon(for: .preview, image: arguments.environment.folderImage), type: .none, viewType: viewType)))
             index += 1
-        case let .filter(_, title, _, data):
+        case let .filter(id, title, _, data):
+            let isHidden = presentation.hiddenFolderIds.contains(id)
 
             var image: CGImage?
             if let color = data.color, showTags {
@@ -141,18 +144,19 @@ private func chatListPresetEntries(filtersWithCounts: [(ChatListFilter, Int)], s
                 let filter: ChatListFilter
                 let viewType: GeneralViewType
                 let count: Int
+                let isHidden: Bool
             }
 
-            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_preset(filter), equatable: InputDataEquatable(E(filter: filter, viewType: viewType, count: count)), comparable: nil, item: { initialSize, stableId in
+            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_preset(filter), equatable: InputDataEquatable(E(filter: filter, viewType: viewType, count: count, isHidden: isHidden)), comparable: nil, item: { initialSize, stableId in
 
                 let attr = NSMutableAttributedString()
                 attr.append(string: title.text, color: theme.colors.text, font: .normal(.text))
                 arguments.environment.applyInlineStickers(to: attr, entities: title.entities, isPremium: arguments.context.isPremium, animated: title.enableAnimations)
 
-                return GeneralInteractedRowItem(initialSize, stableId: stableId, name: title.text, nameAttributed: attr, icon: FolderIcon(filter).icon(for: .preview, image: arguments.environment.folderImage), type: image != nil ? .nextImage(image!) : .nextContext(count > 0 ? "\(count)" : ""), viewType: viewType, action: {
+                return GeneralInteractedRowItem(initialSize, stableId: stableId, name: title.text, nameAttributed: attr, icon: FolderIcon(filter).icon(for: .preview, image: arguments.environment.folderImage), description: isHidden ? localizedString("Gergram.Folders.Hidden") : nil, type: image != nil ? .nextImage(image!) : .nextContext(count > 0 ? "\(count)" : ""), viewType: viewType, action: {
                     arguments.openPreset(filter, false)
                 }, menuItems: {
-                    return filterContextMenuItems(filter, unreadCount: nil, context: arguments.context, environment: arguments.environment)
+                    return filterContextMenuItems(filter, unreadCount: nil, context: arguments.context, environment: arguments.environment, isHidden: isHidden)
                 }, context: arguments.context)
             }))
             index += 1
@@ -225,6 +229,22 @@ private func chatListPresetEntries(filtersWithCounts: [(ChatListFilter, Int)], s
     entries.append(.sectionId(sectionId, type: .normal))
     sectionId += 1
 
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_hide_all_chats, data: .init(name: localizedString("Gergram.Folders.HideAllChats"), color: theme.colors.text, type: .switchable(presentation.hideAllChats), viewType: .firstItem, action: {
+        _ = updateChatListFolderSettings(arguments.context.account.postbox) { settings in
+            settings.withUpdatedPresentation { $0.hideAllChats.toggle() }
+        }.start()
+    }, autoswitch: false)))
+    index += 1
+
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_hide_folder_counters, data: .init(name: localizedString("Gergram.Folders.HideUnreadCounters"), color: theme.colors.text, type: .switchable(presentation.hideUnreadCounters), viewType: .lastItem, action: {
+        _ = updateChatListFolderSettings(arguments.context.account.postbox) { settings in
+            settings.withUpdatedPresentation { $0.hideUnreadCounters.toggle() }
+        }.start()
+    }, autoswitch: false)))
+    index += 1
+
+    entries.append(.sectionId(sectionId, type: .normal))
+    sectionId += 1
 
     if !filtersWithCounts.isEmpty {
 
@@ -293,15 +313,15 @@ public func ChatListFiltersListController(context: any AccountContextProtocol, e
     let filtersWithCounts = combineLatest(
         chatListFilterPreferences(engine: context.engine) |> distinctUntilChanged,
         environment.filterPredicates
-    ) |> mapToSignal { filters, predicateForFilter -> Signal<([(ChatListFilter, Int)], Bool), NoError> in
-        return context.account.postbox.transaction { transaction -> ([(ChatListFilter, Int)], Bool) in
+    ) |> mapToSignal { filters, predicateForFilter -> Signal<([(ChatListFilter, Int)], ChatListFolders), NoError> in
+        return context.account.postbox.transaction { transaction -> ([(ChatListFilter, Int)], ChatListFolders) in
             return (filters.list.map { filter -> (ChatListFilter, Int) in
                 if let predicate = predicateForFilter(filter) {
                     return (filter, transaction.getChatCountMatchingPredicate(predicate))
                 } else {
                     return (filter, 0)
                 }
-            }, filters.sidebar)
+            }, filters)
         }
     }
 
@@ -312,7 +332,7 @@ public func ChatListFiltersListController(context: any AccountContextProtocol, e
     let showTags = context.engine.data.subscribe(TelegramEngine.EngineData.Item.ChatList.FiltersDisplayTags())
 
     let dataSignal = combineLatest(queue: prepareQueue, appearanceSignal, filtersWithCounts, suggested, showTags) |> map { _, filtersWithCounts, suggested, showTags in
-        return chatListPresetEntries(filtersWithCounts: filtersWithCounts.0, sidebar: filtersWithCounts.1, showTags: showTags, suggested: suggested, arguments: arguments)
+        return chatListPresetEntries(filtersWithCounts: filtersWithCounts.0, sidebar: filtersWithCounts.1.sidebar, showTags: showTags, presentation: filtersWithCounts.1.presentation, suggested: suggested, arguments: arguments)
     } |> map { entries in
         return InputDataSignalValue(entries: entries)
     }

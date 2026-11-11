@@ -19,11 +19,12 @@ public class ChatListRevealItem: TableStickItem {
     fileprivate let selected: ChatListFilter
     fileprivate let openSettings: (()->Void)?
     fileprivate let counters: ChatListFilterBadges
+    fileprivate let hideUnreadCounters: Bool
     fileprivate let presentation: TelegramPresentationTheme
     fileprivate let _menuItems: ((ChatListFilter, Int?, Bool?)->[ContextMenuItem])?
     fileprivate let getCurrentStoriesState:()->(StoryListChatListRowItem.InterfaceState, NSView)?
     fileprivate let customBackgroundColor: NSColor?
-    public init(_ initialSize: NSSize, context: any AccountContextProtocol, tabs: [ChatListFilter], selected: ChatListFilter, counters: ChatListFilterBadges, action: ((ChatListFilter)->Void)? = nil, openSettings: (()->Void)? = nil, menuItems: ((ChatListFilter, Int?, Bool?)->[ContextMenuItem])? = nil, presentation: TelegramPresentationTheme = theme, customBackgroundColor: NSColor? = nil, getCurrentStoriesState:@escaping()->(StoryListChatListRowItem.InterfaceState, NSView)? = { return nil }) {
+    public init(_ initialSize: NSSize, context: any AccountContextProtocol, tabs: [ChatListFilter], selected: ChatListFilter, counters: ChatListFilterBadges, hideUnreadCounters: Bool = false, action: ((ChatListFilter)->Void)? = nil, openSettings: (()->Void)? = nil, menuItems: ((ChatListFilter, Int?, Bool?)->[ContextMenuItem])? = nil, presentation: TelegramPresentationTheme = theme, customBackgroundColor: NSColor? = nil, getCurrentStoriesState:@escaping()->(StoryListChatListRowItem.InterfaceState, NSView)? = { return nil }) {
         self.action = action
         self.context = context
         self.tabs = tabs
@@ -31,6 +32,7 @@ public class ChatListRevealItem: TableStickItem {
         self.selected = selected
         self.openSettings = openSettings
         self.counters = counters
+        self.hideUnreadCounters = hideUnreadCounters
         self._menuItems = menuItems
         self.customBackgroundColor = customBackgroundColor
         self.getCurrentStoriesState = getCurrentStoriesState
@@ -48,6 +50,7 @@ public class ChatListRevealItem: TableStickItem {
         self.customBackgroundColor = nil
         self.getCurrentStoriesState = { return nil }
         self.counters = ChatListFilterBadges(total: 0, filters: [])
+        self.hideUnreadCounters = false
         super.init(initialSize)
     }
 
@@ -127,7 +130,7 @@ public class ChatListRevealItem: TableStickItem {
     }
 
     func accessibilityTabTitle(_ tab: ChatListFilter) -> String {
-        return ChatListRevealItem.accessibilityTabTitle(tab.title, unreadCount: counters.count(for: tab)?.count)
+        return ChatListRevealItem.accessibilityTabTitle(tab.title, unreadCount: hideUnreadCounters ? nil : counters.count(for: tab)?.count)
     }
     
     public override var accessibilityLabel: String? {
@@ -221,7 +224,7 @@ public final class ChatListRevealView : TableStickView {
         }
         
         let generateIcon:(ChatListFilter?)->CGImage? = { tab in
-            let unreadCount:ChatListFilterBadge? = item.counters.count(for: tab)
+            let unreadCount = item.hideUnreadCounters ? nil : item.counters.count(for: tab)
             let icon: CGImage?
             if let unreadCount = unreadCount, unreadCount.count > 0 {
                 let attributedString = NSAttributedString.initialize(string: "\(unreadCount.count.prettyNumber)", color: item.presentation.colors.background, font: .medium(.short))
@@ -265,7 +268,7 @@ public final class ChatListRevealView : TableStickView {
         let insets = NSEdgeInsets(left: 10, right: 10)
         var items:[ScrollableSegmentItem] = []
         for tab in item.tabs {
-            let unreadCount = item.counters.count(for: tab)
+            let unreadCount = item.hideUnreadCounters ? nil : item.counters.count(for: tab)
             let icon: CGImage? = generateIcon(tab)
             let title: String = tab.title
             let selected = item.selected == tab
@@ -295,23 +298,14 @@ public final class ChatListRevealView : TableStickView {
         }
         
         segmentView.updateItems(items, animated: animated)
-        let range: NSRange
-        if context.isPremium {
-            range = NSMakeRange(0, items.count)
-        } else {
-            range = NSMakeRange(1, items.count - 1)
-        }
-        segmentView.resortRange = range
-        segmentView.resortHandler = { from, to in
-            _ = context.engine.peers.updateChatListFiltersInteractively({ state in
-                var state = state
-                if context.isPremium {
-                    state.move(at: from, to: to)
-                } else {
-                    state.move(at: from - 1, to: to - 1)
-                }
-                return state
-            }).start()
+        let firstReorderableIndex = !context.isPremium && item.tabs.first == .allChats ? 1 : 0
+        let count = items.count - firstReorderableIndex
+        segmentView.resortRange = count > 1 ? NSMakeRange(firstReorderableIndex, count) : nil
+        segmentView.resortHandler = { [tabs = item.tabs] from, to in
+            let visible = context.isPremium ? tabs : tabs.filter { $0 != .allChats }
+            _ = context.engine.peers.updateChatListFiltersInteractively { state in
+                return reorderingVisibleChatListFilters(state, visible: visible, from: from - firstReorderableIndex, to: to - firstReorderableIndex)
+            }.start()
         }
         segmentView.didChangeSelectedItem = { [weak item] selected in
             if let item = item {
@@ -319,13 +313,13 @@ public final class ChatListRevealView : TableStickView {
                     item.action?(.allChats)
                 } else if selected.uniqueId == -2 {
                     item.openSettings?()
-                } else {
+                } else if item.tabs.indices.contains(selected.index) {
                     item.action?(item.tabs[selected.index])
                 }
             }
         }
         segmentView.menuItems = { [weak item] selected in
-            if let item = item, selected.uniqueId != -1 && selected.uniqueId != -2 {
+            if let item = item, selected.uniqueId != -1 && selected.uniqueId != -2, item.tabs.indices.contains(selected.index) {
                 return item.menuItems(for: item.tabs[selected.index], unreadCount: item.counters.count(for: item.tabs[selected.index])?.count)
             } else if let item = item, selected.uniqueId == -1 {
                 return item.menuItems(for: .allChats, unreadCount: nil)

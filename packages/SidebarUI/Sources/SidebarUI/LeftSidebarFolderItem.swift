@@ -23,14 +23,16 @@ class LeftSidebarFolderItem: TableRowItem {
     let badge: CGImage?
     let nameLayout: TextViewLayout
     let unreadCount: Int
+    private let hideUnreadCounters: Bool
 
 
-    init(_ initialSize: NSSize, context: any AccountContextProtocol, environment: SidebarUIEnvironment, folder: ChatListFilter, selected: Bool, unreadCount: Int, hasUnmutedUnread: Bool, callback: @escaping(ChatListFilter)->Void, menuItems: @escaping(ChatListFilter, Int?, Bool?) -> [ContextMenuItem]) {
+    init(_ initialSize: NSSize, context: any AccountContextProtocol, environment: SidebarUIEnvironment, folder: ChatListFilter, selected: Bool, unreadCount: Int, hasUnmutedUnread: Bool, hideUnreadCounters: Bool, callback: @escaping(ChatListFilter)->Void, menuItems: @escaping(ChatListFilter, Int?, Bool?) -> [ContextMenuItem]) {
         self.folder = folder
         self.context = context
         self.selected = selected
         self.callback = callback
         self.unreadCount = unreadCount
+        self.hideUnreadCounters = hideUnreadCounters
         self.menuItems = menuItems
         var folderIcon = FolderIcon(folder).icon(for: selected ? .sidebarActive : .sidebar, image: environment.folderImage)
 
@@ -47,7 +49,7 @@ class LeftSidebarFolderItem: TableRowItem {
 
         let generateIcon:()->CGImage? = {
             let icon: CGImage?
-            if unreadCount > 0 {
+            if !hideUnreadCounters, unreadCount > 0 {
 
                 let textColor: NSColor = theme.colors.underSelectedColor
 
@@ -149,7 +151,7 @@ class LeftSidebarFolderItem: TableRowItem {
     }
 
     override var accessibilityLabel: String? {
-        if unreadCount > 0 {
+        if !hideUnreadCounters, unreadCount > 0 {
             return folder.title + "\n" + strings().voiceOverChatUnreadMessagesOther(unreadCount)
         }
         return folder.title

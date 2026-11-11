@@ -32,7 +32,12 @@ class ShareViewController: NSViewController {
         System.updateScaleFactor(NSScreen.main?.backingScaleFactor ?? 1)
         
 
-        guard let containerUrl = ApiEnvironment.containerURL else {
+        guard ApiEnvironment.hasApiCredentials, let containerUrl = ApiEnvironment.containerURL else {
+            extensionContext?.cancelRequest(withError: NSError(
+                domain: "org.gergram.macos.share",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "gergram setup is incomplete. Open gergram before using the share extension."]
+            ))
             return
         }
         try! PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: ApiEnvironment.group, processRole: .appExtension, keychainScope: ApiEnvironment.prefix == "debug" ? "debug" : nil))

@@ -76,7 +76,12 @@ var appUpdateStateSignal: Signal<AppUpdateState, NoError> {
 private let updateState:((AppUpdateState)->AppUpdateState) -> Void = { f in
     statePromise.set(stateValue.modify(f))
 }
-private let updater = TelegramUpdater()
+private let updater: TelegramUpdater = {
+    let updater = TelegramUpdater()
+    updater.domain = updateFeedURL?.absoluteString
+    updater.host = updateFeedURL?.host
+    return updater
+}()
 private let currentDriver = Atomic<ObjectIdentifier?>(value: nil)
 private var driver:SUBasicUpdateDriver? {
     didSet {
@@ -93,7 +98,7 @@ func updateApplication(sharedContext: SharedAccountContext) {
     switch state {
     case let .readyToInstall(item):
         cancelStagedUpdate()
-        var text: String = "Telegram was updated to \(item.versionTitle.lowercased())"
+        var text: String = "gergram was updated to \(item.versionTitle.lowercased())"
         text += "\n\n"
         
         text += item.updateText
@@ -263,150 +268,7 @@ func AppUpdateViewController() -> InputDataController {
     
 }
 
-#if STABLE
-private let updates_channel_xml = "macos_stable_updates_xml"
-#else
-private let updates_channel_xml = "macos_beta_updates_xml"
-#endif
-
-
-private final class InternalUpdaterDownloader : SPUDownloaderSession {
-    private let context: AccountContext
-    private let updateItem: SUAppcastItem
-    private let disposable = MetaDisposable()
-    init(context: AccountContext, updateItem: SUAppcastItem, delegate: SPUDownloaderDelegate) {
-        self.context = context
-        self.updateItem = updateItem
-        super.init(delegate: delegate)
-    }
-    
-    deinit {
-        disposable.dispose()
-    }
-    
-    override func suggestedFilename() -> String! {
-        return "Telegram.app.zip"
-    }
-    
-    
-    
-    override func moveItem(atPath fromPath: String!, toPath: String!, error: Error) -> Bool {
-        try? FileManager.default.removeItem(atPath: toPath)
-        do {
-            try FileManager.default.copyItem(atPath: fromPath, toPath: toPath)
-            return true
-        } catch { 
-            return false
-        }
-    }
-    
-    
-    override func startDownload(with request: SPUURLRequest!) {
-        if let internalUrl = self.updateItem.internalUrl {
-            
-            let url = inApp(for: internalUrl as NSString, context: self.context, peerId: nil, openInfo: { _, _, _, _ in }, hashtag: nil, command: nil, applyProxy: nil, confirm: false)
-            switch url {
-            case let .followResolvedName(_, username, messageId, _, context, _, _):
-                if let messageId = messageId {
-                    let signal = downloadAppUpdate(account: context.account, source: username, messageId: messageId) |> deliverOnMainQueue
-                    disposable.set(signal.start(next: { [weak self] result in
-                        guard let `self` = self else {
-                            return
-                        }
-                        switch result {
-                        case let .started(total):
-                            self.delegate.downloaderDidReceiveExpectedContentLength(Int64(total))
-                        case let .progress(current, _):
-                            self.delegate.downloaderDidReceiveData(ofLength: UInt64(current))
-                        case let .finished(path):
-                            self.urlSession(URLSession(), downloadTask: URLSessionDownloadTask(), didFinishDownloadingTo: URL(fileURLWithPath: path))
-                        }
-                    }, error: { [weak self] error in
-                            self?.delegate.downloaderDidFailWithError(NSError(domain: strings().appUpdateErrorFailedDownload, code: 0, userInfo: nil))
-                    }))
-                } else {
-                    self.delegate.downloaderDidFailWithError(NSError(domain: strings().appUpdateErrorWrongInternal, code: 0, userInfo: nil))
-                }
-                
-            default:
-                self.delegate.downloaderDidFailWithError(NSError(domain: strings().appUpdateErrorWrongInternal, code: 0, userInfo: nil))
-            }
-            
-            
-        } else {
-            self.delegate.downloaderDidFailWithError(NSError(domain: strings().appUpdateErrorNoInternal, code: 0, userInfo: nil))
-        }
-        
-    }
-    
-    
-    override func cancel() {
-        disposable.set(nil)
-    }
-    
-}
-
-private final class InternalUpdateDriver : ExternalUpdateDriver {
-    
-    
-    private let disposabe = MetaDisposable()
-    private let context: AccountContext
-    
-    init(updater:TelegramUpdater, context: AccountContext) {
-        self.context = context
-        super.init(updater: updater)
-    }
-    
-    deinit {
-        disposabe.dispose()
-    }
-    
-    override func checkForUpdates(at URL: URL!, host aHost: SUHost!, domain: String!) {
-        self.host = aHost
-
-        updateSharedState {
-            return $0.withUpdatedLoadingState(.initializing)
-        }
-        
-        let signal = requestUpdatesXml(account: self.context.account, source: updates_channel_xml) |> deliverOnMainQueue |> timeout(20.0, queue: .mainQueue(), alternate: .fail(.xmlLoad))
-        
-        disposabe.set(signal.start(next: { [weak self] data in
-            let appcast = SUAppcast()
-            appcast.parseAppcastItems(fromXMLData: data, error: nil)
-            self?.appcastDidFinishLoading(appcast)
-        }, error: { [weak self] error in
-            self?.abortUpdateWithError(NSError(domain: strings().appUpdateErrorFailedUpdating, code: 0, userInfo: nil))
-        }))
-    }
-    
-    override func downloadUpdate() {
-        let downloader = InternalUpdaterDownloader(context: self.context, updateItem: self.updateItem, delegate: self)
-        self.download = downloader
-        let fileName = "Telegram \(self.updateItem.versionString ?? "")"
-
-        downloader.startPersistentDownload(with: SPUURLRequest(), bundleIdentifier: host.bundle.bundleIdentifier!, desiredFilename: fileName)
-    }
-    
-    override func downloaderDidReceiveData(ofLength length: UInt64) {
-        updateSharedState { state in
-            switch state.loadingState {
-            case let .loading(item, _, total):
-                return state.withUpdatedLoadingState(.loading(item: item, current: Int(length), total: total))
-            default:
-                return state
-            }
-        }
-    }
-    
-    override func downloaderDidReceiveExpectedContentLength(_ expectedContentLength: Int64) {
-        updateSharedState { state in
-            return state.withUpdatedLoadingState(.loading(item: self.updateItem, current: 0, total: Int(expectedContentLength)))
-        }
-    }
-    
-}
-
-private class ExternalUpdateDriver : SUBasicUpdateDriver {
+private final class ExternalUpdateDriver : SUBasicUpdateDriver {
     
     fileprivate var stagedOver: SUAppcastItem?
 
@@ -478,7 +340,7 @@ private class ExternalUpdateDriver : SUBasicUpdateDriver {
     
     override func didNotFindUpdate() {
         if isStaging {
-            dropStagedUpdate(self, failed: false)
+            dropStagedUpdate(self)
             return
         }
         updateSharedState {
@@ -548,24 +410,18 @@ private class ExternalUpdateDriver : SUBasicUpdateDriver {
         updateSharedState { state in
             return state.withUpdatedLoadingState(.failed(error as NSError? ?? NSError(domain: strings().unknownError, code: 0, userInfo: nil)))
         }
-        if isCurrentDriver {
-            trySwitchUpdaterBetweenSources()
-        }
     }
     
     override func abortUpdateWithError(_ error: Error!) {
         super.abortUpdateWithError(error)
         if isStaging {
             Queue.mainQueue().async {
-                dropStagedUpdate(self, failed: true)
+                dropStagedUpdate(self)
             }
             return
         }
         updateSharedState { state in
             return state.withUpdatedLoadingState(.failed(error as NSError? ?? NSError(domain: strings().unknownError, code: 0, userInfo: nil)))
-        }
-        if isCurrentDriver {
-            trySwitchUpdaterBetweenSources()
         }
     }
     
@@ -574,9 +430,6 @@ private class ExternalUpdateDriver : SUBasicUpdateDriver {
         updateSharedState { state in
             return state.withUpdatedLoadingState(.failed(error as NSError? ?? NSError(domain: strings().unknownError, code: 0, userInfo: nil)))
         }
-        if isCurrentDriver {
-            trySwitchUpdaterBetweenSources()
-        }
     }
 }
 
@@ -584,16 +437,6 @@ private class ExternalUpdateDriver : SUBasicUpdateDriver {
 
 
 private let disposable = MetaDisposable()
-
-func setAppUpdaterBaseDomain(_ domain: String?) {
-    updater.domain = domain
-    if let domain = domain {
-        updater.host = URL(string: domain)?.host
-    } else {
-        updater.host = nil
-    }
-}
-
 
 func crashRecoveryUpdater() -> CrashRecoveryUpdater {
     let state: Signal<CrashRecoveryUpdateState, NoError> = appUpdateStateSignal |> map { state in
@@ -617,7 +460,7 @@ func crashRecoveryUpdater() -> CrashRecoveryUpdater {
         }
     }
     return CrashRecoveryUpdater(state: state, check: {
-        updater_resetWithUpdaterSource(.external(context: nil))
+        checkForAppUpdates()
     }, install: {
         if case .readyToInstall = stateValue.with({ $0.loadingState }) {
             driver?.install(withToolAndRelaunch: true)
@@ -637,40 +480,20 @@ func updateAppIfNeeded() {
 }
 
 
-enum UpdaterSource : Equatable {
-    static func == (lhs: UpdaterSource, rhs: UpdaterSource) -> Bool {
-        switch lhs {
-        case let .external(lhsContext):
-            if case let .external(rhsContext) = rhs {
-                return lhsContext === rhsContext
-            } else {
-                return false
-            }
-        case let .internal(lhsContext):
-            if case let .internal(rhsContext) = rhs {
-                return lhsContext === rhsContext
-            } else {
-                return false
-            }
-        }
+private let updateFeedURL: URL? = {
+    guard let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+          let url = URL(string: feed), url.scheme == "https", url.host != nil,
+          url.user == nil, url.password == nil,
+          let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicDSAKeyFile") as? String,
+          !key.isEmpty, key != "dsa_pub.pem", key != "dsa_pub_prod.pem",
+          Bundle.main.url(forResource: key, withExtension: nil) != nil else {
+        return nil
     }
-    
-    case external(context: AccountContext?)
-    case `internal`(context: AccountContext)
-}
+    return url
+}()
 
-
-private var updateFeedURL: URL {
-    return URL(string: Bundle.main.infoDictionary!["SUFeedURL"] as! String)!
-}
-
-private func makeUpdateDriver(_ source: UpdaterSource) -> ExternalUpdateDriver {
-    switch source {
-    case .external:
-        return ExternalUpdateDriver(updater: updater)
-    case let .internal(context):
-        return InternalUpdateDriver(updater: updater, context: context)
-    }
+var appUpdatesConfigured: Bool {
+    updateFeedURL != nil
 }
 
 private var stagedDriver: ExternalUpdateDriver?
@@ -678,7 +501,7 @@ private var stagedStartedAt: CFAbsoluteTime = 0
 private let stagedUpdateTimeout: CFAbsoluteTime = 60 * 60
 
 private func stageNewerUpdate() {
-    guard case let .readyToInstall(item) = stateValue.with({ $0.loadingState }), let source = updaterSource else {
+    guard case let .readyToInstall(item) = stateValue.with({ $0.loadingState }), let updateFeedURL else {
         return
     }
     if stagedDriver != nil {
@@ -691,7 +514,7 @@ private func stageNewerUpdate() {
         let downloadDirectory = ((downloadPath as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: downloadDirectory)
     }
-    let staged = makeUpdateDriver(source)
+    let staged = ExternalUpdateDriver(updater: updater)
     staged.stagedOver = item
     stagedDriver = staged
     stagedStartedAt = CFAbsoluteTimeGetCurrent()
@@ -736,14 +559,11 @@ private func removeUnusedUpdateDownloads(keeping ready: ExternalUpdateDriver) {
     }
 }
 
-private func dropStagedUpdate(_ staged: ExternalUpdateDriver, failed: Bool) {
+private func dropStagedUpdate(_ staged: ExternalUpdateDriver) {
     guard stagedDriver === staged else {
         return
     }
     stagedDriver = nil
-    if failed, let source = updaterSource, let alternate = alternateUpdaterSource(source) {
-        updaterSource = alternate
-    }
 }
 
 private func cancelStagedUpdate() {
@@ -756,87 +576,37 @@ private func cancelStagedUpdate() {
 }
 
 private func resetUpdater() {
-    
-    #if !GITHUB
-        let update:()->Void = {
-            let state = stateValue.with { $0.loadingState }
-            switch state {
-            case .readyToInstall:
-                stageNewerUpdate()
-            case .installing, .unarchiving, .loading:
-                break
-            default:
-                driver?.checkForUpdates(at: updateFeedURL, host: host, domain: updater.host)
-            }
-        }
-    
-    
-        let signal: Signal<Never, NoError> = Signal { subscriber in
-            update()
-            subscriber.putCompletion()
-            return EmptyDisposable
-            } |> delay(20 * 60, queue: .mainQueue()) |> restart
-        disposable.set(signal.start())
-    
-        update()
-    #endif
-    
-   
-}
-
-private var updaterSource: UpdaterSource? = nil
-
-func updater_resetWithUpdaterSource(_ source: UpdaterSource, force: Bool = true) {
-    let state = stateValue.with { $0 }
-    switch state.loadingState {
-    case .readyToInstall:
-        updaterSource = source
-        if force {
-            resetUpdater()
-        }
+    guard let updateFeedURL else {
         return
-    default:
-        break
     }
-    if updaterSource != source {
-        updaterSource = source
-        driver = makeUpdateDriver(source)
-    }
-    if force {
-        if state.loadingState != .initializing {
-            updateState {
-                $0.withUpdatedLoadingState(.initializing)
-            }
-            resetUpdater()
+    let update: () -> Void = {
+        switch stateValue.with({ $0.loadingState }) {
+        case .readyToInstall:
+            stageNewerUpdate()
+        case .installing, .unarchiving, .loading:
+            break
+        default:
+            driver?.checkForUpdates(at: updateFeedURL, host: host, domain: updater.host)
         }
     }
+
+    let signal: Signal<Never, NoError> = Signal { subscriber in
+        update()
+        subscriber.putCompletion()
+        return EmptyDisposable
+    } |> delay(20 * 60, queue: .mainQueue()) |> restart
+    disposable.set(signal.start())
+    update()
 }
 
-
-private func alternateUpdaterSource(_ source: UpdaterSource) -> UpdaterSource? {
-    switch source {
-    case let .external(context):
-        #if STABLE || DEBUG || BETA
-        if let context = context {
-            return .internal(context: context)
-        }
-        #endif
-        return nil
-    case let .internal(context):
-        return .external(context: context)
+func checkForAppUpdates() {
+    guard appUpdatesConfigured else {
+        return
     }
-}
-
-private func trySwitchUpdaterBetweenSources() {
-    if let source = updaterSource, let alternate = alternateUpdaterSource(source) {
-        switch alternate {
-        case .internal:
-            updater_resetWithUpdaterSource(alternate, force: true)
-        case .external:
-            updater_resetWithUpdaterSource(alternate, force: false)
-        }
+    if driver == nil {
+        driver = ExternalUpdateDriver(updater: updater)
     }
+    resetUpdater()
 }
 
 #endif
-

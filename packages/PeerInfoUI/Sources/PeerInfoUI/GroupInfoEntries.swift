@@ -2030,7 +2030,7 @@ enum GroupInfoSection : Int {
 }
 
 
-func groupInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments: PeerInfoArguments<Context>, inputActivities: [PeerId: PeerInputActivity], channelMembers: [RenderedChannelParticipant] = [], mediaTabsData: PeerMediaTabsData, inviteLinksCount: Int32, joinRequestsCount: Int32, availableReactions: AvailableReactions?, revenueState: StarsRevenueStatsContextState?) -> [PeerInfoEntry] {
+func groupInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments: PeerInfoArguments<Context>, inputActivities: [PeerId: PeerInputActivity], channelMembers: [RenderedChannelParticipant] = [], mediaTabsData: PeerMediaTabsData, inviteLinksCount: Int32, joinRequestsCount: Int32, availableReactions: AvailableReactions?, revenueState: StarsRevenueStatsContextState?, peerIdFormat: ProfilePeerIdFormat?) -> [PeerInfoEntry] {
     var entries: [GroupInfoEntry<Context>] = []
     if let group = peerViewMainPeer(view), let arguments = arguments as? GroupInfoArguments<Context>, let state = arguments.state as? GroupInfoState {
         
@@ -2344,8 +2344,8 @@ func groupInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments
             if !usernames.isEmpty {
                 aboutBlock.append(GroupInfoEntry<Context>.addressName(section: GroupInfoSection.desc.rawValue, name: usernames, viewType: .singleItem))
             }
-            if FastSettings.canViewPeerId {
-                aboutBlock.append(GroupInfoEntry<Context>.peerId(section: GroupInfoSection.desc.rawValue, value: "\(group.id.id._internalGetInt64Value())", viewType: .singleItem))
+            if let peerIdFormat, let peerIdText = profilePeerIdText(group.id, format: peerIdFormat) {
+                aboutBlock.append(GroupInfoEntry<Context>.peerId(section: GroupInfoSection.desc.rawValue, value: peerIdText, viewType: .singleItem))
             }
 
             applyBlock(aboutBlock)

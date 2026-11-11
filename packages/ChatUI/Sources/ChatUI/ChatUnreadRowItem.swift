@@ -66,9 +66,6 @@ private class ChatUnreadRowView: TableRowView {
         addSubview(text)
         text.isSelectable = false
         text.userInteractionEnabled = false
-        
-        backgroundView.layer?.cornerRadius = 10
-
     }
     
     required init?(coder: NSCoder) {
@@ -112,8 +109,13 @@ private class ChatUnreadRowView: TableRowView {
         guard let item = item as? ChatRowItem else {
             return
         }
-        transition.updateFrame(view: backgroundView, frame: size.bounds.insetBy(dx: 10, dy: 6))
-        transition.updateFrame(view: text, frame: text.centerFrame().offsetBy(dx: item.monoforumState == .vertical ? 40 : 0, dy: 0))
+        let textFrame = text.centerFrame().offsetBy(dx: item.monoforumState == .vertical ? 40 : 0, dy: 0)
+        let pillWidth = min(max(0, size.width - 20), textFrame.width + 24)
+        let pillHeight = max(0, size.height - 12)
+        let pill = NSRect(x: textFrame.midX - pillWidth / 2, y: (size.height - pillHeight) / 2, width: pillWidth, height: pillHeight)
+        backgroundView.layer?.cornerRadius = pillHeight / 2
+        transition.updateFrame(view: backgroundView, frame: pill)
+        transition.updateFrame(view: text, frame: textFrame)
     }
     
 

@@ -1268,7 +1268,7 @@ enum ChannelInfoSection : Int {
     case media = 9
 }
 
-func channelInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments:PeerInfoArguments<Context>, mediaTabsData: PeerMediaTabsData, inviteLinksCount: Int32, joinRequestsCount: Int32, availableReactions: AvailableReactions?, stories: PeerExpiringStoryListContext.State?, revenueState: StarsRevenueStatsContextState?, tonRevenueState: StarsRevenueStatsContextState?) -> [PeerInfoEntry] {
+func channelInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments:PeerInfoArguments<Context>, mediaTabsData: PeerMediaTabsData, inviteLinksCount: Int32, joinRequestsCount: Int32, availableReactions: AvailableReactions?, stories: PeerExpiringStoryListContext.State?, revenueState: StarsRevenueStatsContextState?, tonRevenueState: StarsRevenueStatsContextState?, peerIdFormat: ProfilePeerIdFormat?) -> [PeerInfoEntry] {
     
     let arguments = arguments as! ChannelInfoArguments<Context>
     var state:ChannelInfoState {
@@ -1395,8 +1395,8 @@ func channelInfoEntries<Context: AccountContextProtocol>(view: PeerView, argumen
             if !usernames.isEmpty {
                 aboutBlock.append(.userName(sectionId: .desc, value: usernames, viewType: .singleItem))
             }
-            if FastSettings.canViewPeerId {
-                aboutBlock.append(.peerId(sectionId: .desc, value: "\(channel.id.id._internalGetInt64Value())", viewType: .singleItem))
+            if let peerIdFormat, let peerIdText = profilePeerIdText(channel.id, format: peerIdFormat) {
+                aboutBlock.append(.peerId(sectionId: .desc, value: peerIdText, viewType: .singleItem))
             }
             applyBlock(aboutBlock)
             

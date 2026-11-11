@@ -49,6 +49,7 @@ import PerfLab
 #endif
 import SettingsUI
 import HTMLBubbles
+import CaptureExclusion
 
 //#if BETA || DEBUG
 //import Firebase
@@ -190,7 +191,7 @@ extension TLottieBridge : @retroactive LottieRendererBridge {
 
 
 class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterDelegate, NSWindowDelegate {
-   
+    private weak var streamerModeMenuItem: NSMenuItem?
 
     @IBOutlet weak var window: Window! {
         didSet {
@@ -329,6 +330,10 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
 
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        guard ApiEnvironment.hasApiCredentials, !ApiEnvironment.teamId.isEmpty else {
+            showLaunchConfigurationError("Set GERGRAM_API_ID, GERGRAM_API_HASH, and GERGRAM_TEAM_ID in Local.xcconfig, then rebuild gergram.")
+            return
+        }
 
         installInvalidFrameDetector()
         memoryPressureMonitor = MemoryPressureMonitor()
@@ -367,6 +372,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
 //        window.addTitlebarAccessoryViewController(titleBarAccessoryViewController)
         
         appDelegate = self
+        StreamerModeController.shared.restore()
         ApiEnvironment.migrate()
         
         if let containerUrl = ApiEnvironment.containerURL {
@@ -393,6 +399,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         }
         
         guard let containerUrl = ApiEnvironment.containerURL else {
+            showLaunchConfigurationError("gergram could not open its shared app container. Check the signing team and app group entitlements, then rebuild.")
             return
         }
         
@@ -464,18 +471,22 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
 //            MTLogSetEnabled(false)
 //        #endif
         
-        let bundleId = Bundle.main.bundleIdentifier
-        if let bundleId = bundleId {
-            LSSetDefaultHandlerForURLScheme("tg" as CFString, bundleId as CFString)
-        }
-        
-        
         launchInterface()
         
         
     }
     
     
+    private func showLaunchConfigurationError(_ detail: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "gergram setup required"
+        alert.informativeText = detail
+        alert.addButton(withTitle: "Quit")
+        alert.runModal()
+        NSApp.terminate(nil)
+    }
+
     private func launchInterface() {
         initializeAccountManagement()
         
@@ -605,9 +616,6 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         window.applyChrome(.standard)
         
         window.minSize = NSMakeSize(400, 550)
-        
-        let networkDisposable = MetaDisposable()
-        
         
        
 //
@@ -1171,27 +1179,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                                 execute(inapp: inApp(for: executeUrlAfterLogin.nsstring, context: context.context))
                             }
                             #if !APP_STORE
-                            networkDisposable.set((context.context.account.postbox.preferencesView(keys: [PreferencesKeys.networkSettings]) |> delay(5.0, queue: Queue.mainQueue()) |> deliverOnMainQueue).start(next: { settings in
-                                let settings = settings.values[PreferencesKeys.networkSettings]?.get(NetworkSettings.self)
-                                
-                                let applicationUpdateUrlPrefix: String?
-                                if let prefix = settings?.applicationUpdateUrlPrefix {
-                                    if prefix.range(of: "://") == nil {
-                                        applicationUpdateUrlPrefix = "https://" + prefix
-                                    } else {
-                                        applicationUpdateUrlPrefix = prefix
-                                    }
-                                } else {
-                                    applicationUpdateUrlPrefix = nil
-                                }
-                                setAppUpdaterBaseDomain(applicationUpdateUrlPrefix)
-                                #if STABLE || BETA || DEBUG
-                                updater_resetWithUpdaterSource(.internal(context: context.context))
-                                #else
-                                updater_resetWithUpdaterSource(.external(context: context.context))
-                                #endif
-                                
-                            }))
+                            checkForAppUpdates()
                             #endif
                             
                             if let url = AppDelegate.eventProcessed {
@@ -1237,31 +1225,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                                     showModal(with: context.modal, for: window, animated: presentAuthAnimated)
                                     
                                     #if !APP_STORE
-                                    networkDisposable.set((context.account.postbox.preferencesView(keys: [PreferencesKeys.networkSettings]) |> delay(5.0, queue: Queue.mainQueue()) |> deliverOnMainQueue).start(next: { settings in
-                                        let settings = settings.values[PreferencesKeys.networkSettings]?.get(NetworkSettings.self)
-                                        
-                                        let applicationUpdateUrlPrefix: String?
-                                        if let prefix = settings?.applicationUpdateUrlPrefix {
-                                            if prefix.range(of: "://") == nil {
-                                                applicationUpdateUrlPrefix = "https://" + prefix
-                                            } else {
-                                                applicationUpdateUrlPrefix = prefix
-                                            }
-                                        } else {
-                                            applicationUpdateUrlPrefix = nil
-                                        }
-                                        setAppUpdaterBaseDomain(applicationUpdateUrlPrefix)
-                                        #if STABLE
-                                        if let context = self.contextValue?.context {
-                                            updater_resetWithUpdaterSource(.internal(context: context))
-                                        } else {
-                                            updater_resetWithUpdaterSource(.external(context: nil))
-                                        }
-                                        #else
-                                        updater_resetWithUpdaterSource(.external(context: self.contextValue?.context))
-                                        #endif
-                                        
-                                    }))
+                                    checkForAppUpdates()
                                     #endif
                                     
                                     
@@ -1346,26 +1310,51 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
 
     @IBAction func checkForUpdates(_ sender: Any) {
         #if !APP_STORE
+            guard appUpdatesConfigured else {
+                return
+            }
             showModal(with: InputDataModalController(AppUpdateViewController()), for: window)
-            #if STABLE
-                if let context = self.contextValue?.context {
-                    updater_resetWithUpdaterSource(.internal(context: context))
-                } else {
-                    updater_resetWithUpdaterSource(.external(context: nil))
-                }
-            #else
-                updater_resetWithUpdaterSource(.external(context: self.contextValue?.context))
-            #endif
+            checkForAppUpdates()
         #endif
     }
     
     override func awakeFromNib() {
         #if APP_STORE
-        if let menu = NSApp.mainMenu?.item(at: 0)?.submenu, let sparkleItem = menu.item(withTag: 1000) {
+        let showUpdateMenuItem = false
+        #else
+        let showUpdateMenuItem = appUpdatesConfigured
+        #endif
+        if !showUpdateMenuItem, let menu = NSApp.mainMenu?.item(at: 0)?.submenu, let sparkleItem = menu.item(withTag: 1000) {
             menu.removeItem(sparkleItem)
         }
-        #endif
         installServicesMenu()
+        installStreamerModeMenu()
+    }
+
+    private func installStreamerModeMenu() {
+        guard let menu = NSApp.mainMenu?.item(at: 0)?.submenu, let index = menu.items.firstIndex(where: { $0.action == #selector(showQuickSwitcher(_:)) }) else {
+            return
+        }
+        let item = makeStreamerModeMenuItem()
+        streamerModeMenuItem = item
+        menu.insertItem(item, at: index)
+    }
+
+    func makeStreamerModeMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: strings().appMenuStreamerMode, action: #selector(toggleStreamerMode(_:)), keyEquivalent: "")
+        item.target = self
+        item.state = StreamerModeController.shared.isEnabled ? .on : .off
+        item.toolTip = strings().appMenuStreamerModeDescription
+        return item
+    }
+
+    @objc private func toggleStreamerMode(_ item: NSMenuItem) {
+        let streamerMode = StreamerModeController.shared
+        streamerMode.setEnabled(!streamerMode.isEnabled)
+        let state: NSControl.StateValue = streamerMode.isEnabled ? .on : .off
+        item.state = state
+        streamerModeMenuItem?.state = state
+        sharedApplicationContextValue?.sharedContext.updateStreamerModeMenuState(state)
     }
 
     private func installServicesMenu() {
@@ -1431,11 +1420,9 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     
     private func crashRecoveryUpdate() -> CrashRecoveryUpdate {
         #if APP_STORE
-        return .appStore
-        #elseif GITHUB || DEBUG
-        return .website
+        return .unavailable
         #else
-        return .updater(crashRecoveryUpdater())
+        return appUpdatesConfigured ? .updater(crashRecoveryUpdater()) : .unavailable
         #endif
     }
     

@@ -42,10 +42,10 @@ private func crashReportIcon() -> CGImage? {
     return NSApp.applicationIconImage?.cgImage(forProposedRect: &rect, context: nil, hints: nil)
 }
 
-private func sendCrashReports(_ reports: [CrashReport], context: AccountContext) {
-    _ = (context.engine.peers.resolvePeerByName(name: crashReportsBotUsername, referrer: nil) |> filter { $0 != .progress } |> take(1) |> deliverOnMainQueue).start(next: { result in
+private func sendCrashReports(_ reports: [CrashReport], to bot: String, context: AccountContext) {
+    _ = (context.engine.peers.resolvePeerByName(name: bot, referrer: nil) |> filter { $0 != .progress } |> take(1) |> deliverOnMainQueue).start(next: { result in
         guard let peer = result.result else {
-            showModalText(for: context.window, text: strings().crashReportCouldNotOpenBot(crashReportsBotUsername))
+            showModalText(for: context.window, text: strings().crashReportCouldNotOpenBot(bot))
             return
         }
         navigateToChat(navigation: context.bindings.rootNavigation(), context: context, chatLocation: .peer(peer.id), callback: { controller in
@@ -155,6 +155,9 @@ func installChatListUIHooks() {
     }, formatPhoneNumber: { context, number in
         return formatPhoneNumber(context: context.concrete, number: number)
     }, crashReportCard: { context in
+        guard let bot = Configuration.value(for: .crashReportBot), bot.lowercased() != crashReportsBotUsername else {
+            return .single(nil)
+        }
         return crashReportStore.reports |> deliverOnMainQueue |> map { reports -> ChatListCrashReportCard? in
             guard let newest = reports.first else {
                 return nil
@@ -163,7 +166,7 @@ func installChatListUIHooks() {
             let info = strings().crashReportCardInfo
             return ChatListCrashReportCard(id: newest.incidentId, title: title, info: info, icon: crashReportIcon(), action: {
                 crashReportStore.markHandled(reports)
-                sendCrashReports(reports, context: context.concrete)
+                sendCrashReports(reports, to: bot, context: context.concrete)
             }, dismiss: {
                 crashReportStore.markHandled(reports)
             })

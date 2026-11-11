@@ -143,6 +143,13 @@ class SharedAccountContext {
     }
 
     private var statusItem: NSStatusItem?
+    #if !SHARE
+    private weak var streamerModeStatusItem: NSMenuItem?
+
+    func updateStreamerModeMenuState(_ state: NSControl.StateValue) {
+        streamerModeStatusItem?.state = state
+    }
+    #endif
     private var isLocked = false
 
     
@@ -218,7 +225,14 @@ class SharedAccountContext {
             }, dynamicTitle: {
                 return !mainWindow.isKeyWindow ? strings().statusBarActivate : strings().statusBarHide
             }))
-                    
+
+            #if !SHARE
+            if let streamerModeItem = appDelegate?.makeStreamerModeMenuItem() {
+                streamerModeStatusItem = streamerModeItem
+                menu.addItem(streamerModeItem)
+            }
+            #endif
+
             menu.addItem(ContextMenuItem(strings().statusBarQuit, handler: {
                 NSApp.terminate(nil)
             }))
@@ -233,6 +247,7 @@ class SharedAccountContext {
         if show {
             if statusItem == nil {
                 statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+                updateStatusBarMenuItem()
             }
         } else {
             if let statusItem = statusItem {

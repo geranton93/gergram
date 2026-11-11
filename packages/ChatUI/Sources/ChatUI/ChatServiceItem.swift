@@ -731,7 +731,14 @@ public class ChatServiceItem: ChatRowItem {
     public private(set) var suggestPhotoData: SuggestPhotoData? = nil
     public private(set) var wallpaperData: WallpaperData? = nil
     public private(set) var storydata: StoryData? = nil
-    public private(set) var suggestChannelsData: ChannelSuggestData? = nil
+    private var availableChannelSuggestions: ChannelSuggestData?
+    private var usesLocalChannelRecommendationVisibility = false
+    public var suggestChannelsData: ChannelSuggestData? {
+        if usesLocalChannelRecommendationVisibility && !chatInteraction.channelRecommendationsExpanded.with({ $0 }) {
+            return nil
+        }
+        return availableChannelSuggestions
+    }
     public private(set) var suggestPostStatus: SuggestPostData? = nil
     public private(set) var suggestPostHeader: SuggestpostHeader? = nil
     public private(set) var setThemeData: SetThemeData? = nil
@@ -1689,8 +1696,11 @@ public class ChatServiceItem: ChatRowItem {
                 case .joinedChannel:
                     let text = strings().chatServiceJoinedChannel
                     let _ = attributedString.append(string: text, color: grayTextColor, font: NSFont.normal(theme.fontSize))
-                    if let recommendedChannels = entry.additionalData.recommendedChannels, !recommendedChannels.channels.isEmpty, !recommendedChannels.isHidden {
-                        self.suggestChannelsData = .init(channels: recommendedChannels, context: context, presentation: theme)
+                    if let recommendedChannels = entry.additionalData.recommendedChannels, !recommendedChannels.channels.isEmpty {
+                        self.usesLocalChannelRecommendationVisibility = FastSettings.collapseChannelRecommendations
+                        if self.usesLocalChannelRecommendationVisibility || !recommendedChannels.isHidden {
+                            self.availableChannelSuggestions = .init(channels: recommendedChannels, context: context, presentation: theme)
+                        }
                     }
                 case let .giveawayResults(winners, unclaimed, stars):
                     var text: String
@@ -3103,6 +3113,11 @@ public class ChatServiceItem: ChatRowItem {
         guard let message = self.message else {
             return
         }
+        if usesLocalChannelRecommendationVisibility {
+            let _ = chatInteraction.channelRecommendationsExpanded.swap(false)
+            redraw(animated: true)
+            return
+        }
         _ = context.engine.peers.toggleRecommendedChannelsHidden(peerId: message.id.peerId, hidden: true).start()
     }
     public func revealRecommendedChannels() {
@@ -3110,6 +3125,11 @@ public class ChatServiceItem: ChatRowItem {
             return
         }
         if let data = self.entry.additionalData.recommendedChannels {
+            if usesLocalChannelRecommendationVisibility {
+                let _ = chatInteraction.channelRecommendationsExpanded.modify { !$0 }
+                redraw(animated: true)
+                return
+            }
             _ = context.engine.peers.toggleRecommendedChannelsHidden(peerId: message.id.peerId, hidden: !data.isHidden).start()
         }
     }

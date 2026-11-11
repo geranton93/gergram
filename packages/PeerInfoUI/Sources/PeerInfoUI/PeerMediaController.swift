@@ -13,6 +13,7 @@
  import ChatModeTypes
  import ChatUI
  import GeneralRows
+ import InAppSettings
   import InputDataUI
  import LocalAnimations
  import Localization
@@ -1582,11 +1583,13 @@
             return general
         }
         
-        let tabSignal = combineLatest(queue: .mainQueue(), mergedTabs, modeValue.get())
-        |> map { tabs, selected -> (tabs: [PeerMediaCollectionMode], selected: PeerMediaCollectionMode?, hasLoaded: Bool) in
-            var selectedValue = selected
-            if selected == nil || !tabs.contains(where: { $0.exists && $0.tag == selected }) {
-                if let selected = selected {
+        let tabSignal = combineLatest(queue: .mainQueue(), mergedTabs, modeValue.get(), FastSettings.hideSimilarChannelsTabSignal)
+        |> map { allTabs, selectedMode, hideSimilarChannels -> (tabs: [PeerMediaCollectionMode], selected: PeerMediaCollectionMode?, hasLoaded: Bool) in
+            let tabs = hideSimilarChannels ? allTabs.filter { $0.tag != .similarChannels } : allTabs
+            let requestedInitialMode = hideSimilarChannels && initialMode == .similarChannels ? nil : initialMode
+            var selectedValue = selectedMode
+            if selectedMode == nil || !tabs.contains(where: { $0.exists && $0.tag == selectedMode }) {
+                if let selected = selectedMode {
                     let index = tabsOrder.firstIndex(of: selected)!
                     var perhapsBest: PeerMediaCollectionMode?
                     for i in stride(from: index, to: -1, by: -1) {
@@ -1595,9 +1598,10 @@
                             break
                         }
                     }
-                    selectedValue = perhapsBest ?? tabs.filter { $0.exists }.last?.tag ?? selected
+                    let fallback = hideSimilarChannels && selected == .similarChannels ? nil : selected
+                    selectedValue = perhapsBest ?? tabs.filter { $0.exists }.last?.tag ?? fallback
                 } else {
-                    selectedValue = initialMode ?? tabs.filter { $0.exists }.first?.tag
+                    selectedValue = requestedInitialMode ?? tabs.filter { $0.exists }.first?.tag
                 }
                 
             }

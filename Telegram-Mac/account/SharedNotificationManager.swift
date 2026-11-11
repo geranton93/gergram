@@ -8,6 +8,7 @@ import ObjcUtils
 import InAppSettings
 import PasscodeCore
 import WalletContext
+import CaptureExclusion
 
 func getNotificationMessageId(userInfo:[AnyHashable: Any], for prefix: String) -> MessageId? {
     if let msgId = userInfo["\(prefix).message.id"] as? Int32, let msgNamespace = userInfo["\(prefix).message.namespace"] as? Int32, let namespace = userInfo["\(prefix).peer.namespace"] as? Int32, let id = userInfo["\(prefix).peer.id"] as? Int64 {
@@ -825,12 +826,15 @@ final class SharedNotificationManager : NSObject, NSUserNotificationCenterDelega
     }
     
     private func deliver(_ notification: NSUserNotification) {
+        guard !StreamerModeController.shared.isEnabled else { return }
         _ = UNUserNotifications.authorizationStatus.start(next: { status in
+            guard !StreamerModeController.shared.isEnabled else { return }
             switch status {
             case .authorized:
                 UNUserNotifications.current?.add(notification)
             case .notDetermined:
                 UNUserNotifications.current?.authorize { manager in
+                    guard !StreamerModeController.shared.isEnabled else { return }
                     manager.add(notification)
                 }
             default:

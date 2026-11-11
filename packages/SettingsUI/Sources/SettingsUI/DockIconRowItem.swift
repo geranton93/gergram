@@ -222,14 +222,17 @@ private final class DockIconView : Control {
         self.item = item
         self.rowItem = rowItem
         
-        let signal = context.account.postbox.mediaBox.resourceStatus(item.icon.file.resource, approximateSynchronousValue: true) |> deliverOnMainQueue
-        
-        
-        statusDisposable.set(signal.start(next: { [weak self] status in
+        let isBundleIcon = item.icon.file.fileName == TelegramApplicationIcons.Icon.defaultIconName
+        let signal: Signal<MediaResourceStatus, NoError> = isBundleIcon ? .single(.Local) : context.account.postbox.mediaBox.resourceStatus(item.icon.file.resource, approximateSynchronousValue: true)
+        statusDisposable.set((signal |> deliverOnMainQueue).start(next: { [weak self] status in
             self?.updateItem(item, context: context, status: status)
         }))
-        
-        fetchDisposable.set(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: .media(media: AnyMediaReference.message(message: item.icon.reference, media: item.icon.file), resource: item.icon.file.resource)).start())
+
+        if isBundleIcon {
+            fetchDisposable.set(nil)
+        } else {
+            fetchDisposable.set(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: .media(media: AnyMediaReference.message(message: item.icon.reference, media: item.icon.file), resource: item.icon.file.resource)).start())
+        }
         
         if !context.isPremium, item.icon.isPremium {
             let current: SimpleLayer
@@ -309,7 +312,14 @@ private final class DockIconView : Control {
         
         if progress == nil {
             let signal: Signal<CGImage?, NoError> = Signal { subscriber in
-                let image = createNSImage(fromIcnsFile: context.account.postbox.mediaBox.resourcePath(item.icon.file.resource), withSize: NSMakeSize(60, 60))?._cgImage
+                let image: CGImage?
+                if item.icon.file.fileName == TelegramApplicationIcons.Icon.defaultIconName {
+                    image = Bundle.main.path(forResource: "AppIcon", ofType: "icns").flatMap {
+                        createNSImage(fromIcnsFile: $0, withSize: NSMakeSize(60, 60))?._cgImage
+                    } ?? NSImage(named: NSImage.applicationIconName)?._cgImage
+                } else {
+                    image = createNSImage(fromIcnsFile: context.account.postbox.mediaBox.resourcePath(item.icon.file.resource), withSize: NSMakeSize(60, 60))?._cgImage
+                }
                 subscriber.putNext(image)
                 subscriber.putCompletion()
                 return EmptyDisposable

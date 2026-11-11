@@ -29,6 +29,14 @@ import HTMLBubbles
 
 private let forwardKeyString = ":##"
 
+private let chatDateFormatterWithSeconds: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .none
+    formatter.timeStyle = .medium
+    formatter.timeZone = NSTimeZone.local
+    return formatter
+}()
+
 public struct ChatFloatingPhoto {
     public var point: NSPoint
     public var items:[ChatRowItem]
@@ -2628,7 +2636,6 @@ public class ChatRowItem: TableRowItem {
                 guestChatBadge = layout
             }
             
-            let dateFormatter = DateSelectorUtil.chatDateFormatter
             let dateColor = isStateOverlayLayout ? stateOverlayTextColor : (!hasBubble ? theme.colors.grayText : theme.chat.grayText(isIncoming, object.renderType == .bubble))
             
             let dateFont: NSFont = renderType == .bubble ? .normal(.small) : .normal(.short)
@@ -2638,7 +2645,7 @@ public class ChatRowItem: TableRowItem {
                 var time:TimeInterval = TimeInterval(attribute.approximateCompletionTime)
                 time -= context.timeDifference
                 
-                let dateText = dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time)))
+                let dateText = DateSelectorUtil.chatDateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time)))
                 
                 let attr: NSMutableAttributedString = NSAttributedString.initialize(string: strings().chatVideoProccessingMessageTime(dateText), color: dateColor, font: dateFont).mutableCopy() as! NSMutableAttributedString
                 
@@ -2650,6 +2657,7 @@ public class ChatRowItem: TableRowItem {
                 time -= context.timeDifference
                 
                 
+                let dateFormatter = FastSettings.showMessageTimestampSeconds ? chatDateFormatterWithSeconds : DateSelectorUtil.chatDateFormatter
                 let attr: NSMutableAttributedString = NSAttributedString.initialize(string: dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time))), color: dateColor, font: dateFont).mutableCopy() as! NSMutableAttributedString
                 
                 if let attribute = message.inlineBotAttribute, let peerId = attribute.peerId, let peer = message.peers[peerId] {
@@ -2768,13 +2776,14 @@ public class ChatRowItem: TableRowItem {
                     let font: NSFont = renderType == .bubble ? .normal(.small) : .normal(.short)
                     if message_primary_edited_date, self.date == nil {
                         let editedDate = Date(timeIntervalSince1970: TimeInterval(editedAttribute.date))
+                        let dateFormatter = FastSettings.showMessageTimestampSeconds ? chatDateFormatterWithSeconds : DateSelectorUtil.chatDateFormatter
                         let time: String
                         if Calendar.current.isDateInToday(editedDate) {
                             string = strings().chatRowEdited("\(strings().timeToday) \(strings().timeAt)")
-                            time = DateSelectorUtil.chatDateFormatter.string(from: editedDate)
+                            time = dateFormatter.string(from: editedDate)
                         } else if Calendar.current.isDateInYesterday(editedDate) {
                             string = strings().chatRowEdited("\(strings().timeYesterday) \(strings().timeAt)")
-                            time = DateSelectorUtil.chatDateFormatter.string(from: editedDate)
+                            time = dateFormatter.string(from: editedDate)
                         } else {
                             time = DateUtils.string(forLastSeen: editedAttribute.date)
                         }

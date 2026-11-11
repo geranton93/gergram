@@ -857,8 +857,18 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
         let querySignal: Signal<String?, NoError> = searchQuery.get()
         let viewOnStageSignal: Signal<Bool, NoError> = viewOnStage |> filter { $0 } |> distinctUntilChanged
         let approvedSignal: Signal<ApprovedGlobalPostQueryState?, NoError> = approvedGlobalPostQueryState
-        let combinedInput: Signal<(SearchTags, String?, Bool, ApprovedGlobalPostQueryState?), NoError> = combineLatest(tagsSignal, querySignal, viewOnStageSignal, approvedSignal)
-        let searchItems = combinedInput |> mapToSignal { globalTags, query, _, approveGlobalPostState -> Signal<([ChatListSearchEntry], Bool, Bool, SearchMessagesState?, SearchMessagesResult?), NoError> in
+        let searchInput = combineLatest(tagsSignal, querySignal, viewOnStageSignal, approvedSignal)
+        let disableGlobalPeerSearch = additionalSettings(accountManager: context.sharedContext.accountManager)
+            |> map { $0.disableGlobalPeerSearch }
+            |> distinctUntilChanged
+        let combinedInput = searchInput |> mapToSignal { tags, query, isVisible, approved -> Signal<(SearchTags, String?, Bool, ApprovedGlobalPostQueryState?, Bool), NoError> in
+            if case .common(.root) = target, options.contains(.chats), tags.isEmpty,
+               let query, !query.isEmpty, !query.hasPrefix("#"), !query.hasPrefix("$") {
+                return disableGlobalPeerSearch |> map { (tags, query, isVisible, approved, $0) }
+            }
+            return .single((tags, query, isVisible, approved, false))
+        }
+        let searchItems = combinedInput |> mapToSignal { globalTags, query, _, approveGlobalPostState, disableGlobalPeerSearch -> Signal<([ChatListSearchEntry], Bool, Bool, SearchMessagesState?, SearchMessagesResult?), NoError> in
             let query = query ?? ""
             var ids:[PeerId:PeerId] = [:]
             if !query.isEmpty || !globalTags.isEmpty, globalTags.listType != .globalPosts {
@@ -983,7 +993,7 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
                         foundRemotePeers = .single(([], [], false))
                     } else {
                         location = globalTags.location(.allChats, communityId: communityId)
-                        if globalTags.isEmpty {
+                        if globalTags.isEmpty && !disableGlobalPeerSearch {
                         
                             let adPeers: Signal<[AdPeer], NoError>
                             

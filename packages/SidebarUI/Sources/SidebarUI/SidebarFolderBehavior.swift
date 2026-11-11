@@ -94,7 +94,8 @@ func sidebarMenuAddingPeers(_ data: ChatListFilterData, peerIds: [PeerId]) -> Ch
 }
 
 func sidebarResortRange(rowCount: Int, isPremium: Bool) -> NSRange {
-    return isPremium ? NSMakeRange(1, rowCount - 1) : NSMakeRange(2, rowCount - 2)
+    let firstReorderableRow = isPremium ? 1 : 2
+    return NSMakeRange(firstReorderableRow, max(0, rowCount - firstReorderableRow))
 }
 
 func sidebarReorderedFilters(_ filters: [ChatListFilter], from: Int, to: Int, rangeLocation: Int, offset: Int) -> [ChatListFilter] {

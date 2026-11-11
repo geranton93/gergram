@@ -18,6 +18,14 @@ import FoundationUtils
 import TelegramMediaUtils
 import AppAnalytics
 
+private func profilePeerIdFormatTitle(_ format: ProfilePeerIdFormat) -> String {
+    switch format {
+    case .telegramAPI:
+        return "Telegram API"
+    case .botAPI:
+        return "Bot API"
+    }
+}
 
 private enum GeneralSettingsEntry : Comparable, Identifiable {
     case section(sectionId:Int)
@@ -48,6 +56,11 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case previewChats(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case previewChatsInfo(sectionId:Int)
     case showProfileId(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
+    case profileIdFormat(sectionId: Int, format: ProfilePeerIdFormat)
+    case collapseChannelRecommendations(sectionId: Int, enabled: Bool)
+    case hideSimilarChannelsTab(sectionId: Int, enabled: Bool)
+    case disableGlobalPeerSearch(sectionId: Int, enabled: Bool)
+    case showMessageTimestampSeconds(sectionId: Int, enabled: Bool)
     public var stableId: Int {
         switch self {
         case let .header(_, uniqueId, _):
@@ -104,6 +117,16 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 25
         case .previewChatsInfo:
             return 26
+        case .profileIdFormat:
+            return 27
+        case .collapseChannelRecommendations:
+            return 28
+        case .hideSimilarChannelsTab:
+            return 29
+        case .disableGlobalPeerSearch:
+            return 30
+        case .showMessageTimestampSeconds:
+            return 31
         case let .section(id):
             return (id + 1) * 1000 - id
         }
@@ -162,6 +185,10 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
         case let .previewChatsInfo(sectionId):
             return (sectionId * 1000) + stableId
         case let .showProfileId(sectionId, _, _):
+            return (sectionId * 1000) + stableId
+        case let .profileIdFormat(sectionId, _):
+            return (sectionId * 1000) + stableId
+        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .showMessageTimestampSeconds(sectionId, _):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -267,7 +294,32 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
                 arguments.callSettings()
             })
         case let .showProfileId(_, value, viewType):
-            return GeneralInteractedRowItem(initialSize, name: strings().generalSettingsShowProfileIdText, type: .switchable(value), viewType: viewType, action: arguments.showProfileId)
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsShowProfileIdText, type: .switchable(value), viewType: viewType, action: arguments.showProfileId)
+        case let .profileIdFormat(_, format):
+            let options = ProfilePeerIdFormat.allCases.map { option in
+                ContextMenuItem(profilePeerIdFormatTitle(option), handler: {
+                    FastSettings.profilePeerIdFormat = option
+                }, itemImage: option == format ? MenuAnimation.menu_check_selected.value : nil)
+            }
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsShowProfileIdFormat, type: .contextSelector(profilePeerIdFormatTitle(format), options), viewType: .lastItem)
+        case let .collapseChannelRecommendations(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsSimilarChannelsCollapse, type: .switchable(enabled), viewType: .firstItem, action: {
+                FastSettings.collapseChannelRecommendations.toggle()
+            })
+        case let .hideSimilarChannelsTab(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsSimilarChannelsHideTab, type: .switchable(enabled), viewType: .innerItem, action: {
+                FastSettings.hideSimilarChannelsTab.toggle()
+            })
+        case let .disableGlobalPeerSearch(_, disabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Search.DisableGlobalPeerSearch"), type: .switchable(disabled), viewType: .lastItem, action: {
+                _ = updateAdditionalSettingsInteractively(accountManager: arguments.context.sharedContext.accountManager) { settings in
+                    settings.withUpdatedDisableGlobalPeerSearch(!settings.disableGlobalPeerSearch)
+                }.startStandalone()
+            }, autoswitch: false)
+        case let .showMessageTimestampSeconds(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsShowMessageTimestampSeconds, type: .switchable(enabled), viewType: .singleItem, action: {
+                FastSettings.showMessageTimestampSeconds.toggle()
+            })
         case let .previewChats(_, value, viewType):
             return GeneralInteractedRowItem(initialSize, name: strings().generalSettingsPreviewChatsText, type: .switchable(value), viewType: viewType, action: arguments.togglePreviewChat)
         case .previewChatsInfo:
@@ -331,7 +383,7 @@ private final class GeneralSettingsArguments {
    
 }
 
-private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings) -> [GeneralSettingsEntry] {
+private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool) -> [GeneralSettingsEntry] {
     var sectionId:Int = 1
     var entries:[GeneralSettingsEntry] = []
     
@@ -435,7 +487,20 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
     
-    entries.append(.showProfileId(sectionId: sectionId, enabled: FastSettings.canViewPeerId, viewType: .singleItem))
+    entries.append(.showProfileId(sectionId: sectionId, enabled: peerIdFormat != nil, viewType: peerIdFormat == nil ? .singleItem : .firstItem))
+    if let peerIdFormat {
+        entries.append(.profileIdFormat(sectionId: sectionId, format: peerIdFormat))
+    }
+
+    entries.append(.section(sectionId: sectionId))
+    sectionId += 1
+    entries.append(.collapseChannelRecommendations(sectionId: sectionId, enabled: collapseChannelRecommendations))
+    entries.append(.hideSimilarChannelsTab(sectionId: sectionId, enabled: hideSimilarChannelsTab))
+    entries.append(.disableGlobalPeerSearch(sectionId: sectionId, enabled: additionalSettings.disableGlobalPeerSearch))
+
+    entries.append(.section(sectionId: sectionId))
+    sectionId += 1
+    entries.append(.showMessageTimestampSeconds(sectionId: sectionId, enabled: showMessageTimestampSeconds))
 
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
@@ -548,13 +613,13 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
         
         let baseSettingsSignal: Signal<BaseApplicationSettings, NoError> = .single(context.sharedContext.baseSettings) |> then(baseAppSettings(accountManager: context.sharedContext.accountManager))
         
-        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager)) |> map { settings, _, _, appearance, launchSettings, preferencesView, additionalSettings -> TableUpdateTransition in
+        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal) |> map { settings, _, _, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds -> TableUpdateTransition in
             
             let baseSettings: BaseApplicationSettings = settings
             
             let secretChatSettings = preferencesView.values[PreferencesKeys.secretChatSettings]?.get(SecretChatSettings.self) ?? SecretChatSettings.defaultSettings
             
-            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
+            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
             let previous = previos.swap(entries)
             return prepareEntries(left: previous, right: entries, arguments: arguments, initialSize: initialSize.modify({$0}))
             

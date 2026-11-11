@@ -1,0 +1,99 @@
+import XCTest
+import Postbox
+import TelegramCore
+@testable import ChatUI
+
+final class ChatLocalMessageVisibilityTests: XCTestCase {
+    private let accountPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: ._internalFromInt64Value(100))
+
+    private func user(_ id: Int64) -> TelegramUser {
+        return TelegramUser(id: PeerId(namespace: Namespaces.Peer.CloudUser, id: ._internalFromInt64Value(id)), accessHash: nil, firstName: "Sender", lastName: nil, username: nil, phone: nil, photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, profileColor: nil, backgroundEmojiId: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil)
+    }
+
+    private func entry(
+        _ id: Int32,
+        peer: Int64 = 1,
+        namespace: MessageId.Namespace = Namespaces.Message.Cloud,
+        album: Int64? = nil,
+        author: TelegramUser? = nil,
+        forwardedAuthor: TelegramUser? = nil,
+        direct: Bool = false,
+        incoming: Bool = true
+    ) -> MessageHistoryEntry {
+        let peerId = (direct ? author?.id : nil) ?? PeerId(namespace: Namespaces.Peer.CloudChannel, id: ._internalFromInt64Value(peer))
+        let forwardInfo = forwardedAuthor.map { sender in
+            MessageForwardInfo(author: sender, source: nil, sourceMessageId: nil, date: id, authorSignature: nil, psaType: nil, flags: [])
+        }
+        let message = Message(
+            stableId: UInt32(id), stableVersion: 0, id: MessageId(peerId: peerId, namespace: namespace, id: id),
+            globallyUniqueId: nil, groupingKey: album, groupInfo: nil, threadId: nil, timestamp: id,
+            flags: incoming ? [.Incoming] : [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: forwardInfo,
+            author: author, text: "Message", attributes: [], media: [], peers: SimpleDictionary(),
+            associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:],
+            associatedThreadInfo: nil, associatedStories: [:]
+        )
+        return MessageHistoryEntry(
+            message: message, isRead: false, location: nil, monthLocation: nil,
+            attributes: MutableMessageHistoryEntryAttributes(authorIsContact: false)
+        )
+    }
+
+    func testHidingAnAlbumDoesNotHideOtherPeersOrNamespaces() {
+        let first = entry(1, album: 100)
+        let second = entry(2, album: 100)
+        let otherPeer = entry(3, peer: 2, album: 100)
+        let otherNamespace = entry(4, namespace: Namespaces.Message.Local, album: 100)
+        let ordinary = entry(5)
+        let hiddenItems: Set<ChatLocalHiddenItem> = [ChatLocalHiddenItem(first.message)]
+        let original = [first, second, otherPeer, otherNamespace, ordinary]
+
+        let projection = ChatLocalMessageVisibility.project(
+            entries: original, hiddenItems: hiddenItems, revealedMessageId: nil, accountPeerId: accountPeerId
+        )
+
+        XCTAssertEqual(projection.entries.map { $0.message.id }, [otherPeer, otherNamespace, ordinary].map { $0.message.id })
+        XCTAssertEqual(projection.hiddenItems, hiddenItems)
+        XCTAssertEqual(original.count, 5)
+    }
+
+    func testExplicitFocusRevealsTargetWithoutClearingOtherHiddenItems() {
+        let first = entry(1, album: 100)
+        let second = entry(2, album: 100)
+        let hidden = entry(3)
+        let albumKey = ChatLocalHiddenItem(first.message)
+        let hiddenKey = ChatLocalHiddenItem(hidden.message)
+        let hiddenItems: Set<ChatLocalHiddenItem> = [albumKey, hiddenKey]
+
+        let projection = ChatLocalMessageVisibility.project(
+            entries: [first, second, hidden],
+            hiddenItems: hiddenItems,
+            revealedMessageId: second.message.id,
+            accountPeerId: accountPeerId
+        )
+
+        XCTAssertEqual(projection.entries.map { $0.message.id }, [first.message.id, second.message.id])
+        XCTAssertEqual(projection.hiddenItems, [hiddenKey])
+        XCTAssertEqual(hiddenItems, [albumKey, hiddenKey])
+    }
+
+    func testBlockedSenderFilteringKeepsDirectDialogAndOutgoingMessages() {
+        let blocked = user(101)
+        let allowed = user(102)
+        let account = user(100)
+        let groupMessage = entry(1, author: blocked)
+        let forwarded = entry(2, author: allowed, forwardedAuthor: blocked)
+        let direct = entry(3, author: blocked, direct: true)
+        let outgoing = entry(4, author: account, forwardedAuthor: blocked, incoming: false)
+        let ordinary = entry(5, author: allowed)
+
+        let projection = ChatLocalMessageVisibility.project(
+            entries: [groupMessage, forwarded, direct, outgoing, ordinary],
+            hiddenItems: [],
+            revealedMessageId: nil,
+            blockedSenderIds: [blocked.id],
+            accountPeerId: accountPeerId
+        )
+
+        XCTAssertEqual(projection.entries.map { $0.message.id }, [direct, outgoing, ordinary].map { $0.message.id })
+    }
+}

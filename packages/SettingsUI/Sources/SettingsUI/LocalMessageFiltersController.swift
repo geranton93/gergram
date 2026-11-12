@@ -107,7 +107,7 @@ func localMessageFiltersController(context: any AccountContextProtocol, chatId: 
                 guard !context.isFrozen else { return }
                 _ = updateLocalMessageFilterPreferences(postbox) { $0.includesChats = !preferences.includesChats }.startStandalone()
             })))
-            entries.append(.general(sectionId: 1, index: 2, value: .none, error: nil, identifier: InputDataIdentifier("chat-filters"), data: .init(name: localizedString("Gergram.Chat.ChatFilterRules"), color: theme.colors.text, type: .next, viewType: .lastItem, action: {
+            entries.append(.general(sectionId: 1, index: 2, value: .none, error: nil, identifier: InputDataIdentifier("chat-filters"), data: .init(name: localizedString("Gergram.Chat.ChatFilterRules"), color: theme.colors.text, type: .next, viewType: .innerItem, action: {
                 guard !context.isFrozen else { return }
                 let behavior = LocalMessageFilterChatPickerBehavior(settings: [.contacts, .bots, .groups, .channels], excludePeerIds: [context.peerId], limit: 1)
                 let selection = selectModalPeers(window: context.window, context: context, title: localizedString("Gergram.Chat.ChatFilterRules"), behavior: behavior)
@@ -118,6 +118,12 @@ func localMessageFiltersController(context: any AccountContextProtocol, chatId: 
                     guard !context.isFrozen, let (id, title) = result else { return }
                     context.bindings.rootNavigation().push(localMessageFiltersController(context: context, chatId: id, chatTitle: title))
                 }))
+            })))
+            entries.append(.general(sectionId: 1, index: 3, value: .none, error: nil, identifier: InputDataIdentifier("import-filters"), data: .init(name: localizedString("Gergram.Chat.FilterTransferImport"), color: theme.colors.accent, type: .none, viewType: .innerItem, action: {
+                LocalMessageFilterTransferActions.importRules(context: context)
+            })))
+            entries.append(.general(sectionId: 1, index: 4, value: .none, error: nil, identifier: InputDataIdentifier("export-filters"), data: .init(name: localizedString("Gergram.Chat.FilterTransferExport"), color: theme.colors.accent, type: .none, viewType: .lastItem, action: {
+                LocalMessageFilterTransferActions.exportRules(context: context)
             })))
         }
         entries.append(.sectionId(1, type: .normal))

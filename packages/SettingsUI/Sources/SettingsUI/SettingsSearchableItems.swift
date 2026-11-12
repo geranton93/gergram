@@ -668,6 +668,9 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
             allItems.append(SettingsSearchableItem(id: .general(1), title: localizedString("Gergram.Chat.MenuSettings"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
                 present(.push, messageContextMenuSettingsController())
             }))
+            allItems.append(SettingsSearchableItem(id: .general(2), title: localizedString("Gergram.MiniApp.WindowSize"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
+                present(.push, miniAppWindowSizeSettingsController())
+            }))
             
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)

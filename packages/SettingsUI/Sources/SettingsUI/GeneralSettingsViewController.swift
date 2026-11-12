@@ -65,6 +65,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case showMessageTimestampSeconds(sectionId: Int, enabled: Bool)
     case filterZalgoText(sectionId: Int, enabled: Bool)
     case messageContextMenu(sectionId: Int)
+    case miniAppWindowSize(sectionId: Int)
     public var stableId: Int {
         switch self {
         case let .header(_, uniqueId, _):
@@ -135,6 +136,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return Self.zalgoFilterStableId
         case .messageContextMenu:
             return 33
+        case .miniAppWindowSize:
+            return 34
         case let .section(id):
             return (id + 1) * 1000 - id
         }
@@ -196,7 +199,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return (sectionId * 1000) + stableId
         case let .profileIdFormat(sectionId, _):
             return (sectionId * 1000) + stableId
-        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId):
+        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId), let .miniAppWindowSize(sectionId):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -335,6 +338,10 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
         case .messageContextMenu:
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.MenuSettings"), type: .next, viewType: .lastItem, action: {
                 arguments.context.bindings.rootNavigation().push(messageContextMenuSettingsController())
+            })
+        case .miniAppWindowSize:
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.MiniApp.WindowSize"), type: .next, viewType: .singleItem, action: {
+                arguments.context.bindings.rootNavigation().push(miniAppWindowSizeSettingsController())
             })
         case let .previewChats(_, value, viewType):
             return GeneralInteractedRowItem(initialSize, name: strings().generalSettingsPreviewChatsText, type: .switchable(value), viewType: viewType, action: arguments.togglePreviewChat)
@@ -522,8 +529,9 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
 
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
+    entries.append(.miniAppWindowSize(sectionId: sectionId))
 
-    
+    entries.append(.section(sectionId: sectionId))
     return entries
 }
 

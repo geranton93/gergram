@@ -241,6 +241,7 @@ public final class ChatInputActionButtonView: ChatInputStateView {
         let rightAdditionData: ChatState.AdditionAction?
         let leftAdditionData: ChatState.AdditionAction?
         let accent: Bool
+        let clearBotStartPayload: ((ChatInteraction) -> Bool)?
     }
     private var pending: PendingUpdate?
 
@@ -288,14 +289,37 @@ public final class ChatInputActionButtonView: ChatInputStateView {
         rightAddition?.setGlassEffectHidden(hidden)
     }
 
-    public func update(text: String, action: @escaping (ChatInteraction) -> Void, chatInteraction: ChatInteraction, isBot: Bool = false, rightAdditionData: ChatState.AdditionAction? = nil, leftAdditionData: ChatState.AdditionAction? = nil, accent: Bool = false, animated: Bool = false) {
+    public func update(text: String, action: @escaping (ChatInteraction) -> Void, chatInteraction: ChatInteraction, isBot: Bool = false, rightAdditionData: ChatState.AdditionAction? = nil, leftAdditionData: ChatState.AdditionAction? = nil, accent: Bool = false, animated: Bool = false, clearBotStartPayload: ((ChatInteraction) -> Bool)? = nil) {
         let previousText = pending?.text
-        pending = PendingUpdate(text: text, action: action, chatInteraction: chatInteraction, isBot: isBot, rightAdditionData: rightAdditionData, leftAdditionData: leftAdditionData, accent: accent)
+        pending = PendingUpdate(text: text, action: action, chatInteraction: chatInteraction, isBot: isBot, rightAdditionData: rightAdditionData, leftAdditionData: leftAdditionData, accent: accent, clearBotStartPayload: clearBotStartPayload)
         if animated, let previousText, previousText != text {
             applyTitleChange(from: previousText)
         } else {
             applyUpdate()
         }
+    }
+
+    private func bindMainButton(_ pending: PendingUpdate) {
+        let chatInteraction = pending.chatInteraction
+        let action = pending.action
+        button.removeAllHandlers()
+        button.set(handler: { _ in
+            action(chatInteraction)
+        }, for: .Click)
+
+        guard let clearPayload = pending.clearBotStartPayload else {
+            button.setAccessibilityCustomActions(nil)
+            return
+        }
+        button.set(handler: { _ in
+            _ = clearPayload(chatInteraction)
+        }, for: .RightUp)
+        button.setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: localizedString("Gergram.Chat.ClearBotStartPayload"), handler: { [weak chatInteraction] in
+                guard let chatInteraction else { return false }
+                return clearPayload(chatInteraction)
+            })
+        ])
     }
 
     private func bindAddition(_ button: ImageButton, data: ChatState.AdditionAction, chatInteraction: ChatInteraction) {
@@ -311,14 +335,10 @@ public final class ChatInputActionButtonView: ChatInputStateView {
         guard let pending else { return }
 
         let activeTheme = currentChatTheme ?? theme
-        let action = pending.action
         let chatInteraction = pending.chatInteraction
 
         button.set(text: pending.text, for: .Normal)
-        button.removeAllHandlers()
-        button.set(handler: { _ in
-            action(chatInteraction)
-        }, for: .Click)
+        bindMainButton(pending)
 
         if let view = rightAddition, let data = pending.rightAdditionData {
             bindAddition(view, data: data, chatInteraction: chatInteraction)
@@ -391,7 +411,6 @@ public final class ChatInputActionButtonView: ChatInputStateView {
         leftAddition?.removeFromSuperview()
         leftAddition = nil
         button.isHidden = false
-        button.removeAllHandlers()
 
         if isBot {
             button.style = ControlStyle(font: .medium(.title), foregroundColor: activeTheme.colors.underSelectedColor)
@@ -439,9 +458,7 @@ public final class ChatInputActionButtonView: ChatInputStateView {
             button.set(background: .clear, for: .Normal)
         }
 
-        button.set(handler: { _ in
-            action(chatInteraction)
-        }, for: .Click)
+        bindMainButton(pending)
 
         if let data = pending.rightAdditionData {
             let btn = ImageButton()

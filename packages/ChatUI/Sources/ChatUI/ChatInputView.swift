@@ -1383,8 +1383,16 @@ public class ChatInputView: View, Notifable {
                 updateAdditions(value,animated)
             }
             
-            if value.state != oldValue.state || textPermissionChanged {
-                needUpdateChatState(with:value.state, animated)
+            let state = value.state
+            let botStartBindingChanged: Bool
+            if case .botStart = state {
+                botStartBindingChanged = value.initialAction != oldValue.initialAction
+                    || value.chatLocation != oldValue.chatLocation || value.chatMode != oldValue.chatMode
+            } else {
+                botStartBindingChanged = false
+            }
+            if state != oldValue.state || textPermissionChanged || botStartBindingChanged {
+                needUpdateChatState(with: state, animated)
             }
             
             var updateReplyMarkup = false
@@ -1851,8 +1859,32 @@ public class ChatInputView: View, Notifable {
                 installStateView(view)
             }
         case let .botStart(text, action):
+            let presentation = chatInteraction.presentation
+            let initialAction = presentation.initialAction
+            let location = presentation.chatLocation
+            let mode = presentation.chatMode
+            let matchesStartButton: (ChatInteraction) -> Bool = { [weak self] interaction in
+                let current = interaction.presentation
+                guard self?.chatInteraction === interaction, case .botStart = current.state else { return false }
+                return current.initialAction == initialAction && current.chatLocation == location && current.chatMode == mode
+            }
+
+            var title = text
+            var clearPayload: ((ChatInteraction) -> Bool)?
+            if case let .start(parameter, _) = initialAction, let preview = ChatBotForumControls.startPayloadPreview(parameter) {
+                title = String(format: localizedString("Gergram.Chat.BotStartWithPayload"), text, preview)
+                clearPayload = { interaction in
+                    guard matchesStartButton(interaction) else { return false }
+                    interaction.update { $0.withoutInitialAction() }
+                    return true
+                }
+            }
+
             let view = ChatInputActionButtonView(frame: bounds)
-            view.update(text: text, action: action, chatInteraction: chatInteraction, isBot: true)
+            view.update(text: title, action: { interaction in
+                guard matchesStartButton(interaction) else { return }
+                action(interaction)
+            }, chatInteraction: chatInteraction, isBot: true, clearBotStartPayload: clearPayload)
             installStateView(view)
         case let .channelWithDiscussion(discussionGroupId, leftAction, rightAction):
             let view = ChatInputDiscussionView(frame: bounds)

@@ -44,11 +44,11 @@ public func saveImageAs(_ image: TelegramMediaImage, context: any AccountContext
 }
 
 public func saveStoryMediaAs(_ media: Media, context: any AccountContextProtocol, peer: Peer, storyId: Int32, defaultPhotoName: String, canSave: @escaping () -> Bool, completion: @escaping () -> Void) {
-    guard canSave(), let peerReference = PeerReference(peer) else {
+    guard canSave() else {
         completion()
         return
     }
-    let reference = AnyMediaReference.story(peer: peerReference, id: storyId, media: media)
+    let reference = PeerReference(peer).map { AnyMediaReference.story(peer: $0, id: storyId, media: media) }
     let userLocation = MediaResourceUserLocation.peer(peer.id)
     if let image = media as? TelegramMediaImage, let resource = image.representations.last?.resource {
         saveMediaAs(resource: resource, reference: reference, context: context, userLocation: userLocation, ext: "jpeg", defaultName: defaultPhotoName, contentType: .story, statsCategory: .image, canSave: canSave, completion: completion)
@@ -185,7 +185,7 @@ private struct SaveMediaDestination {
     }
 }
 
-private func saveMediaAs(resource: MediaResource, reference: AnyMediaReference, context: any AccountContextProtocol, userLocation: MediaResourceUserLocation, ext: String, defaultName: String? = nil, contentType: MediaResourceUserContentType, statsCategory: MediaResourceStatsCategory, canSave: @escaping () -> Bool = { true }, completion: @escaping () -> Void = {}) {
+private func saveMediaAs(resource: MediaResource, reference: AnyMediaReference?, context: any AccountContextProtocol, userLocation: MediaResourceUserLocation, ext: String, defaultName: String? = nil, contentType: MediaResourceUserContentType, statsCategory: MediaResourceStatsCategory, canSave: @escaping () -> Bool = { true }, completion: @escaping () -> Void = {}) {
     guard canSave() else {
         completion()
         return
@@ -225,6 +225,7 @@ private func saveMediaAs(resource: MediaResource, reference: AnyMediaReference, 
             if data.complete {
                 return .single(data)
             }
+            guard let reference else { return .fail(.generic) }
             showModalText(for: window, text: strings().appUpdateDownloading, button: strings().modalCancel, callback: { _ in
                 disposable.dispose()
                 finish()

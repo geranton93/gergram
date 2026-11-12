@@ -18,7 +18,7 @@ private func visibilityTitle(_ visibility: MessageContextMenuPreferences.Visibil
     localizedString("Gergram.Chat.MenuSettings.\(visibility.rawValue)")
 }
 
-func messageContextMenuSettingsController() -> InputDataController {
+public func messageContextMenuSettingsController() -> InputDataController {
     let signal = visibilityChoices.get() |> deliverOnPrepareQueue |> map { choices in
         let sectionId: Int32 = 1
         var entries: [InputDataEntry] = [.sectionId(0, type: .normal)]

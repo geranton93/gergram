@@ -248,6 +248,29 @@ final class LinkParsingTests: XCTestCase {
         guard case .nothing = parse("tg://settings/unknown") else { return XCTFail("Expected nothing") }
     }
 
+    func testGergramSettingsLinksStayLocalAndRequireAccountContext() {
+        let cases: [(String, GergramSettingsRoute)] = [
+            ("gergram://settings/general/message-context-menu", .messageContextMenu),
+            ("gergram://settings/privacy/locally-hidden-senders", .locallyHiddenSenders)
+        ]
+        for (url, route) in cases {
+            guard case let .settings(_, section) = parse(url) else { return XCTFail("Expected settings: \(url)") }
+            XCTAssertEqual(section, .gergram(route))
+            guard case .nothing = parse(url, options: InAppLinkParsingOptions()) else {
+                return XCTFail("Expected no navigation without an account")
+            }
+        }
+
+        for url in ["gergram://settings/privacy/reset", "GERGRAM://example.t.me/settings/privacy/locally-hidden-senders", "gergram://settings/privacy/locally-hidden-senders?account=123"] {
+            guard case .nothing = parse(url) else { return XCTFail("Expected no fallback for \(url)") }
+        }
+
+        guard case let .settings(_, section) = parse("tg://settings/privacy/locally-hidden-senders") else {
+            return XCTFail("Expected the original Telegram settings fallback")
+        }
+        XCTAssertEqual(section, .privacy(nil))
+    }
+
     func testStickerPackKindsAndPeerIdentifiers() {
         let peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(9))
         var options = enabled

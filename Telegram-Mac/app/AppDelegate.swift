@@ -1435,6 +1435,30 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     }
     
     private func processURL(_ url: String?) {
+        if let url, GergramSettingsRoute.recognizesScheme(url) {
+            guard let route = GergramSettingsRoute(url: url) else { return }
+            AppDelegate.eventProcessed = url
+
+            var activeContext = self.contextValue?.context
+            if let keyWindow = NSApp.keyWindow {
+                self.enumerateAccountContexts { context in
+                    if context.window === keyWindow {
+                        activeContext = context
+                    }
+                }
+            }
+
+            NSApp.activate(ignoringOtherApps: true)
+            if let activeContext {
+                AppDelegate.eventProcessed = nil
+                activeContext.window.deminiaturize(self)
+                execute(inapp: .settings(link: url, context: activeContext, section: .gergram(route)), isExternal: true)
+            } else {
+                self.window.deminiaturize(self)
+            }
+            return
+        }
+
         AppDelegate.eventProcessed = url
         
         if let url = AppDelegate.eventProcessed {

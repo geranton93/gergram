@@ -25,7 +25,7 @@ private final class ShadowBanSenderPickerBehavior: SelectChatsBehavior {
     }
 }
 
-func localShadowBannedSendersController(context: any AccountContextProtocol) -> InputDataController {
+public func localShadowBannedSendersController(context: any AccountContextProtocol) -> InputDataController {
     let postbox = context.account.postbox
     let accountPeerId = context.peerId
     let pickerDisposable = MetaDisposable()

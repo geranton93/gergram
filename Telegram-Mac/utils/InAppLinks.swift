@@ -817,6 +817,27 @@ private func confirmExternalLink(window: Window, information: String, origin: In
     }
 }
 
+private func openSpotifyLink(_ link: SpotifyDesktopLink, completion: @escaping (Bool) -> Void) {
+    let workspace = NSWorkspace.shared
+    let openWeb = {
+        completion(workspace.open(link.webURL))
+    }
+    if #available(macOS 10.15, *), let spotify = workspace.urlForApplication(withBundleIdentifier: "com.spotify.client") {
+        workspace.open([link.appURL], withApplicationAt: spotify, configuration: NSWorkspace.OpenConfiguration()) { application, error in
+            let didOpen = application != nil && error == nil
+            DispatchQueue.main.async {
+                if didOpen {
+                    completion(true)
+                } else {
+                    openWeb()
+                }
+            }
+        }
+    } else {
+        openWeb()
+    }
+}
+
 private func executeInviteLink(hash: String, context: AccountContext, window: Window, origin inheritedOrigin: InAppLinkOrigin, interaction: @escaping (PeerId, Bool, MessageId?, ChatInitialAction?) -> Void) {
     let origin = InAppLinkOrigin(inheritedOrigin.context ?? Analytics.shared.unresolvedContext()).restricting(context: context, peerId: context.peerId)
     let openPeer: (Peer, ChatInitialAction?) -> Void = { peer, action in
@@ -1090,6 +1111,11 @@ func execute(inapp:inAppLink, window: Window? = nil, isExternal: Bool = false, a
                 let success:()->Void = {
                     let delivery = analyticsContext?.beginPresentation()
                     defer { delivery?.end() }
+
+                    if removePecentEncoding, let spotifyLink = SpotifyDesktopLink(url: urlValue) {
+                        openSpotifyLink(spotifyLink, completion: afterComplete)
+                        return
+                    }
 
                     var path = url.absoluteString
                     let supportSchemes:[String] = ["itunes.apple.com"]

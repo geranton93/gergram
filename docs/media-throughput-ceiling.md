@@ -23,7 +23,7 @@ Keeping the link continuously occupied requires roughly a bandwidth-delay produc
 
 ## Reproduced 256 MiB sequential sweep
 
-The fixture compiled the production `DirectMediaReadAhead` at blob `53ca4b0530801bb3068f67861bda88db3b9077b9`, the exact pinned `FetchV2` range union and alignment helpers, and a Swift event model of the transport's adaptive window. It reused the repository HLS simulator's FIFO link serialization equation, and read contiguous cached bytes immediately in 64 KiB increments. Candidate early rollover refreshed bounded demand after advancing 512 KiB. Each path starts cold, with an ordinary master part size of 128 KiB. The clean-link model omits codec, disk, actual encryption and hash CPU, hash/reupload RTT, proxy, server throttle, competing traffic, and real playback pacing. The full-file column keeps enough demand pending and measures the same model's transport ceiling.
+The fixture compiled the previous `DirectMediaReadAhead` at blob `53ca4b0530801bb3068f67861bda88db3b9077b9`, the early-refill policy at blob `df92ee7a10e16a90507d99b2671321bff075badc`, the exact pinned `FetchV2` range helpers and a Swift event model of the adaptive window. It reused the repository HLS simulator's FIFO link serialization equation, and read contiguous cached bytes immediately in 64 KiB increments. Candidate early rollover refreshed bounded demand after advancing 512 KiB. Each path starts cold, with an ordinary master part size of 128 KiB. The clean-link model omits codec, disk, actual encryption and hash CPU, hash/reupload RTT, proxy, server throttle, competing traffic, and real playback pacing. The full-file column keeps enough demand pending and measures the same model's transport ceiling.
 
 All values are Mbit/s. The link column is Mbit/s / RTT in ms. More throughput for bulk reads improves playback only when the current throughput or response time cannot cover the required data.
 
@@ -44,13 +44,13 @@ All values are Mbit/s. The link column is Mbit/s / RTT in ms. More throughput fo
 
 All 108 cases completed. The 200/100 master profile went from 84.16 to 137.29 Mbit/s with earlier refill at the same 2 MiB cap, or 196.05 Mbit/s with 4 MiB. The 500/100 profile went from 106.80 to 438.96 Mbit/s with early 6 MiB. The higher network rate at 1000/100 meets the worker limit before it fills the network. First 512 KiB was unchanged across the window variants within each profile, including 120.97 ms at 200/100. This timestamp models media byte availability. First decoded frame depends on the container, keyframe and decoder path. Raising late-rollover demand above 6 MiB actually reduced simulated master goodput at 1000/100 and 1000/250 because the larger batches produced longer replenishment gaps.
 
-Reproduce the sweep from the repository root with the pinned Telegram-iOS submodule initialized.
+Reproduce the sweep from the repository root with the pinned Telegram-iOS submodule and enough Git history to include the previous read-ahead policy.
 
 ```sh
 python3 tools/networklab/read_ahead_sweep.py
 ```
 
-The runner extracts and verifies the exact pinned `FetchV2.swift` helpers. An exact copy of that file can be passed with `--fetch-v2` when the checkout is unavailable. It compiles the previous and current gergram policies, prints CSV and checks the expected 108 combinations.
+The runner extracts and verifies the exact pinned `FetchV2.swift` helpers. An exact copy of that file can be passed with `--fetch-v2` when the checkout is unavailable. It compiles the previous and current gergram policies and prints 108 result rows as CSV.
 
 ## Playback and stories
 

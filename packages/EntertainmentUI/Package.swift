@@ -55,5 +55,6 @@ let package = Package(
                 .product(name: "Postbox", package: "Postbox", condition: nil),
             ] + deps.map { .product(name: $0.0, package: $0.0, condition: nil) },
             path: "Sources/EntertainmentUI"),
+        .testTarget(name: "EntertainmentUITests", dependencies: ["EntertainmentUI"]),
     ]
 )

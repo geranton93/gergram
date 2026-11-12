@@ -321,6 +321,7 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
         let context = self.context
         
         var copyItem: ContextMenuItem?
+        var copyIdItem: ContextMenuItem?
         var setStatus: ContextMenuItem?
         if let view = self.view as? EmojiesSectionRowView, let file = view.itemUnderMouse?.0.file {
             let input: ChatTextInputState
@@ -333,8 +334,9 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
             copyItem = ContextMenuItem(strings().contextCopy, handler: {
                 copyToClipboard(input)
             }, itemImage: MenuAnimation.menu_copy.value)
-            
-            
+            if mode == .preview || mode == .panel {
+                copyIdItem = StickerPackIdentifier(customEmoji: file)?.copyMenuItem(context: context)
+            }
         }
         
         if context.isPremium {
@@ -438,6 +440,9 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
             if let copyItem = copyItem {
                 items.append(copyItem)
             }
+            if let copyIdItem {
+                items.append(copyIdItem)
+            }
             if let setStatus = setStatus {
                 items.append(setStatus)
             }
@@ -470,6 +475,9 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
             
             if let copyItem = copyItem {
                 items.append(copyItem)
+            }
+            if let copyIdItem {
+                items.append(copyIdItem)
             }
         }
        

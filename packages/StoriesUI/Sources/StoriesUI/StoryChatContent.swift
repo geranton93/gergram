@@ -2002,15 +2002,11 @@ public final class PeerStoryListContentContextImpl: StoryContentContext {
     }
 }
 
-private func storyVideoPreloadRange(_ file: TelegramMediaFile) -> (Range<Int64>, MediaBoxFetchPriority)? {
+private func storyVideoPreloadRange(_ file: TelegramMediaFile, allowFallback: Bool = false) -> (Range<Int64>, MediaBoxFetchPriority)? {
     for attribute in file.attributes {
         if case let .Video(_, _, _, preloadSize, _, _) = attribute {
-            guard let preloadSize else { return nil }
-            var length = max(0, Int64(preloadSize))
-            if let size = file.size {
-                length = min(length, max(0, size))
-            }
-            return (0 ..< length, .default)
+            let prefix = StoryVideoPreloadRange.prefix(advertisedBytes: preloadSize.map { Int64($0) }, fileSize: file.size, allowFallback: allowFallback)
+            return prefix.map { ($0, .default) }
         }
     }
     return nil
@@ -2065,15 +2061,26 @@ public func preloadStoryMedia(context: any AccountContextProtocol, info: StoryPr
             })
         }
     case let .file(file):
-        let fetchRange = storyVideoPreloadRange(file)
-        
-        signals.append(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, userLocation: .peer(info.peer.id), userContentType: .story, reference: .media(media: .story(peer: info.peer, id: info.storyId, media: selectedMedia._asMedia()), resource: file.resource), range: fetchRange)
+        let advertisedRange = storyVideoPreloadRange(file)
+        guard let fetchRange = advertisedRange ?? storyVideoPreloadRange(file, allowFallback: true) else { break }
+        let mediaBox = context.account.postbox.mediaBox
+        let fetch = fetchedMediaResource(mediaBox: mediaBox, userLocation: .peer(info.peer.id), userContentType: .story, reference: .media(media: .story(peer: info.peer, id: info.storyId, media: selectedMedia._asMedia()), resource: file.resource), range: fetchRange)
         |> ignoreValues
         |> `catch` { _ -> Signal<Never, NoError> in
             return .complete()
-        })
-        signals.append(context.account.postbox.mediaBox.cachedResourceRepresentation(file.resource, representation: CachedVideoFirstFrameRepresentation(), complete: true, fetch: true, attemptSynchronously: false)
-        |> ignoreValues)
+        }
+        let firstFrame = mediaBox.cachedResourceRepresentation(file.resource, representation: CachedVideoFirstFrameRepresentation(), complete: true, fetch: true, attemptSynchronously: false)
+        |> ignoreValues
+        if advertisedRange != nil {
+            signals.append(fetch)
+            signals.append(firstFrame)
+        } else {
+            let status = mediaBox.resourceRangesStatus(file.resource)
+            |> filter { $0.isSuperset(of: RangeSet(fetchRange.0)) }
+            |> take(1)
+            |> ignoreValues
+            signals.append(storyMediaPreload(status: status, fetch: fetch, auxiliary: [firstFrame]))
+        }
     default:
         break
     }

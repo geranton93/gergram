@@ -19,7 +19,7 @@ enum ChatLocalHiddenItem: Hashable {
 final class ChatLocalMessageVisibility {
     private struct PeerVisibility: Equatable {
         var hiddenItems: Set<ChatLocalHiddenItem> = []
-        var showsBlockedSenders = false
+        var showsFilteredSenders = false
     }
 
     private static var instances: [AccountRecordId: ChatLocalMessageVisibility] = [:]
@@ -69,19 +69,19 @@ final class ChatLocalMessageVisibility {
         update(peerId: peerId) { $0.hiddenItems.removeAll() }
     }
 
-    func observeShowsBlockedSenders(peerId: PeerId) -> Signal<Bool, NoError> {
+    func observeShowsFilteredSenders(peerId: PeerId) -> Signal<Bool, NoError> {
         return snapshots.get()
-        |> map { $0[peerId]?.showsBlockedSenders ?? false }
+        |> map { $0[peerId]?.showsFilteredSenders ?? false }
         |> distinctUntilChanged
     }
 
-    func showsBlockedSenders(peerId: PeerId) -> Bool {
+    func showsFilteredSenders(peerId: PeerId) -> Bool {
         assert(Thread.isMainThread)
-        return stateByPeer[peerId]?.showsBlockedSenders ?? false
+        return stateByPeer[peerId]?.showsFilteredSenders ?? false
     }
 
-    func setShowsBlockedSenders(_ value: Bool, peerId: PeerId) {
-        update(peerId: peerId) { $0.showsBlockedSenders = value }
+    func setShowsFilteredSenders(_ value: Bool, peerId: PeerId) {
+        update(peerId: peerId) { $0.showsFilteredSenders = value }
     }
 
     private func update(peerId: PeerId, _ change: (inout PeerVisibility) -> Void) {
@@ -98,10 +98,10 @@ final class ChatLocalMessageVisibility {
         entries: [MessageHistoryEntry],
         hiddenItems: Set<ChatLocalHiddenItem>,
         revealedMessageId: MessageId?,
-        blockedSenderIds: Set<PeerId> = [],
+        filteredSenderIds: Set<PeerId> = [],
         accountPeerId: PeerId
     ) -> (entries: [MessageHistoryEntry], hiddenItems: Set<ChatLocalHiddenItem>) {
-        guard !hiddenItems.isEmpty || !blockedSenderIds.isEmpty else { return (entries, hiddenItems) }
+        guard !hiddenItems.isEmpty || !filteredSenderIds.isEmpty else { return (entries, hiddenItems) }
         var hiddenItems = hiddenItems
         let revealedItem = revealedMessageId.flatMap { id in
             entries.first(where: { $0.message.id == id }).map { ChatLocalHiddenItem($0.message) }
@@ -113,9 +113,9 @@ final class ChatLocalMessageVisibility {
             let item = ChatLocalHiddenItem(entry.message)
             if item == revealedItem { return true }
             if hiddenItems.contains(item) { return false }
-            return blockedSenderIds.isEmpty || ChatBlockedSenderVisibility
+            return filteredSenderIds.isEmpty || ChatBlockedSenderVisibility
                 .candidates(for: entry.message, accountPeerId: accountPeerId)
-                .isDisjoint(with: blockedSenderIds)
+                .isDisjoint(with: filteredSenderIds)
         }
         return (visibleEntries, hiddenItems)
     }

@@ -155,15 +155,15 @@ final class ChatHistoryView {
     let filteredEntries: [ChatWrappedEntry]
     let theme: TelegramPresentationTheme
     let locallyHiddenItems: Set<ChatLocalHiddenItem>
-    let blockedSenderIds: Set<PeerId>
+    let filteredSenderIds: Set<PeerId>
     let isLocallyEmpty: Bool
 
-    init(originalView: MessageHistoryView?, filteredEntries: [ChatWrappedEntry], theme: TelegramPresentationTheme, locallyHiddenItems: Set<ChatLocalHiddenItem> = [], blockedSenderIds: Set<PeerId> = [], isLocallyEmpty: Bool = false) {
+    init(originalView: MessageHistoryView?, filteredEntries: [ChatWrappedEntry], theme: TelegramPresentationTheme, locallyHiddenItems: Set<ChatLocalHiddenItem> = [], filteredSenderIds: Set<PeerId> = [], isLocallyEmpty: Bool = false) {
         self.originalView = originalView
         self.filteredEntries = filteredEntries
         self.theme = theme
         self.locallyHiddenItems = locallyHiddenItems
-        self.blockedSenderIds = blockedSenderIds
+        self.filteredSenderIds = filteredSenderIds
         self.isLocallyEmpty = isLocallyEmpty
     }
     
@@ -4265,33 +4265,41 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             : .single([])
         let historyPresentation = combineLatest(historyUiState, localVisibility, locallyRevealedMessageId.get(), FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal)
         typealias HistoryUpdate = (ChatHistoryViewUpdate, TableSavingSide?, ChatHistoryLocationInput, ChatLocation, Int)
-        let historyWithBlockedSenders: Signal<(HistoryUpdate, Set<PeerId>), NoError>
+        let historyWithFilteredSenders: Signal<(HistoryUpdate, Set<PeerId>), NoError>
         if supportsLocalMessageVisibility {
-            historyWithBlockedSenders = combineLatest(
+            let localShadowBans: Signal<Set<PeerId>, NoError> = peerId.namespace != Namespaces.Peer.SecretChat
+                ? localShadowBannedSenderIds(context.account.postbox) |> deliverOnMainQueue |> map { [weak self] ids in
+                    self?.shadowBannedSenderIds = ids
+                    return ids
+                }
+                : .single([])
+            historyWithFilteredSenders = combineLatest(
                 queue: queue,
                 historyViewUpdate,
                 BlockedSenderVisibilitySettings.observe(),
-                localMessageVisibility.observeShowsBlockedSenders(peerId: peerId)
-            ) |> mapToSignal { update, enabled, showInChat in
-                guard enabled, !showInChat, update.3.peerId == peerId, update.2.tag == nil,
+                localMessageVisibility.observeShowsFilteredSenders(peerId: peerId),
+                localShadowBans
+            ) |> mapToSignal { update, hideBlockedSenders, showInChat, shadowBannedSenderIds in
+                guard (hideBlockedSenders || !shadowBannedSenderIds.isEmpty), !showInChat, update.3.peerId == peerId, update.2.tag == nil,
                       case let .HistoryView(view, _, _, _) = update.0 else {
                     return .single((update, []))
                 }
                 let senderIds = view.entries.reduce(into: Set<PeerId>()) { ids, entry in
                     ids.formUnion(ChatBlockedSenderVisibility.candidates(for: entry.message, accountPeerId: context.peerId))
                 }
-                guard !senderIds.isEmpty else { return .single((update, [])) }
+                let locallyHidden = shadowBannedSenderIds.intersection(senderIds)
+                guard hideBlockedSenders, !senderIds.isEmpty else { return .single((update, locallyHidden)) }
                 let items = senderIds.map { TelegramEngine.EngineData.Item.Peer.IsBlocked(id: $0) }
                 return context.engine.data.subscribe(EngineDataMap(items)) |> map { states in
                     let blocked = Set(states.compactMap { id, state in state.knownValue == true ? id : nil })
-                    return (update, blocked)
+                    return (update, locallyHidden.union(blocked))
                 }
             }
         } else {
-            historyWithBlockedSenders = historyViewUpdate |> map { ($0, []) }
+            historyWithFilteredSenders = historyViewUpdate |> map { ($0, []) }
         }
         let historyViewTransition = combineLatest(queue: queue,
-                                                  historyWithBlockedSenders,
+                                                  historyWithFilteredSenders,
                                                   appearanceSignal,
                                                   maxReadIndex.get(),
                                                   searchState.get(),
@@ -4308,7 +4316,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                                                   recommendedChannels
     ) |> mapToQueue { historyUpdate, appearance, maxReadIndex, searchState, animatedEmojiStickers, messageEffects, savedMessageTags, customChannelDiscussionReadState, customThreadOutgoingReadState, updatingMedia, adMessages, reactions, historyPresentation, peerView, recommendedChannels -> Signal<(TableUpdateTransition, ChatHistoryCombinedInitialData, Bool, ChatHistoryView, Bool), NoError> in
 
-            let (update, blockedSenderIds) = historyUpdate
+            let (update, hiddenSenderIds) = historyUpdate
             let (uiState, localVisibility, revealedMessageId, showsTimestampSeconds, filtersZalgoText) = historyPresentation
             let pollAnswersLoading = uiState.pollAnswers
             let threadLoading = uiState.threadLoading
@@ -4403,12 +4411,12 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 } else {
                     let isOrdinaryHistory = chatLocation.peerId == peerId && update.2.tag == nil
                         && searchState.query.isEmpty && searchState.messages.isEmpty
-                    let filteredSenderIds = isOrdinaryHistory ? blockedSenderIds : []
+                    let filteredSenderIds = isOrdinaryHistory ? hiddenSenderIds : []
                     let (msgEntries, hiddenItems) = ChatLocalMessageVisibility.project(
                         entries: view.entries,
                         hiddenItems: isOrdinaryHistory ? localVisibility : [],
                         revealedMessageId: revealedMessageId,
-                        blockedSenderIds: filteredSenderIds,
+                        filteredSenderIds: filteredSenderIds,
                         accountPeerId: context.peerId
                     )
                     
@@ -4453,7 +4461,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                         filteredEntries: entries,
                         theme: chatTheme,
                         locallyHiddenItems: hiddenItems,
-                        blockedSenderIds: filteredSenderIds,
+                        filteredSenderIds: filteredSenderIds,
                         isLocallyEmpty: msgEntries.isEmpty && !view.entries.isEmpty
                     )
                 }
@@ -4463,7 +4471,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
             let previous = previousView.swap(proccesedView)
             let localVisibilityChanged = previous?.locallyHiddenItems != proccesedView.locallyHiddenItems
-                || previous?.blockedSenderIds != proccesedView.blockedSenderIds
+                || previous?.filteredSenderIds != proccesedView.filteredSenderIds
             let timestampFormatChanged = previous?.filteredEntries.first?.showsTimestampSeconds != proccesedView.filteredEntries.first?.showsTimestampSeconds
             let zalgoFilterChanged = previous?.filteredEntries.first?.filtersZalgoText != proccesedView.filteredEntries.first?.filtersZalgoText
             let localVisibilityOnly = !isNewHistoryViewUpdate && (localVisibilityChanged || zalgoFilterChanged)
@@ -6939,8 +6947,9 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                         }
                         strongSelf.chatInteraction.loadingMessage.set(.single(false))
                         if let message {
-                            let mayBeFiltered = BlockedSenderVisibilitySettings.isEnabled
-                                && !ChatBlockedSenderVisibility.candidates(for: message, accountPeerId: context.peerId).isEmpty
+                            let senders = ChatBlockedSenderVisibility.candidates(for: message, accountPeerId: context.peerId)
+                            let mayBeFiltered = !senders.isEmpty && (BlockedSenderVisibilitySettings.isEnabled
+                                || !strongSelf.shadowBannedSenderIds.isDisjoint(with: senders))
                             strongSelf.locallyRevealedMessageId.set(
                                 strongSelf.localMessageVisibility.isHidden(message) || mayBeFiltered ? message.id : nil
                             )
@@ -10945,14 +10954,19 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     self.localMessageVisibility.restore(peerId: chatLocation.peerId)
                 }, itemImage: MenuAnimation.menu_show.value))
             }
-            if BlockedSenderVisibilitySettings.isEnabled {
-                let showsBlocked = localMessageVisibility.showsBlockedSenders(peerId: chatLocation.peerId)
-                let title = localizedString(showsBlocked ? "Gergram.Chat.HideBlockedSendersHere" : "Gergram.Chat.ShowBlockedSendersHere")
+            if BlockedSenderVisibilitySettings.isEnabled || !shadowBannedSenderIds.isEmpty {
+                let showsFiltered = localMessageVisibility.showsFilteredSenders(peerId: chatLocation.peerId)
+                let title: String
+                if shadowBannedSenderIds.isEmpty {
+                    title = localizedString(showsFiltered ? "Gergram.Chat.HideBlockedSendersHere" : "Gergram.Chat.ShowBlockedSendersHere")
+                } else {
+                    title = localizedString(showsFiltered ? "Gergram.Chat.HideFilteredSendersHere" : "Gergram.Chat.ShowFilteredSendersHere")
+                }
                 visibilityItems.append(ContextMenuItem(title, handler: { [weak self] in
                     guard let self, self.chatLocation == chatLocation else { return }
-                    self.localMessageVisibility.setShowsBlockedSenders(!showsBlocked, peerId: chatLocation.peerId)
+                    self.localMessageVisibility.setShowsFilteredSenders(!showsFiltered, peerId: chatLocation.peerId)
                     self.locallyRevealedMessageId.set(nil)
-                }, itemImage: (showsBlocked ? MenuAnimation.menu_hide : MenuAnimation.menu_show).value))
+                }, itemImage: (showsFiltered ? MenuAnimation.menu_hide : MenuAnimation.menu_show).value))
             }
             if historyView?.isLocallyEmpty == true, let history = historyView?.originalView {
                 if history.earlierId != nil || history.holeEarlier, let index = history.entries.first?.index {
@@ -12459,6 +12473,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     private let isAdChat: Bool
     private let focusTarget: ChatFocusTarget?
     private let localMessageVisibility: ChatLocalMessageVisibility
+    private var shadowBannedSenderIds: Set<PeerId> = []
     private let locallyRevealedMessageId: ValuePromise<MessageId?>
     public let mode: ChatMode
     

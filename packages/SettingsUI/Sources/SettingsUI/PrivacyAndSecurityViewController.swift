@@ -155,6 +155,7 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
     case secretChatWebPreviewDesc(sectionId: Int)
     case hideBlockedSenders(sectionId: Int, enabled: Bool)
     case hideBlockedSendersDescription(sectionId: Int)
+    case locallyHiddenSenders(sectionId: Int)
     
     case section(sectionId:Int)
 
@@ -246,7 +247,7 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
             return sectionId
         case let .secretChatWebPreviewDesc(sectionId):
             return sectionId
-        case let .hideBlockedSenders(sectionId, _), let .hideBlockedSendersDescription(sectionId):
+        case let .hideBlockedSenders(sectionId, _), let .hideBlockedSendersDescription(sectionId), let .locallyHiddenSenders(sectionId):
             return sectionId
         case let .section(sectionId):
             return sectionId
@@ -346,6 +347,8 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
             return 43
         case .hideBlockedSendersDescription:
             return 44
+        case .locallyHiddenSenders:
+            return 45
         case let .section(sectionId):
             return (sectionId + 1) * 1000 - sectionId
         }
@@ -547,6 +550,12 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
             })
         case .hideBlockedSendersDescription:
             return GeneralTextRowItem(initialSize, stableId: stableId, text: localizedString("Gergram.Chat.HideBlockedSendersDescription"), viewType: .textBottomItem)
+        case .locallyHiddenSenders:
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ShadowBannedSenders"), type: .next, viewType: .singleItem, action: {
+                let context = arguments.context
+                guard !context.isFrozen else { return }
+                context.bindings.rootNavigation().push(localShadowBannedSendersController(context: context))
+            })
         case .section:
             return GeneralRowItem(initialSize, height: 20, stableId: stableId, viewType: .separator)
         }
@@ -817,6 +826,9 @@ private func entries(state: PrivacyAndSecurityControllerState, contentConfigurat
     entries.append(.hideBlockedSendersDescription(sectionId: sectionId))
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
+
+    entries.append(.locallyHiddenSenders(sectionId: sectionId))
+    entries.append(.section(sectionId: sectionId))
 
     return entries
 }

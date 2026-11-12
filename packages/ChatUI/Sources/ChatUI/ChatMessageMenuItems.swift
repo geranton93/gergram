@@ -451,7 +451,14 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         selectedMessages = .single([])
     }
 
-    return combineLatest(queue: .mainQueue(), chatMenuItemsData(for: message, textLayout: textLayout, entry: entry, chatInteraction: chatInteraction, source: source), selectedMessages) |> map { [chatInteraction] data, selectedMessages in
+    let shadowBannedSenderIds: Signal<Set<PeerId>?, NoError>
+    if case .general = source, chatInteraction.canManageLocalMessageVisibility {
+        shadowBannedSenderIds = localShadowBannedSenderIds(chatInteraction.context.account.postbox) |> take(1) |> map(Optional.some)
+    } else {
+        shadowBannedSenderIds = .single(nil)
+    }
+
+    return combineLatest(queue: .mainQueue(), chatMenuItemsData(for: message, textLayout: textLayout, entry: entry, chatInteraction: chatInteraction, source: source), selectedMessages, shadowBannedSenderIds) |> map { [chatInteraction] data, selectedMessages, shadowBannedSenderIds in
         
         let peer = data.message.peers[data.message.id.peerId]
         let isNotFailed = !message.flags.contains(.Failed) && !message.flags.contains(.Unsent) && !data.message.flags.contains(.Sending)
@@ -1612,6 +1619,13 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
                       chatInteraction.canManageLocalMessageVisibility else { return }
                 chatInteraction.hideLocalMessage?(message)
             }, itemImage: MenuAnimation.menu_hide.value))
+        }
+
+        if case .general = source, !isService, isNotFailed, data.chatState != .selecting,
+           data.chatLocation == chatInteraction.chatLocation, entry?.isFakeMessage == false,
+           let shadowBannedSenderIds,
+           let shadowBan = ChatLocalShadowBanAction.menuItem(for: data.message, shadowBannedSenderIds: shadowBannedSenderIds, interaction: chatInteraction) {
+            fifthBlock.append(shadowBan)
         }
 
         if canDeleteMessage(data.message, account: account, chatLocation: data.chatLocation, mode: data.chatMode), !data.isLogInteraction {

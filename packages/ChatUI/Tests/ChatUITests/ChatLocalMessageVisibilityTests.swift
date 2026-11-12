@@ -15,8 +15,9 @@ final class ChatLocalMessageVisibilityTests: XCTestCase {
         peer: Int64 = 1,
         namespace: MessageId.Namespace = Namespaces.Message.Cloud,
         album: Int64? = nil,
-        author: TelegramUser? = nil,
-        forwardedAuthor: TelegramUser? = nil,
+        author: Peer? = nil,
+        forwardedAuthor: Peer? = nil,
+        inlineBot: PeerId? = nil,
         direct: Bool = false,
         incoming: Bool = true
     ) -> MessageHistoryEntry {
@@ -28,7 +29,7 @@ final class ChatLocalMessageVisibilityTests: XCTestCase {
             stableId: UInt32(id), stableVersion: 0, id: MessageId(peerId: peerId, namespace: namespace, id: id),
             globallyUniqueId: nil, groupingKey: album, groupInfo: nil, threadId: nil, timestamp: id,
             flags: incoming ? [.Incoming] : [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: forwardInfo,
-            author: author, text: "Message", attributes: [], media: [], peers: SimpleDictionary(),
+            author: author, text: "Message", attributes: inlineBot.map { [InlineBotMessageAttribute(peerId: $0, title: nil)] } ?? [], media: [], peers: SimpleDictionary(),
             associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:],
             associatedThreadInfo: nil, associatedStories: [:]
         )
@@ -90,10 +91,30 @@ final class ChatLocalMessageVisibilityTests: XCTestCase {
             entries: [groupMessage, forwarded, direct, outgoing, ordinary],
             hiddenItems: [],
             revealedMessageId: nil,
-            blockedSenderIds: [blocked.id],
+            filteredSenderIds: [blocked.id],
             accountPeerId: accountPeerId
         )
 
         XCTAssertEqual(projection.entries.map { $0.message.id }, [direct, outgoing, ordinary].map { $0.message.id })
+    }
+
+    func testLocalShadowBanMatchesChannelAndInlineBotWhileAllowingExplicitReveal() {
+        let channel = TelegramChannel(id: PeerId(namespace: Namespaces.Peer.CloudChannel, id: ._internalFromInt64Value(101)), accessHash: nil, title: "Channel", username: nil, photo: [], creationDate: 0, version: 0, participationStatus: .member, info: .broadcast(.init(flags: [])), flags: [], restrictionInfo: nil, adminRights: nil, bannedRights: nil, defaultBannedRights: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, emojiStatus: nil, approximateBoostLevel: nil, subscriptionUntilDate: nil, verificationIconFileId: nil, sendPaidMessageStars: nil, linkedMonoforumId: nil)
+        let sameNumberUser = user(101)
+        let botId = user(102).id
+        let channelMessage = entry(1, author: channel)
+        let forwarded = entry(2, author: sameNumberUser, forwardedAuthor: channel)
+        let inline = entry(3, author: sameNumberUser, inlineBot: botId)
+        let sameNumber = entry(4, author: sameNumberUser)
+        let directChannel = entry(5, author: channel, direct: true)
+        let original = [channelMessage, forwarded, inline, sameNumber, directChannel]
+
+        let projection = ChatLocalMessageVisibility.project(
+            entries: original, hiddenItems: [], revealedMessageId: forwarded.message.id,
+            filteredSenderIds: [channel.id, botId], accountPeerId: accountPeerId
+        )
+
+        XCTAssertEqual(projection.entries.map { $0.message.id }, [forwarded, sameNumber, directChannel].map { $0.message.id })
+        XCTAssertTrue(projection.hiddenItems.isEmpty)
     }
 }

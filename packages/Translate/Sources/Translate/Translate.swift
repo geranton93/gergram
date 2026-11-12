@@ -2,6 +2,11 @@ import SwiftSignalKit
 import NaturalLanguage
 import AppKit
 
+private final class GoogleTranslationRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
 
 private extension String {
     func replacingOccurrences(with: String, of: String) -> String {
@@ -10,6 +15,7 @@ private extension String {
 }
 
 public struct Translate {
+    private static let googleSession = URLSession(configuration: .ephemeral, delegate: GoogleTranslationRedirectDelegate(), delegateQueue: nil)
     
     public enum Error {
         case generic
@@ -320,41 +326,22 @@ public struct Translate {
 
     public static func translateText(text: String, from: String?, to: String) -> Signal<(detect: String?, result: String), Error> {
         return Signal { subscriber in
-            
-            
-            var uri = "https://translate.goo";
-            uri += "gleapis.com/transl";
-            uri += "ate_a";
-            uri += "/singl";
-            uri += "e?client=gtx&sl=" + (from ?? "auto") + "&tl=" + to + "&dt=t" + "&ie=UTF-8&oe=UTF-8&otf=1&ssel=0&tsel=0&kc=7&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&q=";
-            uri += text.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlQueryAllowed)!
-            
-            var request = URLRequest(url: URL(string: uri)!)
+            guard let url = GoogleTranslationRequest.url(text: text, from: from, to: to) else {
+                subscriber.putError(.generic)
+                return EmptyDisposable
+            }
+
+            var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue(userAgents[Int.random(in: 0 ..< userAgents.count)], forHTTPHeaderField: "User-Agent")
-            let session = URLSession.shared
-            let task = session.dataTask(with: request, completionHandler: { data, response, error in
-                if let _ = error {
+            let task = googleSession.dataTask(with: request, completionHandler: { data, response, error in
+                guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data,
+                      let result = GoogleTranslationRequest.result(from: data) else {
                     subscriber.putError(.generic)
-                } else if let data = data {
-                    let json = try? JSONSerialization.jsonObject(with: data, options: []) as? NSArray
-                    if let json = json, json.count > 0 {
-                        let array = json[0] as? NSArray ?? NSArray()
-                        var result: String = ""
-                        for i in 0 ..< array.count {
-                            let blockText = array[i] as? NSArray
-                            if let blockText = blockText, blockText.count > 0 {
-                                let value = blockText[0] as? String
-                                if let value = value, value != "null" {
-                                    result += value
-                                }
-                            }
-                        }
-                        subscriber.putNext((detect: json[2] as? String, result: result))
-                    } else {
-                        subscriber.putError(.generic)
-                    }
+                    return
                 }
+                subscriber.putNext(result)
+                subscriber.putCompletion()
             })
             task.resume()
             

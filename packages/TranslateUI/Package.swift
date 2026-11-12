@@ -46,5 +46,6 @@ let package = Package(
                 .product(name: "RichTextEditorCore", package: "RichTextEditor", condition: nil),
             ] + deps.map { .product(name: $0.0, package: $0.0, condition: nil) },
             path: "Sources/TranslateUI"),
+        .testTarget(name: "TranslateUITests", dependencies: ["TranslateUI"]),
     ]
 )

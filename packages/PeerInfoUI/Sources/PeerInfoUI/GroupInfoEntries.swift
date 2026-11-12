@@ -1080,7 +1080,7 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
     case about(section:Int, text: String, viewType: GeneralViewType)
     case addressName(section:Int, name:[UserInfoAddress], viewType: GeneralViewType)
     case verifiedInfo(sectionId: Int, value: PeerVerification?, viewType: GeneralViewType)
-    case peerId(section:Int, value: String, viewType: GeneralViewType)
+    case peerId(section:Int, value: String, label: String, viewType: GeneralViewType)
     case sharedMedia(section:Int, viewType: GeneralViewType)
     case balance(section: Int, stars: String, canSeeStars: Bool, viewType: GeneralViewType)
     case notifications(section:Int, settings: PeerNotificationSettings?, viewType: GeneralViewType)
@@ -1122,7 +1122,7 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
         case let .scam(section, title, text, _): return .scam(section: section, title: title, text: text, viewType: viewType)
         case let .about(section, text, _): return .about(section: section, text: text, viewType: viewType)
         case let .addressName(section, name, _): return .addressName(section: section, name: name, viewType: viewType)
-        case let .peerId(section, value, _): return .peerId(section: section, value: value, viewType: viewType)
+        case let .peerId(section, value, label, _): return .peerId(section: section, value: value, label: label, viewType: viewType)
         case let .sharedMedia(section, _): return .sharedMedia(section: section, viewType: viewType)
         case let .balance(section, stars, canSeeStars, _): return .balance(section: section, stars: stars, canSeeStars: canSeeStars, viewType: viewType)
         case let .notifications(section, settings, _): return .notifications(section: section, settings: settings, viewType: viewType)
@@ -1229,8 +1229,8 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             } else {
                 return false
             }
-        case let .peerId(section, value, viewType):
-            if case .peerId(section, value, viewType) = entry {
+        case let .peerId(section, value, label, viewType):
+            if case .peerId(section, value, label, viewType) = entry {
                 return true
             } else {
                 return false
@@ -1611,7 +1611,7 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return sectionId
         case let .addressName(sectionId, _, _):
             return sectionId
-        case let .peerId(sectionId, _, _):
+        case let .peerId(sectionId, _, _, _):
             return sectionId
         case let .setTitle(sectionId, _, _):
             return sectionId
@@ -1696,7 +1696,7 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return (sectionId * 100000) + stableIndex
         case let .addressName(sectionId, _, _):
             return (sectionId * 100000) + stableIndex
-        case let .peerId(sectionId, _, _):
+        case let .peerId(sectionId, _, _, _):
             return (sectionId * 100000) + stableIndex
         case let .setTitle(sectionId, _, _):
             return (sectionId * 100000) + stableIndex
@@ -1825,8 +1825,8 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             }, linkInteractions: interactions, qrCode: { control in
                 arguments.openQrStudio(from: control)
             })
-        case let .peerId(_, value, viewType):
-            return  TextAndLabelItem(initialSize, stableId: stableId.hashValue, label: "PEER ID", copyMenuText: strings().textCopyText, text: value, context: arguments.context, viewType: viewType, canCopy: true, _copyToClipboard: {
+        case let .peerId(_, value, label, viewType):
+            return  TextAndLabelItem(initialSize, stableId: stableId.hashValue, label: label, copyMenuText: strings().textCopyText, text: value, context: arguments.context, viewType: viewType, canCopy: true, _copyToClipboard: {
                 arguments.copy(value)
             })
         case let .setTitle(_, text, viewType):
@@ -2345,7 +2345,7 @@ func groupInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments
                 aboutBlock.append(GroupInfoEntry<Context>.addressName(section: GroupInfoSection.desc.rawValue, name: usernames, viewType: .singleItem))
             }
             if let peerIdFormat, let peerIdText = profilePeerIdText(group.id, format: peerIdFormat) {
-                aboutBlock.append(GroupInfoEntry<Context>.peerId(section: GroupInfoSection.desc.rawValue, value: peerIdText, viewType: .singleItem))
+                aboutBlock.append(GroupInfoEntry<Context>.peerId(section: GroupInfoSection.desc.rawValue, value: peerIdText, label: profilePeerIdLabel(for: group, cachedData: view.cachedData), viewType: .singleItem))
             }
 
             applyBlock(aboutBlock)

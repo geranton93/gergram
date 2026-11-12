@@ -621,7 +621,7 @@ enum ChannelInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
     case scam(sectionId: ChannelInfoSection, title: String, text: String, viewType: GeneralViewType)
     case about(sectionId: ChannelInfoSection, text: String, viewType: GeneralViewType)
     case userName(sectionId: ChannelInfoSection, value: [UserInfoAddress], viewType: GeneralViewType)
-    case peerId(sectionId: ChannelInfoSection, value: String, viewType: GeneralViewType)
+    case peerId(sectionId: ChannelInfoSection, value: String, label: String, viewType: GeneralViewType)
     case setTitle(sectionId: ChannelInfoSection, text: String, viewType: GeneralViewType)
     case admins(sectionId: ChannelInfoSection, count:Int32?, viewType: GeneralViewType)
     case recent(sectionId: ChannelInfoSection, viewType: GeneralViewType)
@@ -655,7 +655,7 @@ enum ChannelInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
         case let .scam(sectionId, title, text, _): return .scam(sectionId: sectionId, title: title, text: text, viewType: viewType)
         case let .about(sectionId, text, _): return .about(sectionId: sectionId, text: text, viewType: viewType)
         case let .userName(sectionId, value, _): return .userName(sectionId: sectionId, value: value, viewType: viewType)
-        case let .peerId(sectionId, value, _): return .peerId(sectionId: sectionId, value: value, viewType: viewType)
+        case let .peerId(sectionId, value, label, _): return .peerId(sectionId: sectionId, value: value, label: label, viewType: viewType)
         case let .setTitle(sectionId, text, _): return .setTitle(sectionId: sectionId, text: text, viewType: viewType)
         case let .admins(sectionId, count, _): return .admins(sectionId: sectionId, count: count, viewType: viewType)
         case let .recent(sectionId, _): return .recent(sectionId: sectionId, viewType: viewType)
@@ -750,9 +750,9 @@ enum ChannelInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             default:
                 return false
             }
-        case let .peerId(sectionId, value, viewType):
+        case let .peerId(sectionId, value, label, viewType):
             switch entry {
-            case .peerId(sectionId, value, viewType):
+            case .peerId(sectionId, value, label, viewType):
                 return true
             default:
                 return false
@@ -990,7 +990,7 @@ enum ChannelInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return sectionId.rawValue
         case let .userName(sectionId, _, _):
             return sectionId.rawValue
-        case let .peerId(sectionId, _, _):
+        case let .peerId(sectionId, _, _, _):
             return sectionId.rawValue
         case let .admins(sectionId, _, _):
             return sectionId.rawValue
@@ -1053,7 +1053,7 @@ enum ChannelInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return (sectionId.rawValue * 1000) + stableIndex
         case let .userName(sectionId, _, _):
             return (sectionId.rawValue * 1000) + stableIndex
-        case let .peerId(sectionId, _, _):
+        case let .peerId(sectionId, _, _, _):
             return (sectionId.rawValue * 1000) + stableIndex
         case let .admins(sectionId, _, _):
             return (sectionId.rawValue * 1000) + stableIndex
@@ -1175,8 +1175,8 @@ enum ChannelInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             }, linkInteractions: interactions, qrCode: { control in
                 arguments.openQrStudio(from: control)
             })
-        case let .peerId(_, value, viewType):
-            return  TextAndLabelItem(initialSize, stableId: stableId.hashValue, label: "PEER ID", copyMenuText: strings().textCopyText, text: value, context: arguments.context, viewType: viewType, canCopy: true, _copyToClipboard: {
+        case let .peerId(_, value, label, viewType):
+            return  TextAndLabelItem(initialSize, stableId: stableId.hashValue, label: label, copyMenuText: strings().textCopyText, text: value, context: arguments.context, viewType: viewType, canCopy: true, _copyToClipboard: {
                 arguments.copy(value)
             })
         case let .report(_, viewType):
@@ -1396,7 +1396,7 @@ func channelInfoEntries<Context: AccountContextProtocol>(view: PeerView, argumen
                 aboutBlock.append(.userName(sectionId: .desc, value: usernames, viewType: .singleItem))
             }
             if let peerIdFormat, let peerIdText = profilePeerIdText(channel.id, format: peerIdFormat) {
-                aboutBlock.append(.peerId(sectionId: .desc, value: peerIdText, viewType: .singleItem))
+                aboutBlock.append(.peerId(sectionId: .desc, value: peerIdText, label: profilePeerIdLabel(for: channel, cachedData: view.cachedData), viewType: .singleItem))
             }
             applyBlock(aboutBlock)
             

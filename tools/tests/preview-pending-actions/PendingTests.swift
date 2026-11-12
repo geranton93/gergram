@@ -29,7 +29,17 @@ final class Analytics {
 }
 struct ChatState {
     var alwaysPaid = false
-    func withUpdatedAlwaysPaidMessage(_ value: Bool) -> ChatState { ChatState(alwaysPaid: value) }
+    var interfaceState = ComposerState()
+    func withUpdatedAlwaysPaidMessage(_ value: Bool) -> ChatState {
+        var state = self
+        state.alwaysPaid = value
+        return state
+    }
+    func updatedInterfaceState(_ transform: (ComposerState) -> ComposerState) -> ChatState {
+        var state = self
+        state.interfaceState = transform(state.interfaceState)
+        return state
+    }
 }
 final class ChatInteraction {
     struct Schedule { let date: Int32; let repeatPeriod: Int32? }
@@ -37,14 +47,21 @@ final class ChatInteraction {
     var preferenceWrites = 0
     var state = ChatState()
     var onUpdate: (() -> Void)?
+    var presentation: ChatState { state }
     func captureDeferredSendAction() -> ChatDeferredSendAction {
         let revision = self.revision
         return ChatDeferredSendAction { [weak self] in self?.revision == revision }
     }
-    func update(_ transform: (ChatState) -> ChatState) { state = transform(state); preferenceWrites += 1; onUpdate?() }
+    func update(_ transform: (ChatState) -> ChatState) {
+        let updated = transform(state)
+        if updated.interfaceState != state.interfaceState { revision += 1 }
+        state = updated
+        preferenceWrites += 1
+        onUpdate?()
+    }
 }
 final class Journey {
-    enum Step { case cancelSchedule, openPrice, applyPrice, cancelPrice, removePrice, openEffectPremium }
+    enum Step { case cancelSchedule, openPrice, applyPrice, cancelPrice, removePrice, openEffectPremium, openConfirmation, cancelConfirmation }
     var steps: [Step] = []
     var cancelled = 0
     var discarded = 0
@@ -88,6 +105,9 @@ final class Controller: Base {
     let pasteDisposable = PasteSubscriptionFixture()
     let pendingActions = PreviewSenderPendingActions()
     let chatInteraction = ChatInteraction()
+    let contextChatInteraction = ChatInteraction()
+    private var borrowedComposerDraft: (input: ChatTextInputState, restoreAction: ChatDeferredSendAction)?
+    private var keepEditedCaptionOnCancel = false
     var analyticsMediaJourney: Journey? = Journey()
     var analyticsContext: Context? = Context()
     var sent = false
@@ -98,6 +118,7 @@ __EFFECT_PREMIUM__
 __PRICE__
 __CAPTURE__
 __CLOSE__
+__CAPTION__
 __DISAPPEAR__
     func sendBatches(_ count: Int, onBatch: (Int) -> Void) {
         let submission = analyticsMediaJourney

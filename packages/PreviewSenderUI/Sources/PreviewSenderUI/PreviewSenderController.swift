@@ -215,7 +215,7 @@ fileprivate class PreviewSenderView : Control {
         
       
         closeButton.set(handler: { [weak self] _ in
-            self?.controller?.closeModal()
+            self?.controller?.cancelPreview()
         }, for: .Click)
         
         headerView.layer?.masksToBounds = false
@@ -1461,7 +1461,8 @@ public class PreviewSenderController: ModalViewController, Notifable {
     private let pasteActions = PreviewSenderPendingActions()
     
     private let inputSwapDisposable = MetaDisposable()
-    private var temporaryInputState: ChatTextInputState?
+    private var borrowedComposerDraft: (input: ChatTextInputState, restoreAction: ChatDeferredSendAction)?
+    private var keepEditedCaptionOnCancel = false
     private var contextQueryState: (ChatPresentationInputQuery?, Disposable)?
     private let inputContextHelper: InputContextHelper
     private let inputInteraction:PreviewContextInteraction = PreviewContextInteraction()
@@ -1554,10 +1555,14 @@ public class PreviewSenderController: ModalViewController, Notifable {
     
     public override func close(animationType: ModalAnimationCloseBehaviour = .common) {
         guard !pendingActions.isClosed, !sent else { return }
+        if borrowedComposerDraft?.restoreAction.isAvailable == true, sendSourceValidation?() != false {
+            cancelPreview()
+            return
+        }
         
         let currentText = self.genericView.textView.string()
-        let basicText = self.temporaryInputState?.inputText ?? ""
-        if (self.temporaryInputState == nil && !currentText.isEmpty) || (basicText != currentText) {
+        let originalText = borrowedComposerDraft?.input.inputText ?? ""
+        if originalText != currentText {
             analyticsMediaJourney?.step(.openConfirmation)
             let childAction = PreviewSenderChildAction(context: analyticsContext ?? Analytics.shared.unresolvedContext(), isCurrent: capturePendingAction())
             verifyAlert_button(for: context.window, header: strings().mediaSenderDiscardChangesHeader, information: strings().mediaSenderDiscardChangesText, ok: strings().mediaSenderDiscardChangesOK, successHandler: { [weak self] _ in
@@ -1570,6 +1575,12 @@ public class PreviewSenderController: ModalViewController, Notifable {
         } else {
             self.closeModal()
         }
+    }
+
+    fileprivate func cancelPreview() {
+        guard !pendingActions.isClosed, !sent else { return }
+        keepEditedCaptionOnCancel = true
+        closeModal()
     }
     
     fileprivate func closeModal() {
@@ -1958,25 +1969,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
         if let attributedString = attributedString {
             genericView.textView.set(.init(attributedText: stateAttributedStringForText(attributedString), selectionRange: attributedString.length ..< attributedString.length))
         } else {
-            let input = chatInteraction.presentation.interfaceState.inputState
-            let messageEffect = chatInteraction.presentation.interfaceState.messageEffect
-            
-            self.temporaryInputState = input
-            
-            self.contextChatInteraction.update {
-                $0.updatedInterfaceState {
-                    $0.withUpdatedMessageEffect(messageEffect)
-                }
-            }
-            
-            genericView.textView.set(input)
-            self.genericView.updateMessageEffect(messageEffect, interactions: contextChatInteraction, animated: false)
-            
-            chatInteraction.update({
-                $0.updatedInterfaceState({
-                    $0.withUpdatedInputState(ChatTextInputState()).withUpdatedMessageEffect(nil)
-                })
-            })
+            borrowComposerDraft()
         }
         
         PreviewSenderUIHooks.shared.updateEmojies(emoji, chatInteraction.peerId, { [weak self] emoji, fromRect in
@@ -2259,11 +2252,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
             
 
             if medias.isEmpty {
-                self.closeModal()
-                if self.chatInteraction.presentation.effectiveInput.inputText.isEmpty {
-                    let input = self.genericView.textView.interactions.presentation.textInputState()
-                    self.chatInteraction.update({$0.withUpdatedEffectiveInputState(input)})
-                }
+                self.cancelPreview()
             } else {
                 let oldSize = self.genericView.frame.size
                 self.updateSize(320, animated: first.swap(!self.genericView.tableView.isEmpty))
@@ -3024,6 +3013,32 @@ public class PreviewSenderController: ModalViewController, Notifable {
         closeAllPopovers(for: mainWindow)
     }
     
+    private func borrowComposerDraft() {
+        let state = chatInteraction.presentation.interfaceState
+        contextChatInteraction.update {
+            $0.updatedInterfaceState { $0.withUpdatedMessageEffect(state.messageEffect) }
+        }
+        genericView.textView.set(state.inputState)
+        genericView.updateMessageEffect(state.messageEffect, interactions: contextChatInteraction, animated: false)
+        chatInteraction.update {
+            $0.updatedInterfaceState { $0.withUpdatedInputState(ChatTextInputState()).withUpdatedMessageEffect(nil) }
+        }
+        borrowedComposerDraft = (state.inputState, chatInteraction.captureDeferredSendAction())
+    }
+
+    private func restoreBorrowedDraftIfCurrent() {
+        guard let draft = borrowedComposerDraft else { return }
+        borrowedComposerDraft = nil
+        guard !sent, draft.restoreAction.takeIfCurrent(), sendSourceValidation?() != false else { return }
+
+        let edited = genericView.textView.interactions.presentation.textInputState()
+        let input = keepEditedCaptionOnCancel && !edited.inputText.isEmpty ? edited : draft.input
+        let messageEffect = contextChatInteraction.presentation.interfaceState.messageEffect
+        chatInteraction.update {
+            $0.updatedInterfaceState { $0.withUpdatedInputState(input).withUpdatedMessageEffect(messageEffect) }
+        }
+    }
+
     public override func viewWillDisappear(_ animated: Bool) {
         pendingActions.close()
         pasteActions.close()
@@ -3032,18 +3047,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
         editorDisposable.dispose()
         if !sent { analyticsMediaJourney?.discard() }
         super.viewWillDisappear(animated)
-        if !sent {
-            chatInteraction.update({
-                $0.updatedInterfaceState({ state in
-                    var state = state
-                    if let temp = temporaryInputState {
-                        state = state.withUpdatedInputState(temp)
-                    }
-                    state = state.withUpdatedMessageEffect(self.contextChatInteraction.presentation.interfaceState.messageEffect)
-                    return state
-                })
-            })
-        }
+        restoreBorrowedDraftIfCurrent()
         if !sent {
             for (_, cached) in cachedMedia {
                 for media in cached.media {

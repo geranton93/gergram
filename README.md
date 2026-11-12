@@ -12,7 +12,7 @@ The development branch contains the changes below. The integrated macOS build an
 | Profile IDs and dates | The existing profile ID option can display and copy the Bot API format for users, groups, and channels. User profiles show the registration month and year when Telegram supplies it. |
 | Chat folders | Account-local controls to hide and restore folders, show or hide All Chats, and show or hide folder unread badges. Visible folders can be reordered while hidden folders retain their positions in the saved order. A reachable default folder remains available. |
 | Local message visibility | Hide an individual message or album for the current session and restore hidden messages from the chat menu. The optional blocked-sender filter covers incoming messages in the transcript, including known forwarded and inline bot sources. Each chat can temporarily show its filtered messages. |
-| Message Shot | Copy or save a single message or a selection as a PNG from the message menu. Exports include author labels, styled ordinary text, and media placeholders. Use the saved **Show Timestamps** option to include or hide dates and times. gergram checks chat and message export permissions before rendering. |
+| Message Shot | Copy or save a single message or a selection as a PNG from the message menu. Exports include author labels, styled ordinary text, and media placeholders. **Show Timestamps** controls dates and times. Turn off **Show Background** for a transparent canvas around the message cards. Both options are saved locally. gergram checks chat and message export permissions before rendering. |
 | Streamer Mode | A persistent app and menu-bar control requests capture exclusion across gergram windows and suppresses new chat and story notifications while active. Actual capture coverage depends on macOS and the sharing method. |
 | Discovery | Disable remote peer discovery in the main chat-list search while keeping local and message results. Hide the Similar Channels profile tab and start post-join recommendations collapsed. |
 | Bot button inspection | View or copy inline callback data from the message menu without activating the button. Binary payloads use Base64. |
@@ -23,7 +23,7 @@ The development branch contains the changes below. The integrated macOS build an
 | Area | What gergram adds |
 | --- | --- |
 | Message filters | Apply regular-expression rules globally or per chat, with import and export. Add sender-specific rules and extend filtering to remaining chat surfaces. |
-| Message images | Extend Message Shot with media rendering, rich-message layouts, and controls for themes, backgrounds, reactions, and spoilers. |
+| Message images | Extend Message Shot with media rendering, rich-message layouts, and controls for themes, reactions, and spoilers. |
 | Local message history | Keep an opt-in, account-scoped record of eligible ordinary messages previously seen on this Mac. Browse earlier versions and deletion records, set retention, and clear stored entries. |
 | Chat appearance | Add settings for bubble width and shape, avatar corners, monospace fonts, timestamp precision, and message context-menu visibility. |
 | Composer controls | Choose visible composer actions and media send confirmations. Reorder file attachments and restore edited captions to the draft after cancellation. |

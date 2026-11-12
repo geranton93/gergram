@@ -42,11 +42,17 @@ enum ChatMessageShotAction {
             export(ids: ids, selection: selection, interaction: interaction, destination: .file)
         }, itemImage: MenuAnimation.menu_save_as.value))
         menu.addItem(ContextSeparatorItem())
+        let options = MessageShotOptions()
         menu.addItem(ContextMenuItem(localizedString("Gergram.Chat.MessageShotShowTimestamps"), handler: {
             var options = MessageShotOptions()
             options.showsTimestamps.toggle()
             options.save()
-        }, state: MessageShotOptions().showsTimestamps ? .on : .off))
+        }, state: options.showsTimestamps ? .on : .off))
+        menu.addItem(ContextMenuItem(localizedString("Gergram.Chat.MessageShotShowBackground"), handler: {
+            var options = MessageShotOptions()
+            options.showsBackground.toggle()
+            options.save()
+        }, state: options.showsBackground ? .on : .off))
         let item = ContextMenuItem(localizedString("Gergram.Chat.MessageShot"), handler: {}, itemImage: MenuAnimation.menu_copy_media.value)
         item.submenu = menu
         return item
@@ -131,8 +137,9 @@ enum ChatMessageShotAction {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotUnavailable"))
                 return
             }
+            let canvasBackground = options.showsBackground ? theme.colors.background : nil
             guard messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
-                  let png = MessageShotRenderer.png(rows: rows(for: messages, interaction: interaction, options: options), background: theme.colors.background) else {
+                  let png = MessageShotRenderer.png(rows: rows(for: messages, interaction: interaction, options: options), background: canvasBackground) else {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotRenderFailed"))
                 return
             }

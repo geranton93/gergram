@@ -9,7 +9,7 @@ enum MessageShotRenderer {
 
     static let maximumMessageCount = 20
 
-    static func png(rows: [Row], background: NSColor) -> Data? {
+    static func png(rows: [Row], background: NSColor?) -> Data? {
         guard !rows.isEmpty, rows.count <= maximumMessageCount,
               rows.reduce(0, { $0 + $1.header.length + $1.body.length }) <= 16_000 else {
             return nil
@@ -50,8 +50,13 @@ enum MessageShotRenderer {
         defer { NSGraphicsContext.restoreGraphicsState() }
         NSGraphicsContext.current = NSGraphicsContext(cgContext: bitmap, flipped: true)
 
-        background.setFill()
-        NSBezierPath(rect: NSRect(x: 0, y: 0, width: width, height: totalHeight)).fill()
+        let canvas = CGRect(x: 0, y: 0, width: width, height: totalHeight)
+        if let background {
+            background.setFill()
+            NSBezierPath(rect: canvas).fill()
+        } else {
+            bitmap.clear(canvas)
+        }
 
         var y = margin
         for (row, layout) in zip(rows, metrics) {

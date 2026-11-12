@@ -1,5 +1,7 @@
+import InAppSettings
 import XCTest
 import Postbox
+import SwiftSignalKit
 import TelegramCore
 @testable import ChatUI
 
@@ -18,6 +20,7 @@ final class ChatLocalMessageVisibilityTests: XCTestCase {
         author: Peer? = nil,
         forwardedAuthor: Peer? = nil,
         inlineBot: PeerId? = nil,
+        text: String = "Message",
         direct: Bool = false,
         incoming: Bool = true
     ) -> MessageHistoryEntry {
@@ -29,7 +32,7 @@ final class ChatLocalMessageVisibilityTests: XCTestCase {
             stableId: UInt32(id), stableVersion: 0, id: MessageId(peerId: peerId, namespace: namespace, id: id),
             globallyUniqueId: nil, groupingKey: album, groupInfo: nil, threadId: nil, timestamp: id,
             flags: incoming ? [.Incoming] : [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: forwardInfo,
-            author: author, text: "Message", attributes: inlineBot.map { [InlineBotMessageAttribute(peerId: $0, title: nil)] } ?? [], media: [], peers: SimpleDictionary(),
+            author: author, text: text, attributes: inlineBot.map { [InlineBotMessageAttribute(peerId: $0, title: nil)] } ?? [], media: [], peers: SimpleDictionary(),
             associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:],
             associatedThreadInfo: nil, associatedStories: [:]
         )
@@ -116,5 +119,26 @@ final class ChatLocalMessageVisibilityTests: XCTestCase {
 
         XCTAssertEqual(projection.entries.map { $0.message.id }, [forwarded, sameNumber, directChannel].map { $0.message.id })
         XCTAssertTrue(projection.hiddenItems.isEmpty)
+    }
+
+    func testRegexProjectionFiltersAlbumTextAndKeepsOutgoingMessagesVisible() {
+        let sender = user(101)
+        let account = user(100)
+        let first = entry(1, album: 100, author: sender, text: "Ordinary text")
+        let second = entry(2, album: 100, author: sender, text: "Example spam")
+        let outgoing = entry(3, author: account, text: "Example spam", incoming: false)
+        let manual = entry(4, author: sender, text: "Manually hidden")
+        let entries = [first, second, outgoing, manual]
+        let manualRules = Set([ChatLocalHiddenItem(manual.message)])
+        let completed = expectation(description: "Regex history projection")
+        let disposable = ChatRegexFilterProjection.hiddenItems(entries: entries, rules: [.init(pattern: "spam")], accountPeerId: accountPeerId).start(next: { regexItems in
+            XCTAssertEqual(regexItems, [ChatLocalHiddenItem(first.message)])
+            let result = ChatLocalMessageVisibility.project(entries: entries, hiddenItems: manualRules, revealedMessageId: second.message.id, regexHiddenItems: regexItems, accountPeerId: self.accountPeerId)
+            XCTAssertEqual(result.entries.map { $0.message.id }, [first, second, outgoing].map { $0.message.id })
+            XCTAssertEqual(result.hiddenItems, manualRules)
+            completed.fulfill()
+        })
+        wait(for: [completed], timeout: 2.0)
+        disposable.dispose()
     }
 }

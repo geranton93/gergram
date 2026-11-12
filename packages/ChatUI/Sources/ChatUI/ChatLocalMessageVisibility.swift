@@ -99,9 +99,10 @@ final class ChatLocalMessageVisibility {
         hiddenItems: Set<ChatLocalHiddenItem>,
         revealedMessageId: MessageId?,
         filteredSenderIds: Set<PeerId> = [],
+        regexHiddenItems: Set<ChatLocalHiddenItem> = [],
         accountPeerId: PeerId
     ) -> (entries: [MessageHistoryEntry], hiddenItems: Set<ChatLocalHiddenItem>) {
-        guard !hiddenItems.isEmpty || !filteredSenderIds.isEmpty else { return (entries, hiddenItems) }
+        guard !hiddenItems.isEmpty || !filteredSenderIds.isEmpty || !regexHiddenItems.isEmpty else { return (entries, hiddenItems) }
         var hiddenItems = hiddenItems
         let revealedItem = revealedMessageId.flatMap { id in
             entries.first(where: { $0.message.id == id }).map { ChatLocalHiddenItem($0.message) }
@@ -112,7 +113,7 @@ final class ChatLocalMessageVisibility {
         let visibleEntries = entries.filter { entry in
             let item = ChatLocalHiddenItem(entry.message)
             if item == revealedItem { return true }
-            if hiddenItems.contains(item) { return false }
+            if hiddenItems.contains(item) || regexHiddenItems.contains(item) { return false }
             return filteredSenderIds.isEmpty || ChatBlockedSenderVisibility
                 .candidates(for: entry.message, accountPeerId: accountPeerId)
                 .isDisjoint(with: filteredSenderIds)

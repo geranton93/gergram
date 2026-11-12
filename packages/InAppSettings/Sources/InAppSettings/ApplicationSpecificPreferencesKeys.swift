@@ -26,6 +26,7 @@ private enum ApplicationSpecificPreferencesKeyValues: Int32 {
     case someSettings = 54
     case dockSettings = 55
     case localShadowBannedSenders = 57
+    case localMessageFilters = 58
 }
 
 public struct ApplicationSpecificPreferencesKeys {
@@ -42,6 +43,7 @@ public struct ApplicationSpecificPreferencesKeys {
     public static let voipDerivedState = applicationSpecificPreferencesKey(ApplicationSpecificPreferencesKeyValues.voipDerivedState.rawValue)
     public static let someSettings = applicationSpecificPreferencesKey(ApplicationSpecificPreferencesKeyValues.someSettings.rawValue)
     public static let localShadowBannedSenders = applicationSpecificPreferencesKey(ApplicationSpecificPreferencesKeyValues.localShadowBannedSenders.rawValue)
+    public static let localMessageFilters = applicationSpecificPreferencesKey(ApplicationSpecificPreferencesKeyValues.localMessageFilters.rawValue)
 }
 
 public struct ApplicationSharedPreferencesKeys {

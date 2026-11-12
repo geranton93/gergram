@@ -114,6 +114,7 @@ final class Controller: Base {
     var window: Window? = Window()
     var sendCurrentMedia: ((Bool, ChatInteraction.Schedule?, Bool?, Via) -> Void)?
     var onSend: (() -> Void)?
+    var pendingRenderSend: (() -> Void)?
 __EFFECT_PREMIUM__
 __PRICE__
 __CAPTURE__

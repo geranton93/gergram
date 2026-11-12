@@ -40,6 +40,7 @@ struct Labels { func previewDraggingAddItemsOther(_ count: Int) -> String { "add
 func strings() -> Labels { Labels() }
 enum Route { case addDrop }
 final class Controller {
+    var pendingRenderSend: (() -> Void)?
     var insertAdditionUrls: (([URL], Route) -> Void)?
 __DROP__
     let pendingActions = PreviewSenderPendingActions()

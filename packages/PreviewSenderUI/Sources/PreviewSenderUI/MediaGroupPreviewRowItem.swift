@@ -18,8 +18,10 @@ class MediaGroupPreviewRowItem: TableRowItem {
     fileprivate let context: any AccountContextProtocol
     private let _stableId: UInt32 = arc4random()
     fileprivate let layout: GroupedLayout
+    fileprivate let canReorder: () -> Bool
     fileprivate let reorder:(Int, Int)->Void
-    fileprivate let urls: [URL]
+    private let urls: [URL]
+    private let attachmentPositions: [MessageId: Int]
     fileprivate let editedData: [URL: EditedImageData]
     fileprivate let renderingPreviews: [URL: CGImage]
     fileprivate let edit:(URL)->Void
@@ -27,7 +29,7 @@ class MediaGroupPreviewRowItem: TableRowItem {
     fileprivate let delete:(URL)->Void
     fileprivate let parameters:[ChatMediaLayoutParameters]
     fileprivate let payAmount: Int64?
-    init(_ initialSize: NSSize, messages: [Message], urls: [URL], editedData: [URL : EditedImageData], renderingPreviews: [URL : CGImage] = [:], isSpoiler: Bool, payAmount: Int64?, edit: @escaping(URL)->Void, paint: @escaping(URL)->Void, delete:@escaping(URL)->Void, context: any AccountContextProtocol, reorder:@escaping(Int, Int)->Void) {
+    init(_ initialSize: NSSize, messages: [Message], urls: [URL], editedData: [URL : EditedImageData], renderingPreviews: [URL : CGImage] = [:], isSpoiler: Bool, payAmount: Int64?, edit: @escaping(URL)->Void, paint: @escaping(URL)->Void, delete:@escaping(URL)->Void, context: any AccountContextProtocol, canReorder: @escaping () -> Bool, reorder:@escaping(Int, Int)->Void) {
         layout = GroupedLayout(messages)
         self.editedData = editedData
         self.renderingPreviews = renderingPreviews
@@ -35,16 +37,28 @@ class MediaGroupPreviewRowItem: TableRowItem {
         self.paint = paint
         self.delete = delete
         self.urls = urls
+        self.attachmentPositions = Dictionary(uniqueKeysWithValues: messages.enumerated().map { ($0.element.id, $0.offset) })
+        self.canReorder = canReorder
         self.reorder = reorder
         self.context = context
         self.payAmount = payAmount
-        self.parameters = messages.map {
+        self.parameters = layout.messages.map {
             let param = ChatMediaLayoutParameters(presentation: .empty, media: $0.media[0])
             param.forceSpoiler = isSpoiler || payAmount != nil
             return param
         }
         super.init(initialSize)
         _ = makeSize(initialSize.width, oldWidth: 0)
+    }
+
+    fileprivate func attachmentIndex(at tile: Int) -> Int? {
+        guard layout.messages.indices.contains(tile) else { return nil }
+        return attachmentPositions[layout.messages[tile].id]
+    }
+
+    fileprivate func attachmentURL(at tile: Int) -> URL? {
+        guard let index = attachmentIndex(at: tile), urls.indices.contains(index) else { return nil }
+        return urls[index]
     }
     
     override func makeSize(_ width: CGFloat, oldWidth: CGFloat) -> Bool {
@@ -77,6 +91,7 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
     private var contents: [ChatMediaContentView] = []
     private var startPoint: NSPoint = NSZeroPoint
     private(set) var draggingIndex: Int? = nil
+    private weak var draggingItem: MediaGroupPreviewRowItem?
     private var paidView: PaidContentView?
     
     private let editControl = MediaPreviewEditControl()
@@ -124,6 +139,10 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
     override func set(item: TableRowItem, animated: Bool) {
         
         guard let item = item as? MediaGroupPreviewRowItem else {return}
+        if draggingItem !== item {
+            draggingItem = nil
+            draggingIndex = nil
+        }
         
         if contents.count > item.layout.count {
             let contentCount = contents.count
@@ -150,7 +169,7 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
         
         for i in 0 ..< item.layout.count {
             contents[i].update(with: item.layout.messages[i].media[0], size: item.layout.frame(at: i).size, context: item.context, parent: nil, table: item.table, parameters: item.parameters[i], animated: false, positionFlags: nil)
-            updateMediaPreviewRendering(i < item.urls.count ? item.renderingPreviews[item.urls[i]] : nil, in: contents[i], animated: animated)
+            updateMediaPreviewRendering(item.attachmentURL(at: i).flatMap { item.renderingPreviews[$0] }, in: contents[i], animated: animated)
         }
         super.set(item: item, animated: animated)
         
@@ -196,14 +215,15 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
         guard let item = item as? MediaGroupPreviewRowItem else {return}
         let point = convert(event.locationInWindow, from: nil)
         draggingIndex = nil
+        draggingItem = nil
         previous = point
-        for i in 0 ..< item.layout.count {
-            if NSPointInRect(point, item.layout.frame(at: i).offsetBy(dx: offset.x, dy: offset.y)) {
-                self.startPoint = point
-                self.draggingIndex = i
-                addSubview(contents[i])
-                break
-            }
+        if item.canReorder(), let index = (0..<item.layout.count).first(where: {
+            NSPointInRect(point, item.layout.frame(at: $0).offsetBy(dx: offset.x, dy: offset.y))
+        }) {
+            startPoint = point
+            draggingIndex = index
+            draggingItem = item
+            addSubview(contents[index])
         }
         updateControl()
         super.mouseDown(with: event)
@@ -215,30 +235,19 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
 
         var point = convert(event.locationInWindow, from: nil)
         point = NSMakePoint(min(max(0, point.x), frame.width - 10), min(max(0, point.y), frame.height - 10))
-        if let index = draggingIndex, let newIndex = item.layout.moveItemIfNeeded(at: index, point: point) {
-            
-            let current = contents[index]
-            contents.remove(at: index)
-            contents.insert(current, at: newIndex)
-            
-            _ = item.makeSize(frame.width, oldWidth: 0)
-            item.table?.noteHeightOfRow(item.index, true)
-            
-            item.reorder(index, newIndex)
-            
-            set(item: item, animated: true)
-            for i in 0 ..< item.layout.count {
-                let rect = item.layout.frame(at: i).offsetBy(dx: offset.x, dy: offset.y)
-                contents[i].frame = rect
-            }
+        if draggingItem === item, let index = draggingIndex, item.canReorder(),
+           let newIndex = (0..<item.layout.count).first(where: {
+               $0 != index && NSPointInRect(point, item.layout.frame(at: $0).offsetBy(dx: offset.x, dy: offset.y))
+           }), let from = item.attachmentIndex(at: index), let to = item.attachmentIndex(at: newIndex) {
+            item.reorder(from, to)
         } else {
             for i in 0 ..< item.layout.count {
-                let rect = item.layout.frame(at: i).offsetBy(dx: offset.x, dy: offset.y)
-                contents[i].frame = rect
+                contents[i].frame = item.layout.frame(at: i).offsetBy(dx: offset.x, dy: offset.y)
             }
         }
-        
+
         draggingIndex = nil
+        draggingItem = nil
         startPoint = NSZeroPoint
         updateControl()
     }
@@ -248,7 +257,7 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
 
         let point = convert(event.locationInWindow, from: nil)
        
-        if let index = draggingIndex {
+        if draggingItem === item, item.canReorder(), let index = draggingIndex, contents.indices.contains(index) {
             let past = contents[index].frame
 
             var current = contents[index].frame.origin
@@ -276,7 +285,7 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
             let layout = GroupedLayout(item.layout.messages)
             layout.measure(NSMakeSize(frame.width, frame.width))
             
-            if layout.moveItemIfNeeded(at: index, point: point) != nil {
+            if layout.moveItemIfNeeded(at: index, point: point.offsetBy(dx: -offset.x, dy: -offset.y)) != nil {
                 
                 for i in 0 ..< layout.count {
                     let current = item.layout.frame(at: i).offsetBy(dx: offset.x, dy: offset.y).origin
@@ -349,20 +358,20 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
         var found = false
         for i in 0 ..< item.layout.count {
             let rect = item.layout.frame(at: i).offsetBy(dx: offset.x, dy: offset.y)
-            if rect.contains(location) {
+            if rect.contains(location), let url = item.attachmentURL(at: i) {
                 self.editControl.isVideo = canEditPreviewVideo(item.layout.messages[i].media[0])
                 self.editControl.canEdit = item.layout.messages[i].media[0] is TelegramMediaImage || self.editControl.isVideo
                 
                 self.editControl.set(edit: { [weak item] in
                     guard let item = item else {return}
-                    item.edit(item.urls[i])
+                    item.edit(url)
                 }, paint: { [weak item] in
                     guard let item = item else {return}
-                    item.paint(item.urls[i])
+                    item.paint(url)
                 }, delete: { [weak item] in
                     guard let item = item else {return}
-                    item.delete(item.urls[i])
-                }, editedData: item.editedData[item.urls[i]])
+                    item.delete(url)
+                }, editedData: item.editedData[url])
                 
                 self.editControl.setFrameOrigin(NSMakePoint(rect.maxX - editControl.frame.width - 5, rect.maxY - editControl.frame.height - 5))
                 found = true

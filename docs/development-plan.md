@@ -6,6 +6,8 @@
 
 **Architecture.** Extend the existing Swift packages and AppKit/TGUIKit views. Keep account data in existing scoped storage, cross-package navigation in existing hooks, and protocol changes in the pinned shared-core patch when required. Use the internal feature audit for behavior, source evidence, and acceptance cases.
 
+The [architecture review](architecture-review.md) maps all 81 work items to native owners, dependencies and acceptance cases. The [media delivery design](media-delivery.md) traces C33 through playback, MediaBox and the pinned TelegramCore transport.
+
 ## Build and repository
 
 - [x] Confirm the official upstream revision and local Git ancestry.
@@ -42,19 +44,27 @@ The first development changes are source-complete within the scopes below. Each 
 | A02–A03 | Local folder visibility, visible-folder reordering, All Chats control and independent badge setting. | Verify sidebar and tab navigation, keyboard fallback and account switching in the application. |
 | A04 | Session-local message and album hiding with restore from the chat menu. | Exercise unloaded history, replies, topics, search and account switching. |
 | A05 | Optional transcript filtering for blocked incoming sources, with per-chat reveal. | Verify incoming and forwarded messages and complete the remaining activity, seen-list and avatar surfaces. |
+| A09 | Searchable **Filter Zalgo Text in Messages** setting for ordinary text and media captions. It defaults off and preserves source text and UTF-16 attribute ranges. | Verify live toggle, selection, links, search highlighting and VoiceOver in a running chat. Other text surfaces remain planned. |
 | A10 | Initial Message Shot for ordinary text and media placeholders, with PNG copy and save actions. | Verify clipboard and file export in the running app. Media thumbnails and rich messages remain planned. |
 | A11, timestamp visibility | A checked **Show Timestamps** option in the Message Shot menu saves a local app preference for clipboard and file exports. Timestamps are visible by default. Rows without an author or a visible timestamp use no header space. | Verify the menu state, both export actions, and restart persistence in the running app. Other appearance options remain planned. |
 | A11, canvas background | A checked **Show Background** option saves a local app preference for both PNG export actions. The canvas uses the current theme by default. Turning the option off makes the canvas transparent and preserves the message cards. | Verify the menu state, restart persistence, and PNG alpha in clipboard and file exports from the running app. |
 | A12–A13 | Persistent Streamer Mode, app and status menus, window exclusion requests and suppression of new notifications. | Exercise each supported capture method and existing notification state on macOS. |
+| A19 | **Message Details** submenu for eligible cloud messages, with copyable ID, timestamps, and available view and forward counts. | Verify the menu and clipboard with live chat and permission changes. Media metadata and configurable modifier visibility remain planned. |
 | C05, C12–C13 | Message timestamp seconds, Similar Channels controls and optional suppression of remote peer discovery. | Service/reaction timestamps and story visibility remain planned. Verify live settings updates. |
 | C21 | Inline callback display and copy with binary-safe representation. | Exercise a real inline keyboard and confirm that inspecting a payload leaves the bot action inactive. |
+| C33 | Direct playback reuses a bounded, rolling MediaBox read-ahead range. The read waiter distinguishes delivered bytes, cancellation and completion without data. | Verify real MediaBox subscription handover, seek and transport-failure recovery in the app. Measure live goodput and per-DC admission separately. |
 | C34, C42 | Server-provided registration month/year in profiles and a compact unread divider. | Verify profile and history presentation. Join-date and optional lookup paths remain planned. |
+| C35 | Session details show an accessible **Official App** Yes/No row sourced from Telegram's session flag. | Verify official, unofficial and legacy sessions in the running app. |
 
 The CaptureExclusion and ApiCredentials packages compiled, the release verification fixtures passed, and the changed Swift sources parsed. Focused standalone fixtures exercised ID and timestamp formatting, folder preferences, capture state, PNG rendering and its limits, and binary callback data. The SidebarUI and PeerInfoUI package tests could not resolve the pinned SSignalKit dependency. Git could not reach GitHub to initialize the recursive submodules. The integrated workspace build exited before compilation.
 
 For A11 timestamp visibility, `xcrun swift test --package-path "$fixture" --disable-sandbox --filter MessageShotTests` passed three XCTest cases on macOS. The temporary SwiftPM fixture compiled `MessageShotOptions.swift` and `MessageShotRenderer.swift` with the repository's `MessageShotTests.swift`. The PNG geometry case reproduced the empty-header spacing bug before the fix. The workspace test command `sh packages/ChatUI/Tests/run-tests.sh -only-testing:ChatUITests/MessageShotTests` stopped before Xcode because the native libvpx archive was missing. The workspace build stopped before compilation when `xcodebuild` rejected the workspace path. Running the same scheme through `Telegram.xcodeproj` reached SwiftPM resolution, which failed to write its manifest cache in this environment.
 
 The Message Shot tests can run from a terminal with `sh packages/ChatUI/Tests/run-message-shot-tests.sh`. The runner builds the production options and renderer against AppKit and runs the same XCTest file as the workspace suite. For A11 canvas background, all five XCTest cases passed on macOS with `--disable-sandbox` because the managed environment blocks SwiftPM's subprocess sandbox. The PNG tests decode the output and check canvas alpha, image dimensions, and card color. The workspace test command still stops at the missing libvpx archive.
+
+For C33, `sh packages/TelegramMedia/Tests/run-direct-read-ahead-tests.sh --disable-sandbox` passed eight XCTest cases for range reuse, cache and seek decisions, EOF bounds, data completion and cancellation. `xcrun swift test --package-path packages/HLSPlayback --manifest-cache none --disable-sandbox` passed 219 cases with temporary build and module caches. Direct `TelegramMedia` package resolution stopped at the missing pinned SSignalKit checkout. A separate macOS HLS buffering harness passed 15 checks using RangeSet sources verified against the pinned blob hashes. The checks used synthetic inputs and did not measure Telegram network throughput.
+
+For A09 and A19, a standalone `ChatUI` SwiftPM fixture ran the repository's four filter, two message-details and five Message Shot XCTest cases. The changed Swift sources parsed and `plutil` accepted the English strings. `ChatUITests` stopped at the missing libvpx archive, and package checks for TGUIKit and SessionsUI stopped at missing SSignalKit. The display-projection test, chat menu integration and C35 session row still need the prepared workspace.
 
 ## Verification
 

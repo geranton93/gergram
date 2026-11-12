@@ -47,6 +47,39 @@ final class DirectMediaReadAheadTests: XCTestCase {
         XCTAssertEqual(next, current)
     }
 
+    func testSequentialReadReplenishesAtHalfAMebibyteBeforeTheProbeRunsOut() {
+        let current = Int64(0) ..< 2_097_152
+        let fileSize: Int64 = 8_388_608
+        let stillCovered = DirectMediaReadAhead.window(at: 524_287, fileSize: fileSize, current: current, replenishAfterRead: true, isCached: { _ in false })
+        XCTAssertEqual(stillCovered, current)
+
+        let replenished = DirectMediaReadAhead.window(at: 524_288, fileSize: fileSize, current: current, replenishAfterRead: true, isCached: { tail in
+            XCTAssertEqual(tail, 2_097_152 ..< 2_621_440)
+            return false
+        })
+        XCTAssertEqual(replenished, 524_288 ..< 2_621_440)
+    }
+
+    func testSeekAndCachedTailKeepTheCurrentWindow() {
+        let current = Int64(0) ..< 2_097_152
+        let fileSize: Int64 = 8_388_608
+
+        XCTAssertEqual(DirectMediaReadAhead.window(at: 524_288, fileSize: fileSize, current: current, isCached: { _ in
+            XCTFail("A seek inside the active window should not probe the speculative tail")
+            return false
+        }), current)
+        XCTAssertEqual(DirectMediaReadAhead.window(at: 524_288, fileSize: fileSize, current: current, replenishAfterRead: true, isCached: { _ in true }), current)
+    }
+
+    func testEarlyReplenishmentDoesNotReplaceAWindowAlreadyReachingEOF() {
+        let current = Int64(0) ..< 2_097_152
+        let next = DirectMediaReadAhead.window(at: 1_048_576, fileSize: current.upperBound, current: current, replenishAfterRead: true, isCached: { _ in
+            XCTFail("A window already ending at EOF has no additional tail")
+            return false
+        })
+        XCTAssertEqual(next, current)
+    }
+
     func testFetchAndReadRangesAreClampedAtEOFWithoutOverflow() {
         let fileSize = Int64.max
         let offset = fileSize - 8

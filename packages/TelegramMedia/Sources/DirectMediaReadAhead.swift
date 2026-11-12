@@ -9,11 +9,16 @@ enum DirectMediaReadAhead {
         return offset ..< (offset + min(length, fileSize - offset))
     }
 
-    static func window(at offset: Int64, fileSize: Int64, current: Range<Int64>?, isCached: (Range<Int64>) -> Bool) -> Range<Int64>? {
+    static func window(at offset: Int64, fileSize: Int64, current: Range<Int64>?, replenishAfterRead: Bool = false, isCached: (Range<Int64>) -> Bool) -> Range<Int64>? {
         guard let probe = boundedRange(at: offset, length: probeBytes, fileSize: fileSize) else {
             return nil
         }
         if let current, current.lowerBound <= probe.lowerBound, current.upperBound >= probe.upperBound {
+            if replenishAfterRead, offset - current.lowerBound >= probeBytes,
+               let next = boundedRange(at: offset, length: windowBytes, fileSize: fileSize), next.upperBound > current.upperBound,
+               !isCached(current.upperBound ..< next.upperBound) {
+                return next
+            }
             return current
         }
         if isCached(probe) {

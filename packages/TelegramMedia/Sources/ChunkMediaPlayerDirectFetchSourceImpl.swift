@@ -45,7 +45,7 @@ private func FFMpegLookaheadReader_readPacketCallback(userData: UnsafeMutableRaw
             memcpy(buffer, bytes, fetchedData.count)
         }
         let fetchedCount = Int32(fetchedData.count)
-        context.setReadingOffset(offset: context.readingOffset + Int64(fetchedCount))
+        context.setReadingOffset(offset: context.readingOffset + Int64(fetchedCount), replenishAfterRead: true)
         return fetchedCount
     case .cancelled:
         context.isCancelled = true
@@ -189,13 +189,14 @@ private final class FFMpegLookaheadReader {
         self.currentFetch?.disposable.dispose()
     }
     
-    func setReadingOffset(offset: Int64) {
+    func setReadingOffset(offset: Int64, replenishAfterRead: Bool = false) {
         self.readingOffset = offset
 
         self.setFetchRange(range: DirectMediaReadAhead.window(
             at: offset,
             fileSize: self.params.size,
             current: self.currentFetch?.range,
+            replenishAfterRead: replenishAfterRead,
             isCached: self.params.isDataCachedInRange
         ))
     }

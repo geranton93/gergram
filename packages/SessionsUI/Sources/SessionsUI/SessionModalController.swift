@@ -221,6 +221,9 @@ private func entries(_ state: State, arguments: Arguments) -> [InputDataEntry] {
     entries.append(sessionDetailEntry(sectionId: sectionId, index: index, identifier: .init("application"), name: strings().sessionPreviewApp, value: state.session.appName, viewType: .firstItem, accessoryImage: isOfficial ? theme.icons.verifyDialog : nil, accessoryTooltip: isOfficial ? strings().sessionModalControllerOfficialApp : nil))
     index += 1
 
+    entries.append(sessionDetailEntry(sectionId: sectionId, index: index, identifier: .init("official_app"), name: localizedString("Gergram.Sessions.OfficialApp"), value: isOfficial ? strings().alertYes : strings().alertNO, viewType: .innerItem))
+    index += 1
+
     entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: .init("version"), data: InputDataGeneralData(name: strings().sessionModalControllerVersion, color: theme.colors.text, type: .context(state.session.appVersion), viewType: .innerItem, enabled: true)))
     index += 1
 

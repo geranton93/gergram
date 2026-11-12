@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SwiftSignalKit
 import TelegramCore
 import FFMpegBinding
@@ -15,32 +16,28 @@ private func FFMpegLookaheadReader_readPacketCallback(userData: UnsafeMutableRaw
         return FFMPEG_CONSTANT_AVERROR_EOF
     }
     
-    var fetchedData: Data?
-    let fetchDisposable = MetaDisposable()
-    
-    let semaphore = DispatchSemaphore(value: 0)
-    let disposable = context.params.getDataInRange(requestRange, { data in
-        if let data {
-            fetchedData = data
-            semaphore.signal()
-        }
-    })
-    var isCancelled = false
-    let cancelDisposable = context.params.cancel.start(next: { _ in
-        isCancelled = true
-        semaphore.signal()
-    })
-    semaphore.wait()
-    
-    if isCancelled {
-        context.isCancelled = true
+    guard let buffer else {
+        return -EIO
     }
-    
-    disposable.dispose()
-    cancelDisposable.dispose()
-    fetchDisposable.dispose()
-    
-    if let fetchedData = fetchedData {
+
+    let waiter = DirectMediaReadWaiter()
+    let cancelDisposable = context.params.cancel.start(next: { _ in
+        waiter.cancel()
+    })
+    let disposable = context.params.getDataInRange(requestRange, waiter.receive)
+    defer {
+        disposable.dispose()
+        cancelDisposable.dispose()
+    }
+
+    switch waiter.wait() {
+    case let .bytes(fetchedData):
+        guard !fetchedData.isEmpty else {
+            return FFMPEG_CONSTANT_AVERROR_EOF
+        }
+        guard fetchedData.count <= requestRange.count else {
+            return -EIO
+        }
         fetchedData.withUnsafeBytes { byteBuffer -> Void in
             guard let bytes = byteBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
                 return
@@ -48,14 +45,13 @@ private func FFMpegLookaheadReader_readPacketCallback(userData: UnsafeMutableRaw
             memcpy(buffer, bytes, fetchedData.count)
         }
         let fetchedCount = Int32(fetchedData.count)
-        //print("Fetched from \(context.readingOffset) (\(fetchedCount) bytes)")
         context.setReadingOffset(offset: context.readingOffset + Int64(fetchedCount))
-        if fetchedCount == 0 {
-            return FFMPEG_CONSTANT_AVERROR_EOF
-        }
         return fetchedCount
-    } else {
+    case .cancelled:
+        context.isCancelled = true
         return FFMPEG_CONSTANT_AVERROR_EOF
+    case .failed:
+        return -EIO
     }
 }
 
@@ -643,7 +639,11 @@ final class ChunkMediaPlayerDirectFetchSourceImpl: ChunkMediaPlayerSourceImpl {
             },
             getDataInRange: { range, completion in
                 return resource.postbox.mediaBox.resourceData(resource.reference.resource, size: resourceSize, in: range, mode: .complete).start(next: { result, isComplete in
-                    completion(isComplete ? result : nil)
+                    if isComplete {
+                        completion(result)
+                    }
+                }, completed: {
+                    completion(nil)
                 })
             },
             isDataCachedInRange: { range in

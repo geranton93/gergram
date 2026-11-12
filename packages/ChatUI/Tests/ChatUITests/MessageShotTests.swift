@@ -111,4 +111,90 @@ final class MessageShotTests: XCTestCase {
         XCTAssertEqual(imageWithoutHeader.pixelsWide, imageWithHeader.pixelsWide)
         XCTAssertEqual(imageWithHeader.pixelsHigh - imageWithoutHeader.pixelsHigh, Int((headerHeight + 4) * 2))
     }
+
+    func testMissingThumbnailKeepsAttachmentLabel() throws {
+        let body = text("A caption")
+        let label = text("[Photo]")
+        let attachment = MessageShotRenderer.Attachment(label: label, thumbnail: nil)
+        let row = MessageShotRenderer.Row(header: text(""), body: body, background: .white, attachments: [attachment])
+        let original = MessageShotRenderer.Row(header: text(""), body: text("A caption\n[Photo]"), background: .white)
+
+        XCTAssertEqual(
+            try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: nil)),
+            try XCTUnwrap(MessageShotRenderer.png(rows: [original], background: nil))
+        )
+    }
+
+    func testThumbnailIsDrawnWithOriginalOrientation() throws {
+        let thumbnail = try testImage(width: 40, height: 80)
+        let row = MessageShotRenderer.Row(
+            header: text(""), body: text(""), background: .white,
+            attachments: [.init(label: text("[Photo]"), thumbnail: thumbnail)]
+        )
+        let png = try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: nil))
+        let image = try XCTUnwrap(NSBitmapImageRep(data: png))
+        let top = try XCTUnwrap(image.colorAt(x: 65, y: 66)?.usingColorSpace(.deviceRGB))
+        let bottom = try XCTUnwrap(image.colorAt(x: 65, y: 120)?.usingColorSpace(.deviceRGB))
+
+        XCTAssertGreaterThan(top.redComponent, top.blueComponent)
+        XCTAssertGreaterThan(bottom.blueComponent, bottom.redComponent)
+        XCTAssertEqual(try XCTUnwrap(image.colorAt(x: 0, y: 0)).alphaComponent, 0)
+    }
+
+    func testOversizedPreviewLayoutFallsBackToPlaceholders() throws {
+        let thumbnail = try testImage(width: 400, height: 400)
+        let label = text("[Photo]")
+        let preview = MessageShotRenderer.Row(
+            header: text(""), body: text(""), background: .white,
+            attachments: [.init(label: label, thumbnail: thumbnail)]
+        )
+        let placeholder = MessageShotRenderer.Row(header: text(""), body: label, background: .white)
+
+        XCTAssertEqual(
+            try XCTUnwrap(MessageShotRenderer.png(rows: Array(repeating: preview, count: 20), background: nil)),
+            try XCTUnwrap(MessageShotRenderer.png(rows: Array(repeating: placeholder, count: 20), background: nil))
+        )
+    }
+
+    func testCachedThumbnailDownsamplesAndRejectsCorruptData() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let image = NSBitmapImageRep(cgImage: try testImage(width: 1600, height: 800))
+        try XCTUnwrap(image.representation(using: .png, properties: [:])).write(to: url)
+
+        let thumbnail = try XCTUnwrap(MessageShotRenderer.thumbnail(at: url.path))
+        XCTAssertEqual(thumbnail.width, 640)
+        XCTAssertEqual(thumbnail.height, 320)
+
+        try Data([0, 1, 2, 3]).write(to: url)
+        XCTAssertNil(MessageShotRenderer.thumbnail(at: url.path))
+    }
+
+    func testCachedThumbnailRejectsOversizedFiles() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let image = NSBitmapImageRep(cgImage: try testImage(width: 4, height: 4))
+        try XCTUnwrap(image.representation(using: .png, properties: [:])).write(to: url)
+        let file = try FileHandle(forWritingTo: url)
+        file.truncateFile(atOffset: 8 * 1024 * 1024 + 1)
+        file.closeFile()
+
+        XCTAssertNil(MessageShotRenderer.thumbnail(at: url.path))
+    }
+
+    private func text(_ value: String) -> NSAttributedString {
+        NSAttributedString(string: value, attributes: [.font: NSFont.systemFont(ofSize: 14)])
+    }
+
+    private func testImage(width: Int, height: Int) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(NSColor.blue.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height / 2))
+        context.setFillColor(NSColor.red.cgColor)
+        context.fill(CGRect(x: 0, y: height / 2, width: width, height: height / 2))
+        return try XCTUnwrap(context.makeImage())
+    }
 }

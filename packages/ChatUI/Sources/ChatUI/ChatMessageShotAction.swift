@@ -13,10 +13,26 @@ import TGUIKit
 import UniformTypeIdentifiers
 
 enum ChatMessageShotAction {
+    private typealias Snapshot = (messages: [Message], cachedData: CachedPeerData?)
+    private typealias PreparedShot = (snapshot: Snapshot, previews: [MessageId: Preview])
+
+    private struct PreviewRequest {
+        let id: MessageId
+        let mediaIndex: Int
+        let representations: [TelegramMediaImageRepresentation]
+    }
+
+    private struct Preview {
+        let mediaIndex: Int
+        let image: CGImage
+    }
+
     private enum Destination {
         case clipboard
         case file
     }
+
+    private static let previewQueue = Queue(name: "MessageShotPreviews")
 
     static func menuItem(for message: Message, selection: Set<MessageId>, selectedMessages: [Message], cachedData: CachedPeerData?, interaction: ChatInteraction) -> ContextMenuItem? {
         guard let peer = message.peers[message.id.peerId], !peerIsRestricted(peer, cachedData: cachedData),
@@ -85,6 +101,7 @@ enum ChatMessageShotAction {
         guard message.id.peerId == interaction.peerId, message.id.namespace == Namespaces.Message.Cloud,
               !message.containsSecretMedia, !message.isCopyProtected(cachedData: cachedData),
               message.autoclearTimeout == nil, message.autoremoveAttribute == nil,
+              message.adAttribute == nil, message.paidContent == nil,
               message.activeEphemeralReplacementMessage == nil, !message.flags.contains(.Sending),
               canForwardMessage(message, chatInteraction: interaction),
               !message.attributes.contains(where: { $0 is EphemeralMessageAttribute || $0 is RestrictedContentMessageAttribute || $0 is RichTextMessageAttribute }),
@@ -100,6 +117,51 @@ enum ChatMessageShotAction {
         }
     }
 
+    private static func supportsPreview(_ message: Message, interaction: ChatInteraction) -> Bool {
+        !message.isMediaSpoilered && !message.isSensitiveContent(platform: "ios", contentSettings: interaction.interactionContext.contentSettings)
+    }
+
+    private static func previewRequest(for message: Message, interaction: ChatInteraction) -> PreviewRequest? {
+        guard supportsPreview(message, interaction: interaction) else { return nil }
+        for (index, media) in message.media.enumerated() {
+            let representations: [TelegramMediaImageRepresentation]
+            if let image = media as? TelegramMediaImage {
+                representations = image.representations
+            } else if let file = media as? TelegramMediaFile, file.isVideo {
+                representations = file.previewRepresentations
+            } else {
+                continue
+            }
+            if !representations.isEmpty {
+                return PreviewRequest(id: message.id, mediaIndex: index, representations: representations)
+            }
+        }
+        return nil
+    }
+
+    private static func decodePreviews(_ requests: [PreviewRequest], mediaBox: MediaBox) -> [MessageId: Preview] {
+        var previews: [MessageId: Preview] = [:]
+        for request in requests {
+            let representations = request.representations.sorted {
+                Int64($0.dimensions.width) * Int64($0.dimensions.height) > Int64($1.dimensions.width) * Int64($1.dimensions.height)
+            }
+            for representation in representations.prefix(6) {
+                if let path = mediaBox.completedResourcePath(representation.resource),
+                   let image = MessageShotRenderer.thumbnail(at: path) {
+                    previews[request.id] = Preview(mediaIndex: request.mediaIndex, image: image)
+                    break
+                }
+            }
+        }
+        return previews
+    }
+
+    private static func supportsSnapshot(_ snapshot: Snapshot, ids: Set<MessageId>, interaction: ChatInteraction) -> Bool {
+        Set(snapshot.messages.map(\.id)) == ids && snapshot.messages.allSatisfy {
+            supportsMessage($0, interaction: interaction, cachedData: snapshot.cachedData)
+        }
+    }
+
     private static func export(ids: Set<MessageId>, selection: Set<MessageId>, interaction: ChatInteraction, destination: Destination) {
         guard supportsChat(interaction), (interaction.presentation.selectionState?.selectedIds ?? []) == selection else { return }
 
@@ -109,11 +171,14 @@ enum ChatMessageShotAction {
         let mode = interaction.mode
         let peerId = location.peerId
         let refreshRequired = peerId.namespace == Namespaces.Peer.CloudUser && peerId != context.peerId
-        let refresh = refreshRequired ? context.engine.peers.fetchAndUpdateCachedPeerData(peerId: peerId) : .single(true)
-        let load = refresh
-        |> take(1)
-        |> mapToSignal { fresh -> Signal<([Message], CachedPeerData?)?, NoError> in
-            guard fresh else { return .single(nil) }
+
+        func isCurrent(_ interaction: ChatInteraction) -> Bool {
+            interaction.canAnimateUpdates() && supportsChat(interaction)
+                && interaction.chatLocation == location && interaction.mode == mode
+                && (interaction.presentation.selectionState?.selectedIds ?? []) == selection
+        }
+
+        func readMessages() -> Signal<Snapshot?, NoError> {
             return context.account.postbox.transaction { transaction in
                 guard let peer = transaction.getPeer(peerId) else { return nil }
                 let cachedData = transaction.getPeerCachedData(peerId: peerId)
@@ -123,23 +188,47 @@ enum ChatMessageShotAction {
                 return (ids.compactMap { transaction.getMessage($0) }, cachedData)
             }
         }
+
+        func unchanged(_ current: Snapshot, since previous: Snapshot) -> Bool {
+            let versions = Dictionary(uniqueKeysWithValues: previous.messages.map { ($0.id, $0.stableVersion) })
+            return current.messages.count == versions.count && current.messages.allSatisfy { versions[$0.id] == $0.stableVersion }
+        }
+
+        let refresh = refreshRequired ? context.engine.peers.fetchAndUpdateCachedPeerData(peerId: peerId) : .single(true)
+        let load = refresh
+        |> take(1)
+        |> mapToSignal { fresh in fresh ? readMessages() : .single(nil) }
+        |> deliverOnMainQueue
+        |> mapToSignal { [weak interaction] snapshot -> Signal<PreparedShot?, NoError> in
+            guard let interaction, isCurrent(interaction) else { return .complete() }
+            guard let snapshot, supportsSnapshot(snapshot, ids: ids, interaction: interaction) else { return .single(nil) }
+
+            let requests = snapshot.messages.compactMap { previewRequest(for: $0, interaction: interaction) }
+            guard !requests.isEmpty else { return .single((snapshot, [:])) }
+
+            let mediaBox = context.account.postbox.mediaBox
+            return Signal<[PreviewRequest], NoError>.single(requests)
+            |> deliverOn(previewQueue)
+            |> map { decodePreviews($0, mediaBox: mediaBox) }
+            |> mapToSignal { previews in
+                readMessages() |> map { current -> PreparedShot? in
+                    guard let current, unchanged(current, since: snapshot) else { return nil }
+                    return (current, previews)
+                }
+            }
+        }
         |> deliverOnMainQueue
 
         _ = load.startStandalone(next: { [weak interaction] result in
-            guard let interaction, interaction.canAnimateUpdates(), supportsChat(interaction),
-                  interaction.chatLocation == location, interaction.mode == mode,
-                  (interaction.presentation.selectionState?.selectedIds ?? []) == selection else {
-                return
-            }
+            guard let interaction, isCurrent(interaction) else { return }
 
-            guard let (messages, cachedData) = result, Set(messages.map(\.id)) == ids,
-                  messages.allSatisfy({ supportsMessage($0, interaction: interaction, cachedData: cachedData) }) else {
+            guard let (snapshot, previews) = result, supportsSnapshot(snapshot, ids: ids, interaction: interaction) else {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotUnavailable"))
                 return
             }
             let canvasBackground = options.showsBackground ? theme.colors.background : nil
-            guard messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
-                  let png = MessageShotRenderer.png(rows: rows(for: messages, interaction: interaction, options: options), background: canvasBackground) else {
+            guard snapshot.messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
+                  let png = MessageShotRenderer.png(rows: rows(for: snapshot.messages, previews: previews, interaction: interaction, options: options), background: canvasBackground) else {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotRenderFailed"))
                 return
             }
@@ -153,12 +242,21 @@ enum ChatMessageShotAction {
                     showModalText(for: context.window, text: strings().contextAlertCopied)
                 }
             case .file:
-                save(png, in: context.window)
+                save(png, in: context.window) { [weak interaction] in
+                    readMessages()
+                    |> deliverOnMainQueue
+                    |> map { [weak interaction] current -> Bool? in
+                        guard let interaction, isCurrent(interaction) else { return nil }
+                        guard let current, unchanged(current, since: snapshot),
+                              supportsSnapshot(current, ids: ids, interaction: interaction) else { return false }
+                        return previews.isEmpty || current.messages.allSatisfy { previews[$0.id] == nil || supportsPreview($0, interaction: interaction) }
+                    }
+                }
             }
         })
     }
 
-    private static func save(_ png: Data, in window: Window) {
+    private static func save(_ png: Data, in window: Window, validate: @escaping () -> Signal<Bool?, NoError>) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "Message Shot.png"
         if #available(macOS 11.0, *) {
@@ -167,18 +265,23 @@ enum ChatMessageShotAction {
             panel.allowedFileTypes = ["png"]
         }
         panel.beginSheetModal(for: window) { [weak window] response in
-            guard response == .OK, let url = panel.url else { return }
-            do {
-                try png.write(to: url, options: .atomic)
-            } catch {
-                if let window {
+            guard response == .OK, let url = panel.url, window != nil else { return }
+            _ = validate().startStandalone(next: { [weak window] valid in
+                guard let window, let valid else { return }
+                guard valid else {
+                    showModalText(for: window, text: localizedString("Gergram.Chat.MessageShotUnavailable"))
+                    return
+                }
+                do {
+                    try png.write(to: url, options: .atomic)
+                } catch {
                     showModalText(for: window, text: localizedString("Gergram.Chat.MessageShotSaveFailed"))
                 }
-            }
+            })
         }
     }
 
-    private static func rows(for messages: [Message], interaction: ChatInteraction, options: MessageShotOptions) -> [MessageShotRenderer.Row] {
+    private static func rows(for messages: [Message], previews: [MessageId: Preview], interaction: ChatInteraction, options: MessageShotOptions) -> [MessageShotRenderer.Row] {
         let context = interaction.interactionContext
         let palette = theme
         return messages.sorted { $0.index < $1.index }.map { message in
@@ -192,19 +295,20 @@ enum ChatMessageShotAction {
             let header = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: palette.chat.grayText(incoming, true)])
 
             let text = ChatMessageItem.applyMessageEntities(with: message.attributes, for: message.text, message: message, context: context, fontSize: palette.fontSize, openInfo: { _, _, _, _ in }, textColor: palette.chat.textColor(incoming, true), linkColor: palette.chat.linkColor(incoming, true), monospacedPre: palette.chat.monospacedPreColor(incoming, true), monospacedCode: palette.chat.monospacedCodeColor(incoming, true), isDark: palette.colors.isDark, bubbled: true, ignoreLinks: true)
-            let body = NSMutableAttributedString(attributedString: text)
-            for media in message.media {
+            let preview = supportsPreview(message, interaction: interaction) ? previews[message.id] : nil
+            let attachments = message.media.enumerated().compactMap { index, media -> MessageShotRenderer.Attachment? in
                 let label: String
                 if media is TelegramMediaImage {
                     label = strings().chatListPhoto
                 } else if let file = media as? TelegramMediaFile {
                     label = file.isVideo ? strings().chatListVideo : (file.isVoice ? strings().chatListVoice : localizedString("Gergram.Chat.MessageShotAttachment"))
                 } else {
-                    continue
+                    return nil
                 }
-                body.append(NSAttributedString(string: (body.length == 0 ? "" : "\n") + "[\(label)]", attributes: [.font: NSFont.systemFont(ofSize: palette.fontSize), .foregroundColor: palette.chat.grayText(incoming, true)]))
+                let placeholder = NSAttributedString(string: "[\(label)]", attributes: [.font: NSFont.systemFont(ofSize: palette.fontSize), .foregroundColor: palette.chat.grayText(incoming, true)])
+                return MessageShotRenderer.Attachment(label: placeholder, thumbnail: preview.flatMap { $0.mediaIndex == index ? $0.image : nil })
             }
-            return MessageShotRenderer.Row(header: header, body: body, background: palette.chat.backgroundColor(incoming, true))
+            return MessageShotRenderer.Row(header: header, body: text, background: palette.chat.backgroundColor(incoming, true), attachments: attachments)
         }
     }
 }

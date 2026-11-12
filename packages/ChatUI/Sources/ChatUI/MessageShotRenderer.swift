@@ -1,19 +1,97 @@
 import AppKit
+import ImageIO
 
 enum MessageShotRenderer {
+    struct Attachment {
+        let label: NSAttributedString
+        let thumbnail: CGImage?
+    }
+
     struct Row {
         let header: NSAttributedString
         let body: NSAttributedString
         let background: NSColor
+        let attachments: [Attachment]
+
+        init(header: NSAttributedString, body: NSAttributedString, background: NSColor, attachments: [Attachment] = []) {
+            self.header = header
+            self.body = body
+            self.background = background
+            self.attachments = attachments
+        }
     }
 
     static let maximumMessageCount = 20
+    private static let maximumThumbnailBytes = 8 * 1024 * 1024
+    private static let maximumThumbnailPixels = 32_000_000.0
+    private static let maximumThumbnailDimension = 640
+    private static let thumbnailTypes: Set<String> = ["public.jpeg", "public.png", "public.heic", "public.heif", "org.webmproject.webp"]
 
-    static func png(rows: [Row], background: NSColor?) -> Data? {
-        guard !rows.isEmpty, rows.count <= maximumMessageCount,
-              rows.reduce(0, { $0 + $1.header.length + $1.body.length }) <= 16_000 else {
+    private enum Part {
+        case text(NSAttributedString)
+        case image(CGImage)
+    }
+
+    private struct RowLayout {
+        let headerHeight: CGFloat
+        let parts: [(Part, CGSize)]
+        let height: CGFloat
+    }
+
+    static func thumbnail(at path: String) -> CGImage? {
+        let url = URL(fileURLWithPath: path)
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, let size = values.fileSize, size > 0, size <= maximumThumbnailBytes,
+              let data = try? Data(contentsOf: url, options: .mappedIfSafe), data.count <= maximumThumbnailBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let type = CGImageSourceGetType(source), thumbnailTypes.contains(type as String),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+              width > 0, height > 0, width * height <= maximumThumbnailPixels else {
             return nil
         }
+
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumThumbnailDimension,
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary)
+    }
+
+    private static func parts(for row: Row, withThumbnails: Bool) -> [Part] {
+        guard !row.attachments.isEmpty else { return row.body.length == 0 ? [] : [.text(row.body)] }
+        var parts: [Part] = []
+        var text = NSMutableAttributedString(attributedString: row.body)
+        for attachment in row.attachments {
+            if withThumbnails, let thumbnail = attachment.thumbnail {
+                if text.length > 0 {
+                    parts.append(.text(text))
+                    text = NSMutableAttributedString(string: "")
+                }
+                parts.append(.image(thumbnail))
+            } else {
+                if text.length > 0 {
+                    text.append(NSAttributedString(string: "\n", attributes: attachment.label.length > 0 ? attachment.label.attributes(at: 0, effectiveRange: nil) : nil))
+                }
+                text.append(attachment.label)
+            }
+        }
+        if text.length > 0 {
+            parts.append(.text(text))
+        }
+        return parts
+    }
+
+    static func png(rows: [Row], background: NSColor?) -> Data? {
+        guard !rows.isEmpty, rows.count <= maximumMessageCount else { return nil }
+        let textLength = rows.reduce(0) { length, row in
+            let labels = row.attachments.reduce(0) { $0 + $1.label.length }
+            let separators = max(0, row.attachments.count - (row.body.length == 0 ? 1 : 0))
+            return length + row.header.length + row.body.length + labels + separators
+        }
+        guard textLength <= 16_000 else { return nil }
 
         let width: CGFloat = 560
         let margin: CGFloat = 16
@@ -28,15 +106,30 @@ enum MessageShotRenderer {
             ceil(text.boundingRect(with: NSSize(width: textWidth, height: .greatestFiniteMagnitude), options: drawingOptions).height)
         }
 
-        let metrics = rows.map { row in
-            let header = row.header.length == 0 ? 0 : height(of: row.header)
-            let bodyOffset = header > 0 ? header + textSpacing : 0
-            return (header: header, body: height(of: row.body), bodyOffset: bodyOffset)
+        func measure(withThumbnails: Bool) -> [RowLayout] {
+            rows.map { row in
+                let header = row.header.length == 0 ? 0 : height(of: row.header)
+                let parts = parts(for: row, withThumbnails: withThumbnails).map { part -> (Part, CGSize) in
+                    switch part {
+                    case let .text(text):
+                        return (part, CGSize(width: textWidth, height: height(of: text)))
+                    case let .image(image):
+                        let scale = min(0.5, textWidth / CGFloat(image.width), 160 / CGFloat(image.height))
+                        return (part, CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale))
+                    }
+                }
+                let spacingCount = max(0, parts.count - (header > 0 ? 0 : 1))
+                let body = parts.reduce(CGFloat(0)) { $0 + $1.1.height }
+                return RowLayout(headerHeight: header, parts: parts, height: header + body + CGFloat(spacingCount) * textSpacing + 2 * padding)
+            }
         }
-        let contentHeight = metrics.reduce(CGFloat(0)) { sum, row in
-            sum + row.bodyOffset + row.body + 2 * padding
+        let canvasInsets = 2 * margin + CGFloat(rows.count - 1) * rowSpacing
+        var layouts = measure(withThumbnails: true)
+        var totalHeight = canvasInsets + layouts.reduce(CGFloat(0)) { $0 + $1.height }
+        if totalHeight > 3_000, rows.contains(where: { $0.attachments.contains { $0.thumbnail != nil } }) {
+            layouts = measure(withThumbnails: false)
+            totalHeight = canvasInsets + layouts.reduce(CGFloat(0)) { $0 + $1.height }
         }
-        let totalHeight = 2 * margin + contentHeight + CGFloat(rows.count - 1) * rowSpacing
         let scale: CGFloat = 2
         guard totalHeight.isFinite, totalHeight <= 3_000,
               let bitmap = CGContext(data: nil, width: Int(width * scale), height: Int(totalHeight * scale), bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
@@ -59,20 +152,28 @@ enum MessageShotRenderer {
         }
 
         var y = margin
-        for (row, layout) in zip(rows, metrics) {
-            let cardHeight = layout.bodyOffset + layout.body + 2 * padding
-            let card = NSRect(x: margin, y: y, width: cardWidth, height: cardHeight)
+        for (row, layout) in zip(rows, layouts) {
+            let card = NSRect(x: margin, y: y, width: cardWidth, height: layout.height)
             row.background.setFill()
             NSBezierPath(roundedRect: card, xRadius: 12, yRadius: 12).fill()
 
             let textX = card.minX + padding
-            let textY = card.minY + padding
-            if layout.header > 0 {
-                let header = NSRect(x: textX, y: textY, width: textWidth, height: layout.header)
+            var textY = card.minY + padding
+            if layout.headerHeight > 0 {
+                let header = NSRect(x: textX, y: textY, width: textWidth, height: layout.headerHeight)
                 row.header.draw(with: header, options: drawingOptions)
+                textY += layout.headerHeight + textSpacing
             }
-            let body = NSRect(x: textX, y: textY + layout.bodyOffset, width: textWidth, height: layout.body)
-            row.body.draw(with: body, options: drawingOptions)
+            for (part, size) in layout.parts {
+                let rect = NSRect(origin: NSPoint(x: textX, y: textY), size: size)
+                switch part {
+                case let .text(text):
+                    text.draw(with: rect, options: drawingOptions)
+                case let .image(image):
+                    NSImage(cgImage: image, size: size).draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                }
+                textY += size.height + textSpacing
+            }
             y = card.maxY + rowSpacing
         }
 

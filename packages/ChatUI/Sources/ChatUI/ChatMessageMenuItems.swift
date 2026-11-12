@@ -458,7 +458,18 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         shadowBannedSenderIds = .single(nil)
     }
 
-    return combineLatest(queue: .mainQueue(), chatMenuItemsData(for: message, textLayout: textLayout, entry: entry, chatInteraction: chatInteraction, source: source), selectedMessages, shadowBannedSenderIds) |> map { [chatInteraction] data, selectedMessages, shadowBannedSenderIds in
+    let filterLiteral: ChatLiteralMessageFilter?
+    if case .general = source, chatInteraction.canManageLocalMessageVisibility, entry?.isFakeMessage == false,
+       entry?.additionalData.translate == nil, menuPreferences.isVisible(.addFilter, extendedMenu: extendedMenu) {
+        filterLiteral = ChatRegexFilterQuickAddAction.selectedLiteral(message: message, layout: textLayout?.0)
+    } else {
+        filterLiteral = nil
+    }
+    let filtersEnabled: Signal<Bool, NoError> = filterLiteral == nil
+        ? .single(false)
+        : (localMessageFilterPreferences(chatInteraction.context.account.postbox) |> take(1) |> map { $0.isEnabled })
+
+    return combineLatest(queue: .mainQueue(), chatMenuItemsData(for: message, textLayout: textLayout, entry: entry, chatInteraction: chatInteraction, source: source), selectedMessages, shadowBannedSenderIds, filtersEnabled) |> map { [chatInteraction] data, selectedMessages, shadowBannedSenderIds, filtersEnabled in
         
         let peer = data.message.peers[data.message.id.peerId]
         let isNotFailed = !message.flags.contains(.Failed) && !message.flags.contains(.Unsent) && !data.message.flags.contains(.Sending)
@@ -1626,6 +1637,11 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
            let shadowBannedSenderIds,
            let shadowBan = ChatLocalShadowBanAction.menuItem(for: data.message, shadowBannedSenderIds: shadowBannedSenderIds, interaction: chatInteraction) {
             fifthBlock.append(shadowBan)
+        }
+
+        if filtersEnabled, !isService, isNotFailed, data.chatState != .selecting, data.chatLocation == chatInteraction.chatLocation,
+           let filterLiteral, let addFilter = ChatRegexFilterQuickAddAction.menuItem(message: data.message, literal: filterLiteral, cachedData: data.cachedData, interaction: chatInteraction) {
+            fifthBlock.append(addFilter)
         }
 
         if canDeleteMessage(data.message, account: account, chatLocation: data.chatLocation, mode: data.chatMode), !data.isLogInteraction {

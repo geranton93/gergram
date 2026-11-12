@@ -80,4 +80,21 @@ final class LocalMessageFilterTests: XCTestCase {
         XCTAssertFalse(evaluation.canEvaluate)
         XCTAssertFalse(evaluation.shouldHide("other"))
     }
+
+    func testEditingEquivalentUnicodeSpellingChangesTheStoredPattern() throws {
+        let composed = LocalMessageFilterRule(pattern: "é")
+        var decomposed = composed
+        decomposed.pattern = "e\u{301}"
+        XCTAssertNotEqual(composed, decomposed)
+        var preferences = LocalMessageFilterPreferences()
+        XCTAssertTrue(preferences.upsert(composed))
+        let original = preferences
+        XCTAssertTrue(preferences.upsert(decomposed))
+        XCTAssertNotEqual(original, preferences)
+
+        let evaluation = try XCTUnwrap(LocalMessageFilterEvaluation(milliseconds: 1000, comparisons: 8))
+        evaluation.prepare(preferences.rules)
+        XCTAssertTrue(evaluation.shouldHide(decomposed.pattern))
+        XCTAssertFalse(evaluation.shouldHide(composed.pattern))
+    }
 }

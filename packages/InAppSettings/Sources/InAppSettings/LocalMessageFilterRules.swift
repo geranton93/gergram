@@ -18,6 +18,12 @@ public struct LocalMessageFilterRule: Codable, Equatable, Identifiable {
         self.isReversed = isReversed
         self.isCaseInsensitive = isCaseInsensitive
     }
+
+    public static func == (lhs: LocalMessageFilterRule, rhs: LocalMessageFilterRule) -> Bool {
+        lhs.id == rhs.id && lhs.chatId == rhs.chatId && lhs.isEnabled == rhs.isEnabled
+            && lhs.isReversed == rhs.isReversed && lhs.isCaseInsensitive == rhs.isCaseInsensitive
+            && lhs.pattern.utf16.elementsEqual(rhs.pattern.utf16)
+    }
 }
 
 public struct LocalMessageFilterPreferences: Codable, Equatable {

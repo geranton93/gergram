@@ -218,7 +218,7 @@ final class ChatLayerTextNode: ChatLayerNode {
         guard bindingVersion == version else { return }
         menuState?.cancelIfInvalid(layout)
         guard bindingVersion == version else { return }
-        if let highlight = activeHighlight, layout?.layoutSize != highlight.size || layout?.attributedString.isEqual(to: highlight.text) != true {
+        if let highlight = activeHighlight, layout?.layoutSize != highlight.size || layout?.attributedString.isEqual(to: highlight.text) != true || layout?.displayString != textLayout?.displayString {
             clearHighlight()
         }
         if layout !== textLayout {
@@ -229,6 +229,7 @@ final class ChatLayerTextNode: ChatLayerNode {
             let keepSelectionGesture = preservingSelectionGesture && (selectionStart != nil || hasExternalSelection)
                 && layout?.layoutSize == textLayout?.layoutSize
                 && layout?.attributedString.string == textLayout?.attributedString.string
+                && layout?.displayString == textLayout?.displayString
                 && (pressedLinkRange == nil || didDrag || linkState?.matchesPress(layout) == true)
                 && (pressedFormattedDate == nil || didDrag || selectionStart.map { layout?.formattedDate(at: $0)?.0 === pressedFormattedDate } == true)
             if !keepSelectionGesture {
@@ -265,7 +266,7 @@ final class ChatLayerTextNode: ChatLayerNode {
             }
         }
         drawingLayer.update(layout, size: frame?.size ?? size)
-        accessibilityValue = layout?.attributedString.string
+        accessibilityValue = layout?.displayString
         accessibilityRole = accessibilityValue?.isEmpty == false ? .staticText : nil
         let nextFrame = frame ?? NSRect(origin: self.frame.origin, size: drawingLayer.textSize)
         updateFrame(nextFrame, transition: transition)

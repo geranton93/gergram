@@ -328,6 +328,7 @@ public class ChatMediaItem: ChatRowItem {
                     spoilerColor = theme.chat.textColor(isIncoming, entry.renderType == .bubble)
                 }
                 let isSpoilerRevealed = chatInteraction.presentation.interfaceState.revealedSpoilers.contains(message.id)
+                let displayTextTransform = ChatMessageItem.zalgoDisplayTransform(for: message)
                 
                 let textLayout = FoldingTextLayout.make(caption, context: context, revealed: object.additionalData.quoteRevealed, takeLayout: { [chatInteraction] string in
                     let textLayout = TextViewLayout(string, alignment: .left, selectText: theme.chat.selectText(isIncoming, object.renderType == .bubble), strokeLinks: object.renderType == .bubble, alwaysStaticItems: true, disableTooltips: false, mayItems: !message.isCopyProtected(cachedData: chatInteraction.presentation.cachedData), spoilerColor: spoilerColor, isSpoilerRevealed: isSpoilerRevealed, onSpoilerReveal: { [weak chatInteraction] in
@@ -336,7 +337,7 @@ public class ChatMediaItem: ChatRowItem {
                                 $0.withRevealedSpoiler(message.id)
                             })
                         })
-                    })
+                    }, displayTextTransform: displayTextTransform)
                     
                     if let highlightFoundText = object.additionalData.highlightFoundText {
                        if let range = rangeOfSearch(highlightFoundText.query, in: caption.string) {

@@ -660,6 +660,11 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
             
             let appearanceItems = appearanceSearchableItems(context: context)
             allItems.append(contentsOf: appearanceItems)
+            allItems.append(SettingsSearchableItem(id: .general(0), title: localizedString("Gergram.Chat.FilterZalgoText"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
+                let controller = GeneralSettingsViewController(context)
+                controller.focusOnZalgoFilter = true
+                present(.push, controller)
+            }))
             
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)

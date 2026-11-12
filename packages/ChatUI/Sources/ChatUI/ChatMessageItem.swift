@@ -384,6 +384,7 @@ public class ChatMessageItem: ChatRowItem {
              
              let isRichMessage = message.attributes.contains(where: { $0 is RichTextMessageAttribute })
              let isStreaming = !isRichMessage && message.attributes.contains(where: { $0 is TypingDraftMessageAttribute }) && message.adAttribute == nil
+             let displayTextTransform = ChatMessageItem.zalgoDisplayTransform(for: message)
              let existingState: FoldingTextLayout.StreamingState?
              if isStreaming, let state = _streamingStates.with({ $0[message.id]?.value }), self.messageText.string.hasPrefix(state.previousString) {
                  existingState = state
@@ -398,7 +399,7 @@ public class ChatMessageItem: ChatRowItem {
                              $0.withRevealedSpoiler(message.id)
                          })
                      })
-                 })
+                 }, displayTextTransform: displayTextTransform)
                  textLayout.mayBlocked = true
 
                  if let highlightFoundText = entry.additionalData.highlightFoundText {
@@ -781,6 +782,14 @@ public class ChatMessageItem: ChatRowItem {
 
     public override func viewClass() -> AnyClass {
         return ChatMessageView.self
+    }
+
+    static func zalgoDisplayTransform(for message: Message) -> ((NSAttributedString) -> NSAttributedString?)? {
+        guard FastSettings.filterZalgoText, message.adAttribute == nil,
+              !message.attributes.contains(where: { $0 is RichTextMessageAttribute || $0 is TypingDraftMessageAttribute }) else {
+            return nil
+        }
+        return ChatZalgoTextFilter.presentation(for:)
     }
     
     public static func applyMessageEntities(with attributes:[MessageAttribute], for sourceText:String, message: Message?, context: any AccountContextProtocol, fontSize: CGFloat, openInfo:@escaping (PeerId, Bool, MessageId?, ChatInitialAction?)->Void, botCommand:@escaping (String)->Void = { _ in }, hashtag:@escaping (String)->Void = { _ in }, applyProxy:@escaping (ProxyServerSettings)->Void = { _ in }, textColor: NSColor = theme.colors.text, linkColor: NSColor = theme.colors.link, monospacedPre:NSColor = theme.colors.monospacedPre, monospacedCode: NSColor = theme.colors.monospacedCode, mediaDuration: Double? = nil, timecode: @escaping(Double?)->Void = { _ in }, openBank: @escaping(String)->Void = { _ in }, underlineLinks: Bool = false, blockColor: PeerNameColors.Colors = .init(main: theme.colors.accent), isDark: Bool, bubbled: Bool, codeSyntaxData: [CodeSyntaxKey : CodeSyntaxResult] = [:], loadCodeSyntax: @escaping(MessageId, NSRange, String, String, ChatInterfaceSyntaxTheme)->Void = { _, _, _, _, _ in }, openPhoneNumber: ((String)->Void)? = nil, openTonAddress: ((String)->Void)? = nil, confirm: Bool = true, ignoreLinks: Bool = false) -> NSAttributedString {

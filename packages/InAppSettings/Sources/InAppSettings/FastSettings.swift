@@ -487,6 +487,23 @@ public class FastSettings {
         return showMessageTimestampSecondsPromise.get()
     }
 
+    private static let filterZalgoTextKey = "gergram.chat.filterZalgoText"
+    private static let filterZalgoTextPromise = ValuePromise(filterZalgoText, ignoreRepeated: true)
+
+    public static var filterZalgoText: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: filterZalgoTextKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: filterZalgoTextKey)
+            filterZalgoTextPromise.set(newValue)
+        }
+    }
+
+    public static var filterZalgoTextSignal: Signal<Bool, NoError> {
+        return filterZalgoTextPromise.get()
+    }
+
     private static let migrateSidebarAlwaysEnabled: Void = {
         let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: kSidebarAlwaysEnabled) else {

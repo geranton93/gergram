@@ -123,6 +123,7 @@ public class ChatGroupedItem: ChatRowItem {
                     spoilerColor = theme.chat.textColor(isIncoming, entry.renderType == .bubble)
                 }
                 let isSpoilerRevealed = chatInteraction.presentation.interfaceState.revealedSpoilers.contains(message.id)
+                let displayTextTransform = ChatMessageItem.zalgoDisplayTransform(for: message)
                 
                 
                 let textLayout = FoldingTextLayout.make(caption, context: context, revealed: entry.additionalData.quoteRevealed, takeLayout: { [chatInteraction] string in
@@ -132,7 +133,7 @@ public class ChatGroupedItem: ChatRowItem {
                                 $0.withRevealedSpoiler(message.id)
                             })
                         })
-                    })
+                    }, displayTextTransform: displayTextTransform)
                     return textLayout
                 })
                 

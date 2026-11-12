@@ -1,0 +1,43 @@
+import Foundation
+import XCTest
+@testable import ChatUI
+
+final class ChatZalgoTextFilterTests: XCTestCase {
+    func testOrdinaryMarksAndEmojiHaveNoPresentationOverride() {
+        let text = "e\u{0301}\u{0323} का a\u{20DD} 👩🏽‍💻 שלום"
+        XCTAssertNil(ChatZalgoTextFilter.presentation(for: NSAttributedString(string: text)))
+    }
+
+    func testReplacesOnlyRunsOfAtLeastThreeNonspacingMarks() throws {
+        let text = "e\u{0301}\u{0308}\u{0327}\u{0323} a\u{0301}\u{0323} b\u{0301}\u{0308}\u{0327}"
+        let display = try XCTUnwrap(ChatZalgoTextFilter.presentation(for: NSAttributedString(string: text)))
+        XCTAssertEqual(display.string, "e\u{2060}\u{2060}\u{2060}\u{2060} a\u{0301}\u{0323} b\u{2060}\u{2060}\u{2060}")
+        XCTAssertEqual(display.length, text.utf16.count)
+    }
+
+    func testMatchesOnlyTheReferenceDirectionControls() throws {
+        let text = "\u{061C}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}👩‍💻\u{2060}\u{200C}"
+        let display = try XCTUnwrap(ChatZalgoTextFilter.presentation(for: NSAttributedString(string: text)))
+        XCTAssertEqual(display.string, String(repeating: "\u{2060}", count: 12) + "👩‍💻\u{2060}\u{200C}")
+    }
+
+    func testSupplementaryMarksPreserveUTF16LengthAndAttributedRanges() throws {
+        let text = "a\u{1D185}\u{0301}\u{0308}https://example.com 👋"
+        let original = NSMutableAttributedString(string: text)
+        let linkKey = NSAttributedString.Key("testLink")
+        let markKey = NSAttributedString.Key("testMark")
+        let url = "https://example.com"
+        let linkRange = (text as NSString).range(of: url)
+        original.addAttribute(linkKey, value: url, range: linkRange)
+        original.addAttribute(markKey, value: "mark style", range: NSRange(location: 3, length: 2))
+
+        let display = try XCTUnwrap(ChatZalgoTextFilter.presentation(for: original))
+        XCTAssertEqual(original.string, text)
+        XCTAssertEqual(display.string, "a\u{2060}\u{2060}\u{2060}\u{2060}https://example.com 👋")
+        XCTAssertEqual(display.length, original.length)
+        XCTAssertEqual(display.attributedSubstring(from: linkRange).string, url)
+        XCTAssertEqual(display.attribute(linkKey, at: linkRange.location, effectiveRange: nil) as? String, url)
+        XCTAssertEqual(display.attribute(markKey, at: 3, effectiveRange: nil) as? String, "mark style")
+        XCTAssertNil(display.attribute(markKey, at: 2, effectiveRange: nil))
+    }
+}

@@ -28,6 +28,8 @@ private func profilePeerIdFormatTitle(_ format: ProfilePeerIdFormat) -> String {
 }
 
 private enum GeneralSettingsEntry : Comparable, Identifiable {
+    static let zalgoFilterStableId = 32
+
     case section(sectionId:Int)
     case header(sectionId: Int, uniqueId:Int, text:String)
     case liteMode(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
@@ -61,6 +63,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case hideSimilarChannelsTab(sectionId: Int, enabled: Bool)
     case disableGlobalPeerSearch(sectionId: Int, enabled: Bool)
     case showMessageTimestampSeconds(sectionId: Int, enabled: Bool)
+    case filterZalgoText(sectionId: Int, enabled: Bool)
     public var stableId: Int {
         switch self {
         case let .header(_, uniqueId, _):
@@ -127,6 +130,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 30
         case .showMessageTimestampSeconds:
             return 31
+        case .filterZalgoText:
+            return Self.zalgoFilterStableId
         case let .section(id):
             return (id + 1) * 1000 - id
         }
@@ -188,7 +193,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return (sectionId * 1000) + stableId
         case let .profileIdFormat(sectionId, _):
             return (sectionId * 1000) + stableId
-        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .showMessageTimestampSeconds(sectionId, _):
+        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -317,8 +322,12 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
                 }.startStandalone()
             }, autoswitch: false)
         case let .showMessageTimestampSeconds(_, enabled):
-            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsShowMessageTimestampSeconds, type: .switchable(enabled), viewType: .singleItem, action: {
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsShowMessageTimestampSeconds, type: .switchable(enabled), viewType: .firstItem, action: {
                 FastSettings.showMessageTimestampSeconds.toggle()
+            })
+        case let .filterZalgoText(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.FilterZalgoText"), type: .switchable(enabled), viewType: .lastItem, action: {
+                FastSettings.filterZalgoText.toggle()
             })
         case let .previewChats(_, value, viewType):
             return GeneralInteractedRowItem(initialSize, name: strings().generalSettingsPreviewChatsText, type: .switchable(value), viewType: viewType, action: arguments.togglePreviewChat)
@@ -383,7 +392,7 @@ private final class GeneralSettingsArguments {
    
 }
 
-private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool) -> [GeneralSettingsEntry] {
+private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool, filterZalgoText: Bool) -> [GeneralSettingsEntry] {
     var sectionId:Int = 1
     var entries:[GeneralSettingsEntry] = []
     
@@ -501,6 +510,7 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
     entries.append(.showMessageTimestampSeconds(sectionId: sectionId, enabled: showMessageTimestampSeconds))
+    entries.append(.filterZalgoText(sectionId: sectionId, enabled: filterZalgoText))
 
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
@@ -525,6 +535,7 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
 
     
     private let disposable = MetaDisposable()
+    var focusOnZalgoFilter = false
     open override var removeAfterDisapper:Bool {
         return false
     }
@@ -613,21 +624,28 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
         
         let baseSettingsSignal: Signal<BaseApplicationSettings, NoError> = .single(context.sharedContext.baseSettings) |> then(baseAppSettings(accountManager: context.sharedContext.accountManager))
         
-        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal) |> map { settings, _, _, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds -> TableUpdateTransition in
+        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal) |> map { settings, _, _, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds, filterZalgoText -> TableUpdateTransition in
             
             let baseSettings: BaseApplicationSettings = settings
             
             let secretChatSettings = preferencesView.values[PreferencesKeys.secretChatSettings]?.get(SecretChatSettings.self) ?? SecretChatSettings.defaultSettings
             
-            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
+            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds, filterZalgoText: filterZalgoText).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
             let previous = previos.swap(entries)
             return prepareEntries(left: previous, right: entries, arguments: arguments, initialSize: initialSize.modify({$0}))
             
         } |> deliverOnMainQueue
         
         disposable.set(signal.start(next: { [weak self] transition in
-            self?.genericView.merge(with:  transition)
-            self?.readyOnce()
+            guard let self else {
+                return
+            }
+            self.genericView.merge(with: transition)
+            self.readyOnce()
+            if self.focusOnZalgoFilter {
+                self.focusOnZalgoFilter = false
+                self.genericView.scroll(to: .center(id: GeneralSettingsEntry.zalgoFilterStableId, innerId: nil, animated: true, focus: .init(focus: true), inset: 0))
+            }
         }))
                 
     }

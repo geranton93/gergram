@@ -4070,7 +4070,8 @@ public class ChatRowItem: TableRowItem {
     }
     
     public override var menuAdditionView: Signal<Window?, NoError> {
-        if canReact {
+        let extendedMenu = ChatMessageContextMenuModifier.isExtended(NSEvent.modifierFlags)
+        if canReact, MessageContextMenuPreferences().isVisible(.reactionsPanel, extendedMenu: extendedMenu) {
             
             let context = self.context
             

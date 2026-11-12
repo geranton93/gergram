@@ -441,6 +441,8 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
     }
 
     let translationOrigin = messageTranslationAnalyticsContext(message, chatInteraction: chatInteraction)
+    let menuPreferences = MessageContextMenuPreferences()
+    let extendedMenu = ChatMessageContextMenuModifier.isExtended(NSEvent.modifierFlags)
     let selectedIds = chatInteraction.presentation.selectionState?.selectedIds ?? []
     let selectedMessages: Signal<[Message], NoError>
     if selectedIds.count > 1, selectedIds.contains(message.id) {
@@ -1550,12 +1552,21 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
             }
         }
         
-        if (MessageReadMenuItem.canViewReadStats(message: data.message, chatInteraction: data.chatInteraction, appConfig: appConfiguration)), data.isRead, !data.isLogInteraction {
+        if menuPreferences.isVisible(.viewsPanel, extendedMenu: extendedMenu),
+           MessageReadMenuItem.canViewReadStats(message: data.message, chatInteraction: data.chatInteraction, appConfig: appConfiguration),
+           data.isRead, !data.isLogInteraction {
             fourthBlock.append(MessageReadMenuItem(context: context, chatInteraction: data.chatInteraction, message: message, availableReactions: data.availableReactions))
         }
         if case .general = source, entry?.isFakeMessage != true,
+           menuPreferences.isVisible(.messageDetails, extendedMenu: extendedMenu),
            let details = ChatMessageDetailsAction.menuItem(for: data.message, cachedData: data.cachedData, interaction: chatInteraction) {
             fourthBlock.append(details)
+        }
+        if case .general = source, !isService, isNotFailed, entry?.isFakeMessage == false,
+           data.chatLocation == chatInteraction.chatLocation,
+           menuPreferences.isVisible(.senderSearch, extendedMenu: extendedMenu),
+           let search = ChatSenderMessageSearchAction.menuItem(for: data.message, interaction: chatInteraction) {
+            fourthBlock.append(search)
         }
         
         
@@ -1591,11 +1602,14 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
            data.chatLocation == chatInteraction.chatLocation, data.message.id.peerId == chatInteraction.peerId,
            data.chatLocation.threadMessage?.effectiveTopId != messageId,
            entry?.isFakeMessage == false, chatInteraction.canManageLocalMessageVisibility,
+           menuPreferences.isVisible(.hideMessage, extendedMenu: extendedMenu),
            chatInteraction.hideLocalMessage != nil {
             let title = localizedString(message.groupingKey == nil ? "Gergram.Chat.HideMessage" : "Gergram.Chat.HideAlbum")
             let location = data.chatLocation
             fifthBlock.append(ContextMenuItem(title, handler: { [weak chatInteraction] in
-                guard let chatInteraction, chatInteraction.chatLocation == location else { return }
+                guard let chatInteraction, chatInteraction.canAnimateUpdates(), chatInteraction.chatLocation == location,
+                      chatInteraction.mode == mode, chatInteraction.presentation.state != .selecting,
+                      chatInteraction.canManageLocalMessageVisibility else { return }
                 chatInteraction.hideLocalMessage?(message)
             }, itemImage: MenuAnimation.menu_hide.value))
         }

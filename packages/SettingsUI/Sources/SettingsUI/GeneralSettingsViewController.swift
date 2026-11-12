@@ -64,6 +64,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case disableGlobalPeerSearch(sectionId: Int, enabled: Bool)
     case showMessageTimestampSeconds(sectionId: Int, enabled: Bool)
     case filterZalgoText(sectionId: Int, enabled: Bool)
+    case messageContextMenu(sectionId: Int)
     public var stableId: Int {
         switch self {
         case let .header(_, uniqueId, _):
@@ -132,6 +133,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 31
         case .filterZalgoText:
             return Self.zalgoFilterStableId
+        case .messageContextMenu:
+            return 33
         case let .section(id):
             return (id + 1) * 1000 - id
         }
@@ -193,7 +196,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return (sectionId * 1000) + stableId
         case let .profileIdFormat(sectionId, _):
             return (sectionId * 1000) + stableId
-        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _):
+        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -326,8 +329,12 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
                 FastSettings.showMessageTimestampSeconds.toggle()
             })
         case let .filterZalgoText(_, enabled):
-            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.FilterZalgoText"), type: .switchable(enabled), viewType: .lastItem, action: {
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.FilterZalgoText"), type: .switchable(enabled), viewType: .innerItem, action: {
                 FastSettings.filterZalgoText.toggle()
+            })
+        case .messageContextMenu:
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.MenuSettings"), type: .next, viewType: .lastItem, action: {
+                arguments.context.bindings.rootNavigation().push(messageContextMenuSettingsController())
             })
         case let .previewChats(_, value, viewType):
             return GeneralInteractedRowItem(initialSize, name: strings().generalSettingsPreviewChatsText, type: .switchable(value), viewType: viewType, action: arguments.togglePreviewChat)
@@ -511,6 +518,7 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     sectionId += 1
     entries.append(.showMessageTimestampSeconds(sectionId: sectionId, enabled: showMessageTimestampSeconds))
     entries.append(.filterZalgoText(sectionId: sectionId, enabled: filterZalgoText))
+    entries.append(.messageContextMenu(sectionId: sectionId))
 
     entries.append(.section(sectionId: sectionId))
     sectionId += 1

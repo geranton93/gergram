@@ -24,7 +24,7 @@ private func FFMpegLookaheadReader_readPacketCallback(userData: UnsafeMutableRaw
     let cancelDisposable = context.params.cancel.start(next: { _ in
         waiter.cancel()
     })
-    let disposable = context.params.getDataInRange(requestRange, waiter.receive)
+    let disposable = context.params.getDataInRange(requestRange, context.fetchCompletion(for: requestRange), waiter)
     defer {
         disposable.dispose()
         cancelDisposable.dispose()
@@ -67,6 +67,12 @@ private func FFMpegLookaheadReader_seekCallback(userData: UnsafeMutableRawPointe
 }
 
 private final class FFMpegLookaheadReader {
+    private struct ActiveFetch {
+        let range: Range<Int64>
+        let completion: Signal<Void, NoError>
+        let disposable: Disposable
+    }
+
     let params: FFMpegLookaheadThread.Params
     
     var avIoContext: FFMpegAVIOContext?
@@ -87,8 +93,7 @@ private final class FFMpegLookaheadReader {
     var isCancelled: Bool = false
     var isEnded: Bool = false
     
-    private var currentFetchRange: Range<Int64>?
-    private var currentFetchDisposable: Disposable?
+    private var currentFetch: ActiveFetch?
     
     var currentTimestamp: Double?
     
@@ -181,7 +186,7 @@ private final class FFMpegLookaheadReader {
     }
     
     deinit {
-        self.currentFetchDisposable?.dispose()
+        self.currentFetch?.disposable.dispose()
     }
     
     func setReadingOffset(offset: Int64) {
@@ -190,24 +195,38 @@ private final class FFMpegLookaheadReader {
         self.setFetchRange(range: DirectMediaReadAhead.window(
             at: offset,
             fileSize: self.params.size,
-            current: self.currentFetchRange,
+            current: self.currentFetch?.range,
             isCached: self.params.isDataCachedInRange
         ))
     }
 
     private func setFetchRange(range: Range<Int64>?) {
-        guard self.currentFetchRange != range else {
+        let previousFetch = self.currentFetch
+        guard previousFetch?.range != range else {
             return
         }
-        let previousFetch = self.currentFetchDisposable
-        if let previousRange = self.currentFetchRange, let range, previousRange.overlaps(range) {
-            self.currentFetchDisposable = self.params.fetchInRange(range)
-            previousFetch?.dispose()
+        if let previousFetch, let range, previousFetch.range.overlaps(range) {
+            self.currentFetch = self.startFetch(in: range)
+            previousFetch.disposable.dispose()
         } else {
-            previousFetch?.dispose()
-            self.currentFetchDisposable = range.map(self.params.fetchInRange)
+            previousFetch?.disposable.dispose()
+            self.currentFetch = range.map(self.startFetch(in:))
         }
-        self.currentFetchRange = range
+    }
+
+    private func startFetch(in range: Range<Int64>) -> ActiveFetch {
+        let completion = Promise<Void>()
+        let disposable = self.params.fetchInRange(range, {
+            completion.set(.single(()))
+        })
+        return ActiveFetch(range: range, completion: completion.get(), disposable: disposable)
+    }
+
+    func fetchCompletion(for range: Range<Int64>) -> Signal<Void, NoError>? {
+        guard let fetch = self.currentFetch, fetch.range.lowerBound <= range.lowerBound, fetch.range.upperBound >= range.upperBound else {
+            return nil
+        }
+        return fetch.completion
     }
     
     func updateCurrentTimestamp() {
@@ -321,8 +340,8 @@ private final class FFMpegLookaheadThread: NSObject {
         let seekToTimestamp: Double
         let lookaheadDuration: Double
         let updateState: (FFMpegLookahead.State) -> Void
-        let fetchInRange: (Range<Int64>) -> Disposable
-        let getDataInRange: (Range<Int64>, @escaping (Data?) -> Void) -> Disposable
+        let fetchInRange: (Range<Int64>, @escaping () -> Void) -> Disposable
+        let getDataInRange: (Range<Int64>, Signal<Void, NoError>?, DirectMediaReadWaiter) -> Disposable
         let isDataCachedInRange: (Range<Int64>) -> Bool
         let size: Int64
         let cancel: Signal<Void, NoError>
@@ -332,8 +351,8 @@ private final class FFMpegLookaheadThread: NSObject {
             seekToTimestamp: Double,
             lookaheadDuration: Double,
             updateState: @escaping (FFMpegLookahead.State) -> Void,
-            fetchInRange: @escaping (Range<Int64>) -> Disposable,
-            getDataInRange: @escaping (Range<Int64>, @escaping (Data?) -> Void) -> Disposable,
+            fetchInRange: @escaping (Range<Int64>, @escaping () -> Void) -> Disposable,
+            getDataInRange: @escaping (Range<Int64>, Signal<Void, NoError>?, DirectMediaReadWaiter) -> Disposable,
             isDataCachedInRange: @escaping (Range<Int64>) -> Bool,
             size: Int64,
             cancel: Signal<Void, NoError>,
@@ -430,8 +449,8 @@ final class FFMpegLookahead {
         seekToTimestamp: Double,
         lookaheadDuration: Double,
         updateState: @escaping (FFMpegLookahead.State) -> Void,
-        fetchInRange: @escaping (Range<Int64>) -> Disposable,
-        getDataInRange: @escaping (Range<Int64>, @escaping (Data?) -> Void) -> Disposable,
+        fetchInRange: @escaping (Range<Int64>, @escaping () -> Void) -> Disposable,
+        getDataInRange: @escaping (Range<Int64>, Signal<Void, NoError>?, DirectMediaReadWaiter) -> Disposable,
         isDataCachedInRange: @escaping (Range<Int64>) -> Bool,
         size: Int64
     ) {
@@ -626,7 +645,7 @@ final class ChunkMediaPlayerDirectFetchSourceImpl: ChunkMediaPlayerSourceImpl {
             seekToTimestamp: position,
             lookaheadDuration: 10.0,
             updateState: updateState,
-            fetchInRange: { range in
+            fetchInRange: { range, completed in
                 return fetchedMediaResource(
                     mediaBox: resource.postbox.mediaBox,
                     userLocation: resource.userLocation,
@@ -635,16 +654,30 @@ final class ChunkMediaPlayerDirectFetchSourceImpl: ChunkMediaPlayerSourceImpl {
                     range: (range, .elevated),
                     statsCategory: resource.statsCategory,
                     preferBackgroundReferenceRevalidation: true
-                ).startStrict()
+                ).start(error: { _ in completed() }, completed: completed)
             },
-            getDataInRange: { range, completion in
-                return resource.postbox.mediaBox.resourceData(resource.reference.resource, size: resourceSize, in: range, mode: .complete).start(next: { result, isComplete in
+            getDataInRange: { range, fetchCompletion, waiter in
+                let mediaBox = resource.postbox.mediaBox
+                let mediaResource = resource.reference.resource
+                let disposables = DisposableSet()
+                disposables.add(mediaBox.resourceData(mediaResource, size: resourceSize, in: range, mode: .complete).start(next: { result, isComplete in
                     if isComplete {
-                        completion(result)
+                        waiter.receive(result)
                     }
                 }, completed: {
-                    completion(nil)
-                })
+                    waiter.receive(nil)
+                }))
+                if let fetchCompletion {
+                    let status = fetchCompletion
+                    |> take(1)
+                    |> mapToSignal { _ in
+                        mediaBox.resourceRangesStatus(mediaResource) |> take(1)
+                    }
+                    disposables.add(status.start(next: { ranges in
+                        waiter.fetchFinished(requestedBytesOnDisk: ranges.isSuperset(of: RangeSet(range)))
+                    }))
+                }
+                return disposables
             },
             isDataCachedInRange: { range in
                 return resource.postbox.mediaBox.internal_resourceDataIsCached(

@@ -18,6 +18,12 @@ final class DirectMediaReadWaiter {
         resolve(.cancelled)
     }
 
+    func fetchFinished(requestedBytesOnDisk: Bool) {
+        if !requestedBytesOnDisk {
+            resolve(.failed)
+        }
+    }
+
     func wait() -> Outcome {
         condition.lock()
         defer { condition.unlock() }

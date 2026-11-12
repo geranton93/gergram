@@ -111,6 +111,7 @@ final class StoryInteraction : InterfaceObserver {
         var windowIsKey: Bool = false
         var _inTransition: Bool = false
         var lock: Bool = false
+        var isSavingMedia: Bool = false
         var isRecording: Bool = false
         var hasReactions: Bool = false
         var hasLikePanel: Bool = false
@@ -178,7 +179,7 @@ final class StoryInteraction : InterfaceObserver {
         var myStars: StarsAmount? = nil
         
         var isPaused: Bool {
-            return mouseDown || inputInFocus || hasPopover || hasModal || !windowIsKey || inTransition || isRecording || hasMenu || hasReactions || playingReaction || isSpacePaused || readingText || inputRecording != nil || lock || closed || magnified || longDown || isAreaActivated || hasLikePanel || isSeeking
+            return mouseDown || inputInFocus || hasPopover || hasModal || !windowIsKey || inTransition || isSavingMedia || isRecording || hasMenu || hasReactions || playingReaction || isSpacePaused || readingText || inputRecording != nil || lock || closed || magnified || longDown || isAreaActivated || hasLikePanel || isSeeking
         }
         
         var inTransition: Bool {
@@ -2219,6 +2220,60 @@ public final class StoryModalController<Context: AccountContextProtocol> : Modal
     
     private var arguments: StoryArguments?
 
+    private func storyMediaSaveAccess(for story: StoryContentItem, peerId: PeerId) -> StoryMediaSaveAccess {
+        StoryMediaSaveAccess(isOwn: peerId == context.peerId, isForwardingDisabled: story.storyItem.isForwardingDisabled, isPremium: context.isPremium, hasMediaCall: interactions.presentation.mediaCall != nil)
+    }
+
+    private func storyMediaSaveItem(for story: StoryContentItem, showPremiumHint: @escaping () -> Void) -> ContextMenuItem? {
+        guard let peerId = story.peerId, storyMediaSaveAccess(for: story, peerId: peerId) != .unavailable else { return nil }
+        switch story.storyItem.media {
+        case let .image(image) where !image.representations.isEmpty:
+            break
+        case .file:
+            break
+        default:
+            return nil
+        }
+
+        let currentStory: () -> StoryContentItem? = { [weak self] in
+            guard let self, !self.closed, let slice = self.stories.stateValue?.slice,
+                  slice.peer.id == peerId, slice.item.storyItem.id == story.storyItem.id,
+                  slice.item.storyItem.media == story.storyItem.media else { return nil }
+            return slice.item
+        }
+        return ContextMenuItem(strings().storyMyInputSaveMedia, handler: { [weak self] in
+            guard let self, !self.interactions.presentation.isSavingMedia,
+                  let current = currentStory(), let peer = current.peer?._asPeer() else { return }
+            switch self.storyMediaSaveAccess(for: current, peerId: peerId) {
+            case .unavailable:
+                return
+            case .premiumRequired:
+                showPremiumHint()
+                return
+            case .save:
+                break
+            }
+
+            self.interactions.update { state in
+                var state = state
+                state.isSavingMedia = true
+                return state
+            }
+            let date = stringForFullDate(timestamp: current.storyItem.timestamp)
+            let name = peerId == self.context.peerId ? "My Story \(date).jpeg" : "Story \(date).jpeg"
+            saveStoryMediaAs(current.storyItem.media._asMedia(), context: self.context, peer: peer, storyId: current.storyItem.id, defaultPhotoName: name, canSave: { [weak self] in
+                guard let self, let story = currentStory() else { return false }
+                return self.storyMediaSaveAccess(for: story, peerId: peerId) == .save
+            }, completion: { [weak self] in
+                self?.interactions.update { state in
+                    var state = state
+                    state.isSavingMedia = false
+                    return state
+                }
+            })
+        }, itemImage: MenuAnimation.menu_save_as.value)
+    }
+
     private func purchaseStarsForReply(amount: Int64, origin: AnalyticsContext, cancelled: @escaping () -> Void = {}, send: @escaping (AnalyticsContext) -> Void) {
         let action = chatInteraction.captureDeferredSendAction()
         let replyIsCurrent = interactions.captureReplyValidity()
@@ -2999,6 +3054,7 @@ public final class StoryModalController<Context: AccountContextProtocol> : Modal
             }
             
             let menu = ContextMenu(presentation: .current(darkAppearance.colors))
+            let saveMediaItem = self?.storyMediaSaveItem(for: story, showPremiumHint: saveGalleryPremium)
 
             if peer.id != context.peerId {
                 let stealthModeState = self?.arguments?.interaction.presentation.stealthMode
@@ -3050,31 +3106,8 @@ public final class StoryModalController<Context: AccountContextProtocol> : Modal
                         }, itemImage: MenuAnimation.menu_hd_lock.value))
                     }
                 }
-                if !story.storyItem.isForwardingDisabled, presentaion.mediaCall == nil {
-                    let resource: TelegramMediaFile?
-                    if let media = story.storyItem.media._asMedia() as? TelegramMediaImage {
-                        if let res = media.representations.last?.resource {
-                            resource = .init(fileId: .init(namespace: 0, id: 0), partialReference: nil, resource: res, previewRepresentations: [], videoThumbnails: [], immediateThumbnailData: nil, mimeType: "image/jpeg", size: nil, attributes: [.FileName(fileName: "Story \(stringForFullDate(timestamp: story.storyItem.timestamp)).jpeg")], alternativeRepresentations: [])
-                        } else {
-                            resource = nil
-                        }
-                        
-                    } else if let media = story.storyItem.media._asMedia() as? TelegramMediaFile {
-                        resource = media
-                    } else {
-                        resource = nil
-                    }
-                    
-                    
-                    if let resource = resource {
-                        menu.addItem(ContextMenuItem(strings().storyMyInputSaveMedia, handler: {
-                            if context.isPremium {
-                                saveAs(resource, account: context.account)
-                            } else {
-                                saveGalleryPremium()
-                            }
-                        }, itemImage: MenuAnimation.menu_save_as.value))
-                    }
+                if let saveMediaItem {
+                    menu.addItem(saveMediaItem)
                 }
                 
                 if !peer.isService {
@@ -3135,24 +3168,8 @@ public final class StoryModalController<Context: AccountContextProtocol> : Modal
                         self?.arguments?.togglePinned(story)
                     }, itemImage: MenuAnimation.menu_clear_history.value))
                 }
-                let resource: TelegramMediaFile?
-                if let media = story.storyItem.media._asMedia() as? TelegramMediaImage {
-                    if let res = media.representations.last?.resource {
-                        resource = .init(fileId: .init(namespace: 0, id: 0), partialReference: nil, resource: res, previewRepresentations: [], videoThumbnails: [], immediateThumbnailData: nil, mimeType: "image/jpeg", size: nil, attributes: [.FileName(fileName: "My Story \(stringForFullDate(timestamp: story.storyItem.timestamp)).jpeg")], alternativeRepresentations: [])
-                    } else {
-                        resource = nil
-                    }
-                    
-                } else if let media = story.storyItem.media._asMedia() as? TelegramMediaFile {
-                    resource = media
-                } else {
-                    resource = nil
-                }
-                
-                if let resource = resource {
-                    menu.addItem(ContextMenuItem(strings().storyMyInputSaveMedia, handler: {
-                        saveAs(resource, account: context.account)
-                    }, itemImage: MenuAnimation.menu_save_as.value))
+                if let saveMediaItem {
+                    menu.addItem(saveMediaItem)
                 }
                 
                 if story.sharable {

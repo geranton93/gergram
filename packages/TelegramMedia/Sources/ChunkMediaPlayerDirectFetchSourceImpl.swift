@@ -11,7 +11,9 @@ private func FFMpegLookaheadReader_readPacketCallback(userData: UnsafeMutableRaw
     let context = Unmanaged<FFMpegLookaheadReader>.fromOpaque(userData!).takeUnretainedValue()
     
     let readCount = min(256 * 1024, Int64(bufferSize))
-    let requestRange: Range<Int64> = context.readingOffset ..< (context.readingOffset + readCount)
+    guard let requestRange = DirectMediaReadAhead.boundedRange(at: context.readingOffset, length: readCount, fileSize: context.params.size) else {
+        return FFMPEG_CONSTANT_AVERROR_EOF
+    }
     
     var fetchedData: Data?
     let fetchDisposable = MetaDisposable()
@@ -66,10 +68,6 @@ private func FFMpegLookaheadReader_seekCallback(userData: UnsafeMutableRawPointe
         
         return offset
     }
-}
-
-private func range(_ outer: Range<Int64>, fullyContains inner: Range<Int64>) -> Bool {
-    return inner.lowerBound >= outer.lowerBound && inner.upperBound <= outer.upperBound
 }
 
 private final class FFMpegLookaheadReader {
@@ -192,30 +190,28 @@ private final class FFMpegLookaheadReader {
     
     func setReadingOffset(offset: Int64) {
         self.readingOffset = offset
-        
-        let readRange: Range<Int64> = offset ..< (offset + 512 * 1024)
-        if !self.params.isDataCachedInRange(readRange) {
-            if let currentFetchRange = self.currentFetchRange {
-                if currentFetchRange.overlaps(readRange) {
-                    if !range(currentFetchRange, fullyContains: readRange) {
-                        self.setFetchRange(range: currentFetchRange.lowerBound ..< max(currentFetchRange.upperBound, readRange.upperBound + 2 * 1024 * 1024))
-                    }
-                } else {
-                    self.setFetchRange(range: offset ..< (offset + 2 * 1024 * 1024))
-                }
-            } else {
-                self.setFetchRange(range: offset ..< (offset + 2 * 1024 * 1024))
-            }
-        }
+
+        self.setFetchRange(range: DirectMediaReadAhead.window(
+            at: offset,
+            fileSize: self.params.size,
+            current: self.currentFetchRange,
+            isCached: self.params.isDataCachedInRange
+        ))
     }
-    
-    private func setFetchRange(range: Range<Int64>) {
-        if self.currentFetchRange != range {
-            self.currentFetchRange = range
-            
-            self.currentFetchDisposable?.dispose()
-            self.currentFetchDisposable = self.params.fetchInRange(range)
+
+    private func setFetchRange(range: Range<Int64>?) {
+        guard self.currentFetchRange != range else {
+            return
         }
+        let previousFetch = self.currentFetchDisposable
+        if let previousRange = self.currentFetchRange, let range, previousRange.overlaps(range) {
+            self.currentFetchDisposable = self.params.fetchInRange(range)
+            previousFetch?.dispose()
+        } else {
+            previousFetch?.dispose()
+            self.currentFetchDisposable = range.map(self.params.fetchInRange)
+        }
+        self.currentFetchRange = range
     }
     
     func updateCurrentTimestamp() {

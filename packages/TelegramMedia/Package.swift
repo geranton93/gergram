@@ -49,5 +49,6 @@ let package = Package(
                            .product(name: "HLSPlayback", package: "HLSPlayback", condition: nil),
                           ],
             path: "Sources"),
+        .testTarget(name: "TelegramMediaTests", dependencies: ["TelegramMedia"]),
     ]
 )

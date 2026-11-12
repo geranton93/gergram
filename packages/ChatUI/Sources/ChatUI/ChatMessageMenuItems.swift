@@ -1553,6 +1553,10 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         if (MessageReadMenuItem.canViewReadStats(message: data.message, chatInteraction: data.chatInteraction, appConfig: appConfiguration)), data.isRead, !data.isLogInteraction {
             fourthBlock.append(MessageReadMenuItem(context: context, chatInteraction: data.chatInteraction, message: message, availableReactions: data.availableReactions))
         }
+        if case .general = source, entry?.isFakeMessage != true,
+           let details = ChatMessageDetailsAction.menuItem(for: data.message, cachedData: data.cachedData, interaction: chatInteraction) {
+            fourthBlock.append(details)
+        }
         
         
         if let peer = peer, peer.isChannel, !peer.isAdmin {

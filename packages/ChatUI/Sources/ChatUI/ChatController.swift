@@ -2618,6 +2618,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     private let connectionStatusDisposable:MetaDisposable = MetaDisposable()
     private let mediaSendConfirmation = ChatMediaSendConfirmation()
     private let messagesActionDisposable:MetaDisposable = MetaDisposable()
+    private let bulkDeleteSelection = ChatBulkDeleteSelectionAction()
     private let unblockDisposable:MetaDisposable = MetaDisposable()
     private let updatePinnedDisposable:MetaDisposable = MetaDisposable()
     private let tonAddressMenuDisposable = MetaDisposable()
@@ -11501,6 +11502,19 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             break
         }
 
+        if let bulkSelection = bulkDeleteSelection.menuItem(
+            interaction: chatInteraction,
+            isActive: { [weak self] in
+                guard let self else { return false }
+                return self.isAnalyticsVisible && self.genericView.window === self.context.window
+                    && !self.genericView.isHiddenOrHasHiddenAncestor
+            },
+            history: { [weak self] in self?.historyView },
+            ranks: { [weak self] in self?.currentRanks }
+        ) {
+            items.append(bulkSelection)
+        }
+
         let sidebarItems = forumSidebarMenuItems()
         if !sidebarItems.isEmpty {
             items = sidebarItems + (items.isEmpty ? [] : [ContextSeparatorItem()]) + items
@@ -12098,6 +12112,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     public override func viewWillDisappear(_ animated: Bool) {
         mediaSendConfirmation.cancel()
         channelDiscussionNavigationDisposable.set(nil)
+        bulkDeleteSelection.cancel()
         cancelAlwaysUseAIRequest()
         chatInteraction.invalidateDeferredSendActions()
         super.viewWillDisappear(animated)
@@ -13359,6 +13374,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             }
             
             if value.chatLocation != oldValue.chatLocation {
+                self.bulkDeleteSelection.cancel()
                 self.setLocation(.Initial(count: self.requestCount, scrollPosition: .down(true)), chatLocation: value.chatLocation)
                 self.updateAnalyticsScreen(chatLocation: value.chatLocation)
             }

@@ -11008,6 +11008,20 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
         let chatInteraction = self.chatInteraction
         var visibilityItems: [ContextMenuItem] = []
+        if chatInteraction.canManageLocalMessageVisibility,
+           chatLocation.peerId != context.peerId,
+           LocalMessageFilterPreferences.acceptsChat(chatLocation.peerId),
+           let peer = chatInteraction.presentation.mainPeer,
+           peer.restrictionText(context.contentSettings) == nil,
+           let openArchive = ChatUIHooks.shared.openLocalMessageArchive {
+            let title = localizedString(chatLocation.threadId == nil ? "Gergram.Archive.Chat" : "Gergram.Archive.Topic")
+            visibilityItems.append(ContextMenuItem(title, handler: { [weak self] in
+                guard let self, self.chatLocation == chatLocation, self.chatInteraction.canManageLocalMessageVisibility,
+                      let peer = self.chatInteraction.presentation.mainPeer,
+                      peer.restrictionText(self.context.contentSettings) == nil else { return }
+                openArchive(self.context, chatLocation)
+            }, itemImage: MenuAnimation.menu_archive.value))
+        }
         if chatInteraction.canManageLocalMessageVisibility {
             if localMessageVisibility.hasHiddenItems(peerId: chatLocation.peerId) {
                 visibilityItems.append(ContextMenuItem(localizedString("Gergram.Chat.RestoreHiddenMessages"), handler: { [weak self] in

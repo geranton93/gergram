@@ -276,6 +276,13 @@ private func archiveDate(_ timestamp: Int64) -> String {
     DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(timestamp)), dateStyle: .medium, timeStyle: .short)
 }
 
+public func localMessageArchiveController(context: any AccountContextProtocol, location: ChatLocation) -> InputDataController {
+    if let threadId = location.threadId, threadId > 0 {
+        return localMessageArchiveController(context: context, scope: .thread(location.peerId, threadId), titleKey: "Gergram.Archive.Topic")
+    }
+    return localMessageArchiveController(context: context, scope: .chat(location.peerId), titleKey: "Gergram.Archive.Chat")
+}
+
 func localMessageArchiveController(
     context: any AccountContextProtocol, scope: LocalArchiveScope = .account, titleKey: String = "Gergram.Archive.Title"
 ) -> InputDataController {

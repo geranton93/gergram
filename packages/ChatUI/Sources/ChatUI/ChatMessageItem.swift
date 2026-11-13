@@ -653,12 +653,16 @@ public class ChatMessageItem: ChatRowItem {
     }
     
     
+    var messageWidth = ChatMessageWidthPreferences.shared.width
+
     public override var min_block_width: CGFloat {
         if webpageLayout != nil {
             return 340
-        } else {
+        }
+        if self is ChatRichTextRowItem || papercutLayout != nil || message?.adAttribute != nil {
             return super.min_block_width
         }
+        return messageWidth.maximumBubbleWidth
     }
     
     

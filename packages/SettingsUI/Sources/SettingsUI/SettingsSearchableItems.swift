@@ -571,6 +571,9 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(14), title: localizedString("Gergram.Chat.HideMessageTails"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .messageTails)
         }),
+        SettingsSearchableItem(id: .appearance(15), title: localizedString("Gergram.Chat.MessageWidth"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .messageWidth)
+        }),
     ]
 }
 

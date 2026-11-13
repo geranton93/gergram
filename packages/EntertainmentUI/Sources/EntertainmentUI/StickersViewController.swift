@@ -1400,7 +1400,7 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
             if let chatInteraction = self.chatInteraction, let slowMode = chatInteraction.presentationSlowMode, slowMode.hasLocked {
                 showSlowModeTimeoutTooltip(slowMode, for: view)
             } else if let file = media as? TelegramMediaFile {
-                if !schedule, let chatInteraction = self.chatInteraction, let window = view.window {
+                if !schedule, let chatInteraction = self.chatInteraction, let window = view.window, !chatInteraction.shouldDeferFileSendFlight(file) {
                     let point = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
                     if let layer = view.layer?.sublayers?.last(where: { !$0.isHidden && $0.frame.contains(point) }) {
                         EntertainmentUIHooks.shared.launchSendFlight(chatInteraction, view, layer.frame, layer)

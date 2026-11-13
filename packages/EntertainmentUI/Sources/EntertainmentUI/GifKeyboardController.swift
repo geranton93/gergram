@@ -604,7 +604,7 @@ public final class GifKeyboardController<Context: AccountContextProtocol> : Tele
             if let slowMode = self?.chatInteraction?.presentationSlowMode, slowMode.hasLocked {
                 showSlowModeTimeoutTooltip(slowMode, for: view)
             } else {
-                if !schedule, let chatInteraction = self?.chatInteraction {
+                if !schedule, let chatInteraction = self?.chatInteraction, !chatInteraction.shouldDeferFileSendFlight(file) {
                     EntertainmentUIHooks.shared.launchSendFlight(chatInteraction, view, view.bounds, view.layer)
                 }
                 self?.interactions?.sendGIF(file, silent, schedule)

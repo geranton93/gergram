@@ -7561,6 +7561,17 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             showModal(with: ChatUIHooks.shared.makeSendAudioModal(context, self.chatInteraction), for: context.window, morphSource: morphSource)
         }
         
+        chatInteraction.fileSendConfirmationKind = { [weak self] file in
+            guard let self else { return nil }
+            switch (self.mode, chatAnalyticsMessageKind(file)) {
+            case (.history, .sticker), (.thread, .sticker), (.scheduled, .sticker):
+                return .sticker
+            case (.history, .gif), (.thread, .gif), (.scheduled, .gif):
+                return .gif
+            default:
+                return nil
+            }
+        }
         let sendAppFileWithAnalytics: (TelegramMediaFile, ChatSendSound, String?, Bool, ItemCollectionId?, ChatTextInputState?, ChatInteraction.Schedule?, AnalyticsContext?, AnalyticsStickerSendRequest?) -> Void = { [weak self] file, requestedSound, query, schedule, collectionId, caption, preSchedule, inheritedContext, stickerRequest in
             let inherited = inheritedContext ?? self?.chatInteraction.captureAnalyticsContext() ?? Analytics.shared.unresolvedContext()
             let analyticsContext = (self?.chatInteraction.captureAnalyticsContext(inherited: inherited) ?? Analytics.shared.unresolvedContext()).restricting(peerId: makePeerId())
@@ -7574,15 +7585,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 stickerRequest?.end()
                 return
             }
-            let kind: ChatMediaSendConfirmationPreferences.Kind?
-            switch (strongSelf.mode, chatAnalyticsMessageKind(file)) {
-            case (.history, .sticker), (.thread, .sticker), (.scheduled, .sticker):
-                kind = .sticker
-            case (.history, .gif), (.thread, .gif), (.scheduled, .gif):
-                kind = .gif
-            default:
-                kind = nil
-            }
+            let kind = strongSelf.chatInteraction.fileSendConfirmationKind?(file)
             if kind != nil && strongSelf.mediaSendConfirmation.isPending {
                 stickerRequest?.end()
                 return

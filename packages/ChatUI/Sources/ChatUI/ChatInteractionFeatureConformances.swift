@@ -5,6 +5,7 @@ import TelegramContext
 import TelegramUtils
 import ChatModeTypes
 import InputView
+import InAppSettings
 
 extension ChatInteraction: ChatInteractionProtocol {
     public var presentationPeer: Peer? {
@@ -22,6 +23,10 @@ extension ChatInteraction: ChatInteractionProtocol {
     public var presentationIsNormalState: Bool {
         return self.presentation.state == .normal
     }
+    public func shouldDeferFileSendFlight(_ file: TelegramMediaFile) -> Bool {
+        fileSendConfirmationKind?(file).map { ChatMediaSendConfirmationPreferences.shared.isEnabled(for: $0) } ?? false
+    }
+
     public func sendFile(_ file: TelegramMediaFile, silent: Bool, query: String?, scheduled: Bool, collectionId: ItemCollectionId?) {
         self.sendAppFile(file, silent, query, scheduled, collectionId, nil, nil)
     }

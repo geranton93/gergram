@@ -573,6 +573,7 @@ public final class ChatInteraction : InterfaceObserver  {
         }
     }
     public var sendCreatedStickerWithAnalytics: ((TelegramMediaFile, AnalyticsContext, AnalyticsStickerSendRequest?) -> Void)?
+    var fileSendConfirmationKind: ((TelegramMediaFile) -> ChatMediaSendConfirmationPreferences.Kind?)?
     public var sendAppFile:(TelegramMediaFile, Bool, String?, Bool, ItemCollectionId?, ChatTextInputState?, ChatInteraction.Schedule?) -> Void = { _,_, _, _, _, _, _ in}
     public var sendAppFileWithContext: ((TelegramMediaFile, ChatSendSound, String?, Bool, ItemCollectionId?, ChatTextInputState?, Schedule?, AnalyticsContext) -> Void)?
     public func sendAppFileObserved(_ file: TelegramMediaFile, _ silent: Bool, _ query: String?, _ scheduled: Bool, _ collectionId: ItemCollectionId?, _ caption: ChatTextInputState?, _ schedule: Schedule?, analyticsContext: AnalyticsContext) {
@@ -1763,6 +1764,7 @@ public final class ChatInteraction : InterfaceObserver  {
         self.sendMediaWithJourney = nil
         self.sendRecordingMediaWithAnalytics = nil
         self.sendCreatedStickerWithAnalytics = nil
+        self.fileSendConfirmationKind = nil
         self.sendAppFileWithContext = nil
         self.sendAppFile = { _, _, _, _, _, _, _ in }
         self.sendMedias = { _, _, _, _, _, _, _, _, _ in }

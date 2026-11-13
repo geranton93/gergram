@@ -347,6 +347,13 @@ final class ChatMediaImageHost {
         layer?.setSignal(signal: signal, clearInstantly: clearInstantly)
     }
 
+    func clear() {
+        view?.layer?.removeAnimation(forKey: "contents")
+        layer?.removeAnimation(forKey: "contents")
+        view?.clear()
+        layer?.clear()
+    }
+
     func setSignal(_ signal: Signal<ImageDataTransformation, NoError>, animate: Bool, cacheImage: @escaping (TransformImageResult) -> Void, isProtected: Bool, alreadyRendered: TransformImageArguments?) {
         if let view {
             view.setSignal(signal, animate: animate, cacheImage: cacheImage, isProtected: isProtected, alreadyRendered: alreadyRendered)
@@ -458,6 +465,7 @@ public class ChatInteractiveContentView: ChatMediaContentView {
     private let livePhotoPlayerStatusDisposable = MetaDisposable()
     
     private var inkView: MediaInkView?
+    private var spoilerPresentation: ChatMediaSpoilerPresentation = .visible
     
     public override var backgroundColor: NSColor {
         get {
@@ -469,8 +477,39 @@ public class ChatInteractiveContentView: ChatMediaContentView {
     }
     
     public override func previewMediaIfPossible() -> Bool {
-        guard let context = self.context, let window = self._window, let table = self.table, parent == nil || parent?.containsSecretMedia == false, fetchStatus == .Local else {return false}
+        guard spoilerPresentation != .previewOnly,
+              let context = self.context, let window = self._window, let table = self.table,
+              parent == nil || parent?.containsSecretMedia == false, fetchStatus == .Local else { return false }
         startModalPreviewHandle(table, window: window, context: context)
+        return true
+    }
+
+    public override func isAccessibilityElement() -> Bool {
+        if spoilerPresentation == .previewOnly {
+            return TGUIKitAccessibility.isEnabled && !isAccessibilityDecorative && !isHidden
+        }
+        return super.isAccessibilityElement()
+    }
+
+    public override func accessibilityRole() -> NSAccessibility.Role? {
+        return spoilerPresentation == .previewOnly && isAccessibilityElement() ? .button : super.accessibilityRole()
+    }
+
+    public override func accessibilityLabel() -> String? {
+        return spoilerPresentation == .previewOnly ? localizedString("Gergram.Chat.RevealMediaSpoiler") : super.accessibilityLabel()
+    }
+
+    public override func accessibilityPerformPress() -> Bool {
+        if spoilerPresentation == .previewOnly {
+            return isEnabled && userInteractionEnabled && revealSpoilerPreview()
+        }
+        return super.accessibilityPerformPress()
+    }
+
+    @discardableResult
+    private func revealSpoilerPreview() -> Bool {
+        guard spoilerPresentation == .previewOnly, let parent, let parameters else { return false }
+        parameters.revealMedia(parent)
         return true
     }
     
@@ -492,6 +531,7 @@ public class ChatInteractiveContentView: ChatMediaContentView {
     
     
     public override func open() {
+        if revealSpoilerPreview() { return }
         if let parent = parent {
             let forceSpoiler = parameters?.forceSpoiler == true
             let messageSpoiler = parent.isMediaSpoilered
@@ -897,8 +937,12 @@ public class ChatInteractiveContentView: ChatMediaContentView {
     }
     
     public override func executeInteraction(_ isControl: Bool) {
-        
-        
+        if spoilerPresentation == .previewOnly {
+            if !isControl || !isMediaFetchInProgress {
+                revealSpoilerPreview()
+                return
+            }
+        }
         if let progressView = progressView {
             switch progressView.state {
             case .Fetching:
@@ -918,6 +962,11 @@ public class ChatInteractiveContentView: ChatMediaContentView {
                 super.executeInteraction(isControl)
             }
         }
+    }
+
+    private var isMediaFetchInProgress: Bool {
+        if case .Fetching = progressView?.state { return true }
+        return false
     }
     
     public var isStory: Bool {
@@ -978,7 +1027,21 @@ public class ChatInteractiveContentView: ChatMediaContentView {
             
         }
     }
-    private var previousIsSpoiler: Bool? = nil
+    private func canPreviewSpoiler(_ media: Media, parent: Message, parameters: ChatMediaLayoutParameters) -> Bool {
+        guard parameters.canReveal, !parameters.isProtected, !parent.isCopyProtected(), parameters.payAmount == nil,
+              parent.id.namespace == Namespaces.Message.Cloud,
+              parent.id.peerId.namespace != Namespaces.Peer.SecretChat, !parent.containsSecretMedia,
+              parent.autoremoveAttribute == nil, parent.autoclearTimeout == nil,
+              parent.paidContent == nil, !parent.hasExtendedMedia,
+              parent.adAttribute == nil, parent.activeEphemeralReplacementMessage == nil,
+              !parent.attributes.contains(where: { $0 is EphemeralMessageAttribute || $0 is RestrictedContentMessageAttribute }),
+              parent.media.contains(where: { $0.isSemanticallyEqual(to: media) }) else { return false }
+        if media is TelegramMediaImage {
+            return true
+        }
+        guard let file = media as? TelegramMediaFile else { return false }
+        return file.isVideo && !file.isInstantVideo
+    }
 
     public override func update(with media: Media, size:NSSize, context:any AccountContextProtocol, parent:Message?, table:TableView?, parameters:ChatMediaLayoutParameters? = nil, animated: Bool, positionFlags: LayoutPositionFlags? = nil, approximateSynchronousValue: Bool = false) {
         
@@ -1013,22 +1076,38 @@ public class ChatInteractiveContentView: ChatMediaContentView {
         let messageSpoiler = parent?.isMediaSpoilered ?? false
         
         
-        let isSensitive: Bool
-        if let parent = parent {
-            isSensitive = parent.isSensitiveContent(platform: "ios", contentSettings: context.contentSettings) && !context.contentConfig.sensitiveContentEnabled
+        let hasSensitiveContent = parent?.isSensitiveContent(platform: "ios", contentSettings: context.contentSettings) == true
+        let isSensitive = hasSensitiveContent && !context.contentConfig.sensitiveContentEnabled
+        let previousPresentation = self.spoilerPresentation
+        let revealsOrdinarySpoilers = parameters?.revealsOrdinaryMediaSpoilers == true
+        let isEligibleForPreview: Bool
+        if revealsOrdinarySpoilers, messageSpoiler, !hasSensitiveContent, let parent, let parameters {
+            isEligibleForPreview = canPreviewSpoiler(media, parent: parent, parameters: parameters)
         } else {
-            isSensitive = false
+            isEligibleForPreview = false
         }
-        
-        let isSpoiler = (messageSpoiler || forceSpoiler || isSensitive) && (parameters?.isRevealed == false)
-        let bypassSharedPreviewCache = parent != nil && parent?.containsSecretMedia != true && isSpoiler
+        let presentation = ChatMediaSpoilerPresentation(hasSpoiler: messageSpoiler, requiresCover: forceSpoiler || isSensitive,
+            isExplicitlyRevealed: parameters?.isRevealed, revealsOrdinarySpoilers: revealsOrdinarySpoilers,
+            isEligibleForPreview: isEligibleForPreview)
+        self.spoilerPresentation = presentation
+        let isSpoiler = presentation == .covered
+        let showsOnlyPreview = presentation == .previewOnly
+        let hidesPreferencePreview = previousPresentation == .previewOnly && isSpoiler
+        if hidesPreferencePreview {
+            image.clear()
+        }
+        let bypassSharedPreviewCache = showsOnlyPreview || (parent != nil && parent?.containsSecretMedia != true && isSpoiler)
 
         
         let corners = mediaCorners(positionFlags, parameters)
-        let mediaUpdated = self.media == nil || !media.isSemanticallyEqual(to: self.media!) || (parent?.autoremoveAttribute != self.parent?.autoremoveAttribute) || positionFlags != self.positionFlags || corners != self.appliedCorners || self.frame.size != size || previousIsSpoiler != isSpoiler
+        let mediaUpdated = self.media == nil || !media.isSemanticallyEqual(to: self.media!) || (parent?.autoremoveAttribute != self.parent?.autoremoveAttribute) || positionFlags != self.positionFlags || corners != self.appliedCorners || self.frame.size != size || previousPresentation != presentation
         self.appliedCorners = corners
-        
-        self.previousIsSpoiler = isSpoiler
+
+        if showsOnlyPreview, let autoplayVideoView {
+            autoplayVideoView.mediaPlayer.pause()
+            mediaPlayerStatusDisposable.set(nil)
+            self.autoplayVideoView = nil
+        }
 
         if mediaUpdated, let rhs = media as? TelegramMediaFile, let lhs = self.media as? TelegramMediaFile  {
             if !lhs.isSemanticallyEqual(to: rhs) {
@@ -1038,7 +1117,7 @@ public class ChatInteractiveContentView: ChatMediaContentView {
         
         
         var clearInstantly: Bool = mediaUpdated
-        if clearInstantly, parent?.stableId == self.parent?.stableId {
+        if clearInstantly, !hidesPreferencePreview, parent?.stableId == self.parent?.stableId {
             clearInstantly = false
         }
         
@@ -1091,7 +1170,7 @@ public class ChatInteractiveContentView: ChatMediaContentView {
                 videoAccessory?.removeFromSuperview()
                 videoAccessory = nil
                 
-                updateLivePhoto(image, parent: parent, context: context, isSpoiler: isSpoiler, isProtected: isProtected, corners: corners)
+                updateLivePhoto(image, parent: parent, context: context, isSpoiler: isSpoiler || showsOnlyPreview, isProtected: isProtected, corners: corners)
                 
                 if let parent = parent, parent.containsSecretMedia || isSpoiler {
                     updateImageSignal = chatSecretPhoto(account: context.account, imageReference: ImageMediaReference.message(message: MessageReference(parent), media: image), scale: backingScaleFactor, synchronousLoad: approximateSynchronousValue)
@@ -1134,11 +1213,14 @@ public class ChatInteractiveContentView: ChatMediaContentView {
                 
                 if let parent = parent, parent.containsSecretMedia || isSpoiler {
                     updateImageSignal = chatSecretMessageVideo(account: context.account, fileReference: fileReference, scale: backingScaleFactor)
+                } else if showsOnlyPreview {
+                    updateImageSignal = chatMessageVideoPoster(account: context.account, fileReference: fileReference,
+                        scale: backingScaleFactor, synchronousLoad: approximateSynchronousValue)
                 } else {
                     updateImageSignal = chatMessageVideo(account: context.account, fileReference: fileReference, scale: backingScaleFactor) //chatMessageVideo(account: account, video: file, scale: backingScaleFactor)
                 }
                 
-                if let image = file.videoCover {
+                if let image = file.videoCover, !showsOnlyPreview {
                     coverFetchDisposable.set(chatMessagePhotoInteractiveFetched(account: context.account, imageReference: parent != nil ? ImageMediaReference.message(message: MessageReference(parent!), media: image) : ImageMediaReference.standalone(media: image)).start())
                 } else {
                     coverFetchDisposable.set(nil)
@@ -1190,7 +1272,7 @@ public class ChatInteractiveContentView: ChatMediaContentView {
             if let updateImageSignal = updateImageSignal {
                 self.image.ignoreFullyLoad = mediaUpdated
 
-                self.image.setSignal(updateImageSignal, animate: removeViewAnimated, cacheImage: { [weak media] result in
+                self.image.setSignal(updateImageSignal, animate: removeViewAnimated && !hidesPreferencePreview, cacheImage: { [weak media] result in
                     if let media = media, !bypassSharedPreviewCache {
                         cacheMedia(result, media: media, arguments: arguments, scale: System.backingScale, positionFlags: positionFlags)
                     }
@@ -1294,7 +1376,7 @@ public class ChatInteractiveContentView: ChatMediaContentView {
                         }
                         
                         
-                        if let file = strongSelf.media as? TelegramMediaFile, strongSelf.autoplayVideo {
+                        if let file = strongSelf.media as? TelegramMediaFile, strongSelf.autoplayVideo, !showsOnlyPreview {
                             
                            
                             
@@ -1385,7 +1467,7 @@ public class ChatInteractiveContentView: ChatMediaContentView {
                                 strongSelf.image.animatesAlphaOnFirstTransition = false
                             }
                             
-                            var removeProgress: Bool = strongSelf.autoplayVideo && !isSpoiler && strongSelf.lite == false
+                            var removeProgress: Bool = strongSelf.autoplayVideo && !isSpoiler && !showsOnlyPreview && strongSelf.lite == false
                             if case .Local = status, media is TelegramMediaImage, !containsSecretMedia {
                                 removeProgress = true
                             }
@@ -1583,6 +1665,9 @@ public class ChatInteractiveContentView: ChatMediaContentView {
     
     
     public override func copy() -> Any {
+        if spoilerPresentation == .previewOnly {
+            return NSView(frame: bounds)
+        }
         return image.copy()
     }
 
@@ -1593,7 +1678,15 @@ public class ChatInteractiveContentView: ChatMediaContentView {
     }
     #endif
     public override var contents: Any? {
-        return image.contents
+        return spoilerPresentation == .previewOnly ? nil : image.contents
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        if spoilerPresentation == .previewOnly {
+            superview?.mouseDragged(with: event)
+        } else {
+            super.mouseDragged(with: event)
+        }
     }
     
 }

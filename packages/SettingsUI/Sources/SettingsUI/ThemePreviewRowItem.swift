@@ -53,14 +53,16 @@ public class ThemePreviewRowItem: GeneralRowItem {
         
         let timestamp2: Int32 = 60 * 22 + 60 * 60 * 18
         
-        let thridMessage = Message(stableId: 2, stableVersion: 0, id: MessageId(peerId: fromUser1.id, namespace: 0, id: 1), globallyUniqueId: 0, groupingKey: 0, groupInfo: nil, threadId: nil, timestamp: timestamp2, flags: [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: fromUser1, text: strings().appearanceSettingsChatPreview3, attributes: [], media: [], peers:SimpleDictionary([fromUser2.id : fromUser2, fromUser1.id : fromUser1]) , associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
+        let codeSample = "print(\"Hello, world!\")"
+        let codeEntity = MessageTextEntity(range: 0 ..< codeSample.utf16.count, type: .Code)
+        let thirdMessage = Message(stableId: 2, stableVersion: 0, id: MessageId(peerId: fromUser1.id, namespace: 0, id: 1), globallyUniqueId: 0, groupingKey: 0, groupInfo: nil, threadId: nil, timestamp: timestamp2, flags: [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: fromUser1, text: codeSample, attributes: [TextEntitiesMessageAttribute(entities: [codeEntity])], media: [], peers:SimpleDictionary([fromUser2.id : fromUser2, fromUser1.id : fromUser1]) , associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
         
-        let thridEntry: ChatHistoryEntry = .MessageEntry(thridMessage, MessageIndex(thridMessage), true, theme.bubbled ? .bubble : .list, .Full(rank: nil, rankType: .none, header: .normal), nil, ChatHistoryEntryData(nil, MessageEntryAdditionalData(), AutoplayMediaPreferences.defaultSettings))
+        let thirdEntry: ChatHistoryEntry = .MessageEntry(thirdMessage, MessageIndex(thirdMessage), true, theme.bubbled ? .bubble : .list, .Full(rank: nil, rankType: .none, header: .normal), nil, ChatHistoryEntryData(nil, MessageEntryAdditionalData(), AutoplayMediaPreferences.defaultSettings))
         
         
         let item1 = SettingsHooks.shared.makeChatPreviewItem(initialSize, chatInteraction, firstEntry, theme)
         let item2 = SettingsHooks.shared.makeChatPreviewItem(initialSize, chatInteraction, secondEntry, theme)
-        let item3 = SettingsHooks.shared.makeChatPreviewItem(initialSize, chatInteraction, thridEntry, theme)
+        let item3 = SettingsHooks.shared.makeChatPreviewItem(initialSize, chatInteraction, thirdEntry, theme)
         
         
         self.items = [item1, item2, item3]

@@ -309,7 +309,7 @@ public class ChatMessageItem: ChatRowItem {
                 
                 messageAttr = ChatMessageItem.applyMessageEntities(with: attributes, for: text, message: message, context: context, fontSize: theme.fontSize, openInfo:openInfo, botCommand:chatInteraction.sendPlainText, hashtag: chatInteraction.hashtag, applyProxy: chatInteraction.applyProxy, textColor: theme.chat.textColor(isIncoming, entry.renderType == .bubble), linkColor: theme.chat.linkColor(isIncoming, entry.renderType == .bubble), monospacedPre: theme.chat.monospacedPreColor(isIncoming, entry.renderType == .bubble), monospacedCode: theme.chat.monospacedCodeColor(isIncoming, entry.renderType == .bubble), mediaDuration: mediaDuration, timecode: { timecode in
                     openSpecificTimecodeFromReply?(timecode)
-                }, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: isIncoming, bubbled: entry.renderType == .bubble), fillsQuoteBackground: !ChatReplyAppearancePreferences.shared.isSimplified, isDark: theme.colors.isDark, bubbled: entry.renderType == .bubble, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && isIncoming).mutableCopy() as! NSMutableAttributedString
+                }, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: isIncoming, bubbled: entry.renderType == .bubble), fillsQuoteBackground: !ChatReplyAppearancePreferences.shared.isSimplified, isDark: theme.colors.isDark, bubbled: entry.renderType == .bubble, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && isIncoming, monospaceFont: ChatMessageItem.historyMonospaceFont(for: chatInteraction.mode)).mutableCopy() as! NSMutableAttributedString
                 
              }
              
@@ -796,7 +796,16 @@ public class ChatMessageItem: ChatRowItem {
         return ChatZalgoTextFilter.presentation(for:)
     }
     
-    public static func applyMessageEntities(with attributes:[MessageAttribute], for sourceText:String, message: Message?, context: any AccountContextProtocol, fontSize: CGFloat, openInfo:@escaping (PeerId, Bool, MessageId?, ChatInitialAction?)->Void, botCommand:@escaping (String)->Void = { _ in }, hashtag:@escaping (String)->Void = { _ in }, applyProxy:@escaping (ProxyServerSettings)->Void = { _ in }, textColor: NSColor = theme.colors.text, linkColor: NSColor = theme.colors.link, monospacedPre:NSColor = theme.colors.monospacedPre, monospacedCode: NSColor = theme.colors.monospacedCode, mediaDuration: Double? = nil, timecode: @escaping(Double?)->Void = { _ in }, openBank: @escaping(String)->Void = { _ in }, underlineLinks: Bool = false, blockColor: PeerNameColors.Colors = .init(main: theme.colors.accent), fillsQuoteBackground: Bool = true, isDark: Bool, bubbled: Bool, codeSyntaxData: [CodeSyntaxKey : CodeSyntaxResult] = [:], loadCodeSyntax: @escaping(MessageId, NSRange, String, String, ChatInterfaceSyntaxTheme)->Void = { _, _, _, _, _ in }, openPhoneNumber: ((String)->Void)? = nil, openTonAddress: ((String)->Void)? = nil, confirm: Bool = true, ignoreLinks: Bool = false) -> NSAttributedString {
+    static func historyMonospaceFont(for mode: ChatMode) -> ChatMonospaceFont {
+        switch mode {
+        case .history, .thread, .pinned, .scheduled, .preview:
+            return ChatMonospaceFontPreferences.shared.font
+        case .customChatContents, .customLink:
+            return .system
+        }
+    }
+
+    public static func applyMessageEntities(with attributes:[MessageAttribute], for sourceText:String, message: Message?, context: any AccountContextProtocol, fontSize: CGFloat, openInfo:@escaping (PeerId, Bool, MessageId?, ChatInitialAction?)->Void, botCommand:@escaping (String)->Void = { _ in }, hashtag:@escaping (String)->Void = { _ in }, applyProxy:@escaping (ProxyServerSettings)->Void = { _ in }, textColor: NSColor = theme.colors.text, linkColor: NSColor = theme.colors.link, monospacedPre:NSColor = theme.colors.monospacedPre, monospacedCode: NSColor = theme.colors.monospacedCode, mediaDuration: Double? = nil, timecode: @escaping(Double?)->Void = { _ in }, openBank: @escaping(String)->Void = { _ in }, underlineLinks: Bool = false, blockColor: PeerNameColors.Colors = .init(main: theme.colors.accent), fillsQuoteBackground: Bool = true, isDark: Bool, bubbled: Bool, codeSyntaxData: [CodeSyntaxKey : CodeSyntaxResult] = [:], loadCodeSyntax: @escaping(MessageId, NSRange, String, String, ChatInterfaceSyntaxTheme)->Void = { _, _, _, _, _ in }, openPhoneNumber: ((String)->Void)? = nil, openTonAddress: ((String)->Void)? = nil, confirm: Bool = true, ignoreLinks: Bool = false, monospaceFont: ChatMonospaceFont = .system) -> NSAttributedString {
         var sourceEntities: [MessageTextEntity] = []
         for attribute in attributes {
             if let attribute = attribute as? TextEntitiesMessageAttribute {
@@ -1076,11 +1085,17 @@ public class ChatMessageItem: ChatRowItem {
                 break
             }
         }
+        var codeFont: NSFont?
         for (range, attr) in fontAttributes {
             var font: NSFont?
 
             switch attr {
-            case .monospace, .blockQuote:
+            case .monospace:
+                if codeFont == nil {
+                    codeFont = ChatCodeFont.resolve(monospaceFont, size: fontSize)
+                }
+                font = codeFont
+            case .blockQuote:
                 font = .code(fontSize)
             case .italic:
                 font = .italic(fontSize)

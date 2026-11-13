@@ -237,8 +237,9 @@ private final class ArchiveScreenModel {
 
     func confirmClear() {
         guard let context, isActive, !page.isBusy else { return }
+        let description = scope == .account ? "Gergram.Archive.ClearDescription" : "Gergram.Archive.ClearScopeDescription"
         verifyAlert_button(for: context.window, header: localizedString("Gergram.Archive.Clear"),
-                           information: localizedString("Gergram.Archive.ClearDescription"), ok: localizedString("Gergram.Archive.Clear"), successHandler: { [weak self] _ in
+                           information: localizedString(description), ok: localizedString("Gergram.Archive.Clear"), successHandler: { [weak self] _ in
             self?.clear()
         })
     }
@@ -248,11 +249,14 @@ private final class ArchiveScreenModel {
         page = ArchivePageState()
         pages.set(page)
         let accountId = self.accountId
+        let scope = self.scope
         let request = postbox.transaction { transaction -> Result<Void, Error> in
             Result {
-                transaction.updateLocalArchiveCaptureSettings(.defaultSettings)
+                if scope == .account {
+                    transaction.updateLocalArchiveCaptureSettings(.defaultSettings)
+                }
                 for _ in 0 ..< 33 {
-                    if try !transaction.clearLocalArchive(accountId: accountId, scope: .account, limit: 128) {
+                    if try !transaction.clearLocalArchive(accountId: accountId, scope: scope, limit: 128) {
                         return
                     }
                 }
@@ -335,13 +339,11 @@ func localMessageArchiveController(
             name: localizedString(page.isNewest ? "Gergram.Archive.Refresh" : "Gergram.Archive.Newest"), color: theme.colors.accent,
             viewType: .singleItem, enabled: !page.isBusy, action: { [weak model] in model?.loadNewest() }
         )))
-        if scope == .account {
-            entries.append(.sectionId(3, type: .normal))
-            entries.append(.general(sectionId: 4, index: 0, value: .none, error: nil, identifier: InputDataIdentifier("clear"), data: .init(
-                name: localizedString("Gergram.Archive.Clear"), color: theme.colors.redUI, viewType: .singleItem,
-                enabled: !page.isBusy, action: { [weak model] in model?.confirmClear() }
-            )))
-        }
+        entries.append(.sectionId(3, type: .normal))
+        entries.append(.general(sectionId: 4, index: 0, value: .none, error: nil, identifier: InputDataIdentifier("clear"), data: .init(
+            name: localizedString("Gergram.Archive.Clear"), color: theme.colors.redUI, viewType: .singleItem,
+            enabled: !page.isBusy, action: { [weak model] in model?.confirmClear() }
+        )))
         return InputDataSignalValue(entries: entries)
     }
     let controller = InputDataController(dataSignal: signal, title: localizedString(titleKey), removeAfterDisappear: false, hasDone: false)

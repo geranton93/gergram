@@ -31,6 +31,7 @@ public class WPArticleLayout: WPLayout {
     private let durationAttributed:NSAttributedString?
     private let fetchDisposable = MetaDisposable()
     private let downloadSettings: AutomaticMediaDownloadSettings
+    private let isSocialPost: Bool
     
     public private(set) var groupLayout: GroupedLayout?
     public private(set) var parameters:[ChatMediaLayoutParameters] = []
@@ -76,6 +77,8 @@ public class WPArticleLayout: WPLayout {
         }
         
         self.downloadSettings = downloadSettings
+        self.isSocialPost = (content.image != nil || content.file?.isVideo == true)
+            && SocialPostPreview.prefersLargeMedia(for: content.url)
         
         super.init(with: content, context: context, chatInteraction: chatInteraction, parent:parent, fontSize: fontSize, presentation: presentation, approximateSynchronousValue: approximateSynchronousValue, mayCopyText: mayCopyText, entities: entities, adAttribute: adAttribute)
         
@@ -226,6 +229,11 @@ public class WPArticleLayout: WPLayout {
             return true
         }
        
+        if isSocialPost, adAttribute == nil, content.type != "telegram_user", content.story == nil,
+           let imageSize, imageSize.width >= 200, imageSize.height > 0 {
+            return true
+        }
+
         let website = content.websiteName?.lowercased()
         if let type = content.type, mediaTypes.contains(type) || (fullSizeSites.contains(website ?? "") || content.instantPage != nil) || content.text == nil  {
             if let imageSize = imageSize {

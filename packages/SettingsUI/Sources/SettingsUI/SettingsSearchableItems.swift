@@ -429,6 +429,10 @@ private func privacySearchableItems<Context: AccountContextProtocol>(context: Co
         }),
         SettingsSearchableItem(id: .privacy(15), title: strings().privacyAndSecurityClearCloudDrafts, alternate: synonyms(strings().settingsSearchSynonymsPrivacyDataDeleteDrafts), icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
             presentPrivacySettings(context, present, .cloudDraft)
+        }),
+        SettingsSearchableItem(id: .privacy(16), title: localizedString("Gergram.Archive.Title"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
+            guard !context.isFrozen else { return }
+            present(.push, localMessageArchiveController(context: context))
         })
     ]
 }

@@ -157,6 +157,7 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
     case hideBlockedSendersDescription(sectionId: Int)
     case locallyHiddenSenders(sectionId: Int)
     case messageFilters(sectionId: Int)
+    case localMessageArchive(sectionId: Int)
     
     case section(sectionId:Int)
 
@@ -248,7 +249,7 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
             return sectionId
         case let .secretChatWebPreviewDesc(sectionId):
             return sectionId
-        case let .hideBlockedSenders(sectionId, _), let .hideBlockedSendersDescription(sectionId), let .locallyHiddenSenders(sectionId), let .messageFilters(sectionId):
+        case let .hideBlockedSenders(sectionId, _), let .hideBlockedSendersDescription(sectionId), let .locallyHiddenSenders(sectionId), let .messageFilters(sectionId), let .localMessageArchive(sectionId):
             return sectionId
         case let .section(sectionId):
             return sectionId
@@ -352,6 +353,8 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
             return 45
         case .messageFilters:
             return 46
+        case .localMessageArchive:
+            return 47
         case let .section(sectionId):
             return (sectionId + 1) * 1000 - sectionId
         }
@@ -564,6 +567,12 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
                 let context = arguments.context
                 guard !context.isFrozen else { return }
                 context.bindings.rootNavigation().push(localMessageFiltersController(context: context))
+            })
+        case .localMessageArchive:
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Archive.Title"), type: .next, viewType: .singleItem, action: {
+                let context = arguments.context
+                guard !context.isFrozen else { return }
+                context.bindings.rootNavigation().push(localMessageArchiveController(context: context))
             })
         case .section:
             return GeneralRowItem(initialSize, height: 20, stableId: stableId, viewType: .separator)
@@ -841,6 +850,10 @@ private func entries(state: PrivacyAndSecurityControllerState, contentConfigurat
     sectionId += 1
 
     entries.append(.messageFilters(sectionId: sectionId))
+    entries.append(.section(sectionId: sectionId))
+    sectionId += 1
+
+    entries.append(.localMessageArchive(sectionId: sectionId))
     entries.append(.section(sectionId: sectionId))
 
     return entries

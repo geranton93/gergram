@@ -145,6 +145,8 @@ class SharedAccountContext {
     private var statusItem: NSStatusItem?
     #if !SHARE
     private weak var streamerModeStatusItem: NSMenuItem?
+    private let streamerModeMenuVisibilityDisposable = MetaDisposable()
+    private var showsStreamerModeMenuItem = true
 
     func updateStreamerModeMenuState(_ state: NSControl.StateValue) {
         streamerModeStatusItem?.state = state
@@ -170,7 +172,10 @@ class SharedAccountContext {
     }
 
     private func updateStatusBarMenuItem() {
-        
+        #if !SHARE
+        streamerModeStatusItem = nil
+        #endif
+
         let menu = NSMenu()
         
         if let items = self.callStatusBarMenuItems?()  {
@@ -227,7 +232,7 @@ class SharedAccountContext {
             }))
 
             #if !SHARE
-            if let streamerModeItem = appDelegate?.makeStreamerModeMenuItem() {
+            if showsStreamerModeMenuItem, let streamerModeItem = appDelegate?.makeStreamerModeMenuItem() {
                 streamerModeStatusItem = streamerModeItem
                 menu.addItem(streamerModeItem)
             }
@@ -276,6 +281,13 @@ class SharedAccountContext {
             forceUpdateStatusBarIconByDockTile(sharedContext: self)
             self.syncLiquidGlassWithLite()
         })
+        streamerModeMenuVisibilityDisposable.set((StreamerModeMenuBarPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] visible in
+            guard let self, self.showsStreamerModeMenuItem != visible else { return }
+            self.showsStreamerModeMenuItem = visible
+            if self.statusItem != nil, self.callStatusBarMenuItems == nil {
+                self.updateStatusBarMenuItem()
+            }
+        }))
         #endif
         
         
@@ -821,6 +833,9 @@ class SharedAccountContext {
     #endif
     
     deinit {
+        #if !SHARE
+        streamerModeMenuVisibilityDisposable.dispose()
+        #endif
         batteryLevelTimer?.invalidate()
     }
     

@@ -12,6 +12,8 @@ import ShortPeerRow
 import ChatUI
 
 
+private let mutualContactIcon = TelegramThemeHooks.shared.image(.iconChatMembers)
+
 private enum ContactsControllerEntryId: Hashable {
     case peerId(Int64)
     case addContact
@@ -202,13 +204,10 @@ private func entriesForView(_ view: EngineContactList, storyList: EngineStorySub
     return entries
 }
 
-private final class ContactsArguments {
-    let addContact:()->Void
-    let openStory:(StoryInitialIndex?, Bool)->Void
-    init(addContact:@escaping()->Void, openStory:@escaping(StoryInitialIndex?, Bool)->Void) {
-        self.addContact = addContact
-        self.openStory = openStory
-    }
+private struct ContactsArguments {
+    let addContact: () -> Void
+    let openStory: (StoryInitialIndex?, Bool) -> Void
+    let showMutualContactInfo: (PeerId) -> Void
 }
 
 fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ContactsEntry>]?, to:[AppearanceWrapperEntry<ContactsEntry>], context: any AccountContextProtocol, initialSize:NSSize, arguments: ContactsArguments, animated:Bool) -> Signal<TableUpdateTransition, NoError> {
@@ -227,9 +226,22 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ContactsEntry>]?, t
                     let timestamp = CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970
                     (string, _, color) = stringAndActivityForUserPresence(presence, timeDifference: context.timeDifference, relativeTo: Int32(timestamp))
                 }
-                item = ShortPeerRowItem(initialSize, peer: peer, account: context.account, context: context, stableId: entry.stableId,statusStyle: ControlStyle(foregroundColor:color), status: string, borderType: [.Right], highlightVerified: true, customTheme: .init(backgroundColor: .clear), story: nil, openStory: { initialId in
+                let rightActions: ShortPeerRowItem.RightActions
+                if ContactMutualBadge.isVisible(flags: (peer as? TelegramUser)?.flags, isSelf: peer.id == context.peerId) {
+                    let action = ShortPeerRowItem.RightActions.RightAction(
+                        icon: mutualContactIcon.precomposed(theme.colors.grayIcon),
+                        index: 0,
+                        accessibilityLabel: localizedString("Gergram.Contacts.MutualContact")
+                    )
+                    rightActions = .init(actions: [action], callback: { peerId, _ in
+                        arguments.showMutualContactInfo(peerId)
+                    })
+                } else {
+                    rightActions = .init()
+                }
+                item = ShortPeerRowItem(initialSize, peer: peer, account: context.account, context: context, stableId: entry.stableId, statusStyle: ControlStyle(foregroundColor: color), status: string, borderType: [.Right], highlightVerified: true, customTheme: .init(backgroundColor: .clear), story: nil, openStory: { initialId in
                     arguments.openStory(initialId, true)
-                })
+                }, rightActions: rightActions)
             case .addContact:
                 item = AddContactTableItem(initialSize, stableId: entry.stableId, addContact: {
                     arguments.addContact()
@@ -338,6 +350,13 @@ open class ContactsController<Context: AccountContextProtocol>: PeersListControl
             showModal(with: AddContactModalController(context), for: context.window)
         }, openStory: { initialId, singlePeer in
             ChatUIHooks.shared.showStories(context, true, initialId, singlePeer)
+        }, showMutualContactInfo: { [weak self] peerId in
+            let stableId = ContactsControllerEntryId.peerId(peerId.toInt64())
+            guard let item = self?.genericView.tableView.item(stableId: stableId) as? ShortPeerRowItem,
+                  !item.rightActions.actions.isEmpty, let view = item.view else {
+                return
+            }
+            tooltip(for: view, text: localizedString("Gergram.Contacts.MutualContactInfo"))
         })
         
         

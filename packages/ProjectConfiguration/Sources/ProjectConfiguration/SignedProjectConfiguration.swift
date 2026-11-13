@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 
 public struct ProjectConfiguration: Equatable {
+    let issuedAtUnixSeconds: Int64
     public let expiresAt: Date
     public let badges: [Peer: Badge]
 
@@ -40,7 +41,8 @@ public enum ProjectConfigurationVerificationError: Error, Equatable {
 
 @available(macOS 10.15, *)
 public struct SignedProjectConfigurationVerifier {
-    private static let maximumPayloadSize = 192 * 1024
+    static let maximumPayloadSize = 192 * 1024
+    static let signatureSize = 64
     private static let maximumBadgeCount = 4096
     private static let maximumLifetime: Int64 = 30 * 24 * 60 * 60
     private static let maximumClockSkew: TimeInterval = 5 * 60
@@ -54,13 +56,17 @@ public struct SignedProjectConfigurationVerifier {
     }
 
     public func verify(payload: Data, signature: Data, keyID: String, now: Date) throws -> ProjectConfiguration {
+        try authenticate(payload: payload, signature: signature, keyID: keyID, now: now, acceptsExpired: false)
+    }
+
+    func authenticate(payload: Data, signature: Data, keyID: String, now: Date, acceptsExpired: Bool) throws -> ProjectConfiguration {
         guard !payload.isEmpty, payload.count <= Self.maximumPayloadSize else {
             throw ProjectConfigurationVerificationError.invalidPayloadSize
         }
         guard let key = trustedKeys[keyID] else {
             throw ProjectConfigurationVerificationError.unknownKey
         }
-        guard signature.count == 64, key.isValidSignature(signature, for: payload) else {
+        guard signature.count == Self.signatureSize, key.isValidSignature(signature, for: payload) else {
             throw ProjectConfigurationVerificationError.invalidSignature
         }
 
@@ -82,10 +88,11 @@ public struct SignedProjectConfigurationVerifier {
               decoded.expiresAt > decoded.issuedAt,
               decoded.expiresAt - decoded.issuedAt <= Self.maximumLifetime,
               Double(decoded.issuedAt) <= timestamp + Self.maximumClockSkew,
-              Double(decoded.expiresAt) > timestamp else {
+              acceptsExpired || Double(decoded.expiresAt) > timestamp else {
             throw ProjectConfigurationVerificationError.invalidValidityWindow
         }
         return ProjectConfiguration(
+            issuedAtUnixSeconds: decoded.issuedAt,
             expiresAt: Date(timeIntervalSince1970: Double(decoded.expiresAt)),
             badges: decoded.badges
         )

@@ -1598,11 +1598,13 @@ public class ChatRowItem: TableRowItem {
         return messageBubbleCorners(incoming: isIncoming, neighbors: neighbors, inset: inset)
     }
 
+    var hidesMessageBubbleTail = MessageBubbleTailPreferences.shared.isHidden
+
     public var bubbleImage:(CGImage, NSEdgeInsets)? {
         guard let neighbors = bubbleNeighbors else {
             return nil
         }
-        return messageBubbleMaskImage(incoming: isIncoming, neighbors: neighbors)
+        return messageBubbleMaskImage(incoming: isIncoming, neighbors: neighbors, showsTail: !hidesMessageBubbleTail)
     }
 
     public let downloadSettings: AutomaticMediaDownloadSettings

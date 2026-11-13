@@ -14,6 +14,7 @@ SYNC = CORE / "State/Sync"
 SYNCCORE = CORE / "SyncCore"
 CAPTURE_PATCH = ROOT / "scripts/telegram-ios-local-archive-capture.patch"
 ARCHIVE_PATCH = ROOT / "scripts/telegram-ios-macos.patch"
+MAINTENANCE_PATCH = ROOT / "scripts/telegram-ios-local-archive-maintenance.patch"
 PINNED = {
     POSTBOX / "Postbox.swift": "72585b34e1b31c181fd178f32a6d62fcb4ecb26e",
     POSTBOX / "ValueBoxKey.swift": "021adfaa69b980a4e83a2da644dcb86ba01f54ff",
@@ -21,7 +22,9 @@ PINNED = {
     POSTBOX / "Message.swift": "a3a0bd715d60809d66295a05c7069b798195daee",
     POSTBOX / "Coding.swift": "1279ab531cebb026aaddd21849bfeb68a22e0ecf",
     POSTBOX / "PreferencesEntry.swift": "09ad00e9055085658908dae7517b2ac00f739758",
+    CORE / "Account/Account.swift": "510cb791803236ef8b530fee856b569bbc22d814",
     CORE / "Account/AccountIntermediateState.swift": "b3052428da309fb932f8f63ca594f400d0c926fe",
+    CORE / "Account/AccountManager.swift": "c3c37c555de662b93fa00d8d5cfec50c5ed5f661",
     SYNC / "StateReplay.swift": "4ca07602e961da1d2e80656e3774ddf2678e1d17",
     SYNC / "StateReplay+Messages.swift": "cf1ab15d9cfae956abcb53bf5060db525b32448d",
     SYNC / "SyncResolve.swift": "63af85bc0a2512812655bd460c98986ce90ac3b9",
@@ -42,6 +45,10 @@ CHANGED = (
     SYNC / "UpdateInterpreter+Messages.swift",
     CORE / "TelegramEngine/Wallet/WalletTonConnect.swift",
 )
+MAINTENANCE_CHANGED = (
+    CORE / "Account/Account.swift",
+    CORE / "Account/AccountManager.swift",
+)
 
 
 def read_pinned(source, path):
@@ -54,7 +61,7 @@ def read_pinned(source, path):
 
 def apply_patches(source, work):
     subprocess.run(["git", "init", "-q", str(work)], check=True)
-    for relative in (*CHANGED, POSTBOX / "Postbox.swift"):
+    for relative in (*CHANGED, *MAINTENANCE_CHANGED, POSTBOX / "Postbox.swift"):
         path = work / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(read_pinned(source, relative))
@@ -66,11 +73,15 @@ def apply_patches(source, work):
     subprocess.run([*git, "--check", str(CAPTURE_PATCH)], check=True)
     subprocess.run([*git, str(CAPTURE_PATCH)], check=True)
     subprocess.run([*git, "--reverse", "--check", str(CAPTURE_PATCH)], check=True)
+    subprocess.run([*git, "--check", str(MAINTENANCE_PATCH)], check=True)
+    subprocess.run([*git, str(MAINTENANCE_PATCH)], check=True)
+    subprocess.run([*git, "--reverse", "--check", str(MAINTENANCE_PATCH)], check=True)
     subprocess.run([
         "xcrun", "swiftc", "-frontend", "-parse",
-        *(str(work / path) for path in CHANGED),
+        *(str(work / path) for path in (*CHANGED, *MAINTENANCE_CHANGED)),
         str(work / SYNC / "LocalArchiveCapture.swift"),
         str(work / POSTBOX / "LocalArchiveCaptureSettings.swift"),
+        str(work / CORE / "Account/LocalArchiveMaintenance.swift"),
     ], check=True)
 
 
@@ -85,7 +96,7 @@ def run_preparation_fixture(directory):
     voip = ios / "submodules/TelegramVoip/Package.swift"
     voip.parent.mkdir(parents=True)
     voip.touch()
-    paths = (Path("base.swift"), POSTBOX / "Postbox.swift", SYNC / "StateReplay.swift")
+    paths = (Path("base.swift"), POSTBOX / "Postbox.swift", SYNC / "StateReplay.swift", CORE / "Account/Account.swift")
     for path in paths:
         target = ios / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -96,26 +107,29 @@ def run_preparation_fixture(directory):
         (ios / path).write_text("after\n")
     archive = POSTBOX / "LocalMessageArchive.swift"
     capture = SYNC / "LocalArchiveCapture.swift"
-    for path in (archive, capture):
+    maintenance = CORE / "Account/LocalArchiveMaintenance.swift"
+    for path in (archive, capture, maintenance):
         (ios / path).write_text("new\n")
-    subprocess.run(["git", "-C", str(ios), "add", "-N", str(archive), str(capture)], check=True)
+    subprocess.run(["git", "-C", str(ios), "add", "-N", str(archive), str(capture), str(maintenance)], check=True)
     (scripts / ARCHIVE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[0]), str(paths[1]), str(archive)]))
     (scripts / CAPTURE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[2]), str(capture)]))
+    (scripts / MAINTENANCE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[3]), str(maintenance)]))
     prepare = ["sh", str(scripts / "prepare-telegram-ios.sh")]
     for _ in range(2):
         subprocess.run([*prepare, "--reverse"], check=True)
-    assert not (ios / archive).exists() and not (ios / capture).exists()
+    assert not any((ios / path).exists() for path in (archive, capture, maintenance))
     assert all((ios / path).read_text() == "before\n" for path in paths)
     subprocess.run(["git", "-C", str(ios), "apply", str(scripts / ARCHIVE_PATCH.name)], check=True)
+    subprocess.run(["git", "-C", str(ios), "apply", str(scripts / CAPTURE_PATCH.name)], check=True)
     for _ in range(2):
         subprocess.run(prepare, check=True)
-    assert (ios / archive).exists() and (ios / capture).exists()
+    assert all((ios / path).exists() for path in (archive, capture, maintenance))
     assert all((ios / path).read_text() == "after\n" for path in paths)
     subprocess.run([*prepare, "--reverse"], check=True)
-    (ios / paths[2]).write_text("conflict\n")
+    (ios / paths[3]).write_text("conflict\n")
     failure = subprocess.run(prepare, capture_output=True)
     assert failure.returncode != 0 and not (ios / archive).exists()
-    assert all((ios / path).read_text() == "before\n" for path in paths[:2])
+    assert all((ios / path).read_text() == "before\n" for path in paths[:3])
     print("PASS reversible preparation, existing patch upgrade and preflight")
 
 

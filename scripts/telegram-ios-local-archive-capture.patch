@@ -35,9 +35,7 @@ diff --git a/submodules/TelegramCore/Sources/Account/AccountIntermediateState.sw
 index b305242..bc65f60 100644
 --- a/submodules/TelegramCore/Sources/Account/AccountIntermediateState.swift
 +++ b/submodules/TelegramCore/Sources/Account/AccountIntermediateState.swift
-@@ -90,9 +90,9 @@ enum AccountStateMutationOperation {
-     case AddMessages([StoreMessage], AddMessagesLocation)
-     case AddScheduledMessages([StoreMessage])
+@@ -92,5 +92,5 @@ enum AccountStateMutationOperation {
      case AddQuickReplyMessages([StoreMessage])
 -    case DeleteMessagesWithGlobalIds([Int32])
 -    case DeleteMessages([MessageId])
@@ -46,35 +44,24 @@ index b305242..bc65f60 100644
 +    case DeleteMessages([MessageId], archiveRevision: Int32? = nil)
 +    case EditMessage(MessageId, StoreMessage, archiveRevision: Int32? = nil)
      case UpsertEphemeralReplacement(MessageId, StoreMessage)
-     case DeleteEphemeralMessages(PeerId, [Int32])
-     case UpdateMessagePoll(MediaId, Api.Poll?, Api.PollResults)
-@@ -383,20 +383,20 @@ struct AccountMutableState {
-         self.joinChatWebViewDecisions.append(decision)
-     }
- 
+@@ -386,3 +386,3 @@ struct AccountMutableState {
 -    mutating func deleteMessagesWithGlobalIds(_ globalIds: [Int32]) {
 -        self.addOperation(.DeleteMessagesWithGlobalIds(globalIds))
 +    mutating func deleteMessagesWithGlobalIds(_ globalIds: [Int32], archiveRevision: Int32? = nil) {
 +        self.addOperation(.DeleteMessagesWithGlobalIds(globalIds, archiveRevision: archiveRevision))
      }
-     
+@@ -390,3 +390,3 @@ struct AccountMutableState {
 -    mutating func deleteMessages(_ messageIds: [MessageId]) {
 -        self.addOperation(.DeleteMessages(messageIds))
 +    mutating func deleteMessages(_ messageIds: [MessageId], archiveRevision: Int32? = nil) {
 +        self.addOperation(.DeleteMessages(messageIds, archiveRevision: archiveRevision))
      }
-     
-     mutating func addSentScheduledMessageIds(_ messageIds: [MessageId]) {
-         self.sentScheduledMessageIds.formUnion(messageIds)
-     }
-     
+@@ -398,3 +398,3 @@ struct AccountMutableState {
 -    mutating func editMessage(_ id: MessageId, message: StoreMessage) {
 -        self.addOperation(.EditMessage(id, message))
 +    mutating func editMessage(_ id: MessageId, message: StoreMessage, archiveRevision: Int32? = nil) {
 +        self.addOperation(.EditMessage(id, message, archiveRevision: archiveRevision))
      }
- 
-     mutating func upsertEphemeralReplacement(anchorId: MessageId, message: StoreMessage) {
 diff --git a/submodules/TelegramCore/Sources/State/Sync/LocalArchiveCapture.swift b/submodules/TelegramCore/Sources/State/Sync/LocalArchiveCapture.swift
 new file mode 100644
 index 0000000..7eb22fd
@@ -324,43 +311,26 @@ diff --git a/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swi
 index cf1ab15..2af1b2c 100644
 --- a/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
 +++ b/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
-@@ -273,7 +273,8 @@ extension ReplayContext {
-         deleteEphemeralMessages(transaction: transaction, peerId: peerId, ids: ids)
-     }
-     
+@@ -276,2 +276,3 @@ extension ReplayContext {
 -    func applyDeleteMessagesWithGlobalIds(_ ids: [Int32]) {
 +    func applyDeleteMessagesWithGlobalIds(_ ids: [Int32], archiveRevision: Int32? = nil) {
 +        self.archiveDeletedGlobalMessages(ids, revision: archiveRevision)
          var resourceIds: [MediaResourceId] = []
-         transaction.deleteMessagesWithGlobalIds(ids, forEachMedia: { media in
-             addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
-@@ -284,7 +285,8 @@ extension ReplayContext {
-         deletedMessageIds.append(contentsOf: ids.map { .global($0) })
-     }
-     
+@@ -287,2 +288,3 @@ extension ReplayContext {
 -    func applyDeleteMessages(_ ids: [MessageId]) {
 +    func applyDeleteMessages(_ ids: [MessageId], archiveRevision: Int32? = nil) {
 +        self.archiveDeletedMessages(ids, revision: archiveRevision)
          _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids, manualAddMessageThreadStatsDifference: { id, add, remove in
-             self.addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)
-         })
-@@ -304,7 +306,8 @@ extension ReplayContext {
-         }
-     }
-     
+@@ -307,2 +309,3 @@ extension ReplayContext {
 -    func applyEditMessage(_ id: MessageId, _ message: StoreMessage) {
 +    func applyEditMessage(_ id: MessageId, _ message: StoreMessage, archiveRevision: Int32? = nil) {
 +        self.archiveEditedMessage(id, updated: message, revision: archiveRevision)
          var generatedEvent: (reactionAuthor: Peer, reaction: MessageReaction.Reaction, message: Message, timestamp: Int32)?
-         transaction.updateMessage(id, update: { previousMessage in
-             let peers: [PeerId:Peer] = previousMessage.peers.reduce([:], { current, value in
 diff --git a/submodules/TelegramCore/Sources/State/Sync/StateReplay.swift b/submodules/TelegramCore/Sources/State/Sync/StateReplay.swift
 index 4ca0760..04ce433 100644
 --- a/submodules/TelegramCore/Sources/State/Sync/StateReplay.swift
 +++ b/submodules/TelegramCore/Sources/State/Sync/StateReplay.swift
-@@ -407,16 +407,16 @@ final class ReplayContext {
-                     self.applyUpsertEphemeralReplacement(anchorMessageId, message)
-                 case let .DeleteEphemeralMessages(peerId, ids):
+@@ -409,6 +409,6 @@ final class ReplayContext {
                      self.applyDeleteEphemeralMessages(peerId, ids)
 -                case let .DeleteMessagesWithGlobalIds(ids):
 -                    self.applyDeleteMessagesWithGlobalIds(ids)
@@ -371,83 +341,56 @@ index 4ca0760..04ce433 100644
 +                case let .DeleteMessages(ids, archiveRevision):
 +                    self.applyDeleteMessages(ids, archiveRevision: archiveRevision)
                  case let .UpdateMinAvailableMessage(id):
-                     self.applyUpdateMinAvailableMessage(id)
-                 case let .UpdatePeerChatInclusion(peerId, groupId, changedGroup):
+@@ -417,4 +417,4 @@ final class ReplayContext {
                      self.applyUpdatePeerChatInclusion(peerId, groupId, changedGroup)
 -                case let .EditMessage(id, message):
 -                    self.applyEditMessage(id, message)
 +                case let .EditMessage(id, message, archiveRevision):
 +                    self.applyEditMessage(id, message, archiveRevision: archiveRevision)
                  case let .UpdateMessagePoll(pollId, apiPoll, results):
-                     self.applyUpdateMessagePoll(pollId, apiPoll, results)
-                 case let .UpdateMedia(id, media):
 diff --git a/submodules/TelegramCore/Sources/State/Sync/SyncResolve.swift b/submodules/TelegramCore/Sources/State/Sync/SyncResolve.swift
 index 63af85b..63763ac 100644
 --- a/submodules/TelegramCore/Sources/State/Sync/SyncResolve.swift
 +++ b/submodules/TelegramCore/Sources/State/Sync/SyncResolve.swift
-@@ -718,7 +718,7 @@ private func messagesFromOperations(state: AccountMutableState) -> [StoreMessage
-         switch operation {
-         case let .AddMessages(messagesValue, _):
+@@ -720,3 +720,3 @@ private func messagesFromOperations(state: AccountMutableState) -> [StoreMessage
              messages.append(contentsOf: messagesValue)
 -        case let .EditMessage(_, message):
 +        case let .EditMessage(_, message, _):
-             messages.append(message)
-         case let .UpsertEphemeralReplacement(_, message):
              messages.append(message)
 diff --git a/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Channels.swift b/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Channels.swift
 index bc1b7b5..cb506c0 100644
 --- a/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Channels.swift
 +++ b/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Channels.swift
-@@ -50,7 +50,7 @@ extension UpdateInterpreter {
-             if previousState.pts >= pts {
-                 Logger.shared.log("State", "channel \(peerId) (\((updatedState.peers[peerId] as? TelegramChannel)?.title ?? "nil")) skip old delete update")
+@@ -52,3 +52,3 @@ extension UpdateInterpreter {
              } else if previousState.pts + ptsCount == pts {
 -                updatedState.deleteMessages(messages.map({ MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: $0) }))
 +                updatedState.deleteMessages(messages.map({ MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: $0) }), archiveRevision: pts)
                  updatedState.updateChannelState(peerId, pts: pts)
-             } else {
-                 if channelRecovery.markGap(peerId) {
-@@ -86,7 +86,7 @@ extension UpdateInterpreter {
-                     }
-                     var attributes = message.attributes
+@@ -88,3 +88,3 @@ extension UpdateInterpreter {
                      attributes.append(ChannelMessageStateVersionAttribute(pts: pts))
 -                    updatedState.editMessage(messageId, message: message.withUpdatedAttributes(attributes))
 +                    updatedState.editMessage(messageId, message: message.withUpdatedAttributes(attributes), archiveRevision: pts)
                      updatedState.updateChannelState(peerId, pts: pts)
-                 } else {
-                     if channelRecovery.markGap(peerId) {
 diff --git a/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Messages.swift b/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Messages.swift
 index 24f8b81..81fc0a3 100644
 --- a/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Messages.swift
 +++ b/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Messages.swift
-@@ -17,7 +17,7 @@ extension UpdateInterpreter {
-     }
-     
+@@ -19,3 +19,3 @@ extension UpdateInterpreter {
      mutating func applyDeleteMessages(_ updateDeleteMessagesData: Api.Update.Cons_updateDeleteMessages) {
 -        updatedState.deleteMessagesWithGlobalIds(updateDeleteMessagesData.messages)
 +        updatedState.deleteMessagesWithGlobalIds(updateDeleteMessagesData.messages, archiveRevision: updateDeleteMessagesData.ptsCount > 0 ? updateDeleteMessagesData.pts : nil)
      }
-     
-     mutating func applyPinnedMessages(_ updatePinnedMessagesData: Api.Update.Cons_updatePinnedMessages) {
-@@ -45,7 +45,7 @@ extension UpdateInterpreter {
-                     updatedState.addPreCachedStory(id: id, story: story)
-                 }
+@@ -47,3 +47,3 @@ extension UpdateInterpreter {
              }
 -            updatedState.editMessage(messageId, message: message)
 +            updatedState.editMessage(messageId, message: message, archiveRevision: updateEditMessageData.ptsCount > 0 ? updateEditMessageData.pts : nil)
              for media in message.media {
-                 if let media = media as? TelegramMediaAction {
-                     if case .historyCleared = media.action {
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Wallet/WalletTonConnect.swift b/submodules/TelegramCore/Sources/TelegramEngine/Wallet/WalletTonConnect.swift
 index f07a739..dcdfc8b 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Wallet/WalletTonConnect.swift
 +++ b/submodules/TelegramCore/Sources/TelegramEngine/Wallet/WalletTonConnect.swift
-@@ -388,7 +388,7 @@ func walletTonConnectEvents(operation: AccountStateMutationOperation) -> [Wallet
-         return [event]
-     case let .AddMessages(updatedMessages, _):
+@@ -390,3 +390,3 @@ func walletTonConnectEvents(operation: AccountStateMutationOperation) -> [Wallet
          messages = updatedMessages
 -    case let .EditMessage(_, message):
 +    case let .EditMessage(_, message, _):
          messages = [message]
-     default:
-         return []

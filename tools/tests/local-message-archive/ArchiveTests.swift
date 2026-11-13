@@ -41,6 +41,12 @@ private func transact<T>(_ storage: SqliteValueBox, _ body: (LocalMessageArchive
     return try body(LocalMessageArchive(valueBox: storage, accountId: 84))
 }
 
+private func onArchiveQueue<T>(_ body: () throws -> T) throws -> T {
+    var result: Result<T, Error>?
+    queue.sync { result = Result { try body() } }
+    return try result!.get()
+}
+
 private func run() throws {
     let root = box("primary")
     let rows = [row(1, now - 20), row(1, now - 10, thread: 4), row(2, now - 10, thread: 4, kind: .edit), row(2, now - 10, thread: 4, kind: .edit, revision: 2), row(1, now - 5, peer: two)]
@@ -115,12 +121,76 @@ private func run() throws {
     }
 }
 
+private func checkMaintenance() throws {
+    let accountPeerId = peer(0, 84)
+    let postbox = try onArchiveQueue { Postbox(valueBox: box("scheduled-retention"), queue: queue) }
+    try onArchiveQueue {
+        try transact(postbox.valueBox) { archive in
+            let first = (1 ... 128).map { row(Int32($0)) }
+            let second = (129 ... 260).map { row(Int32($0)) }
+            try archive.append(first, now: now)
+            try archive.append(Array(second.prefix(128)), now: now)
+            try archive.append(Array(second.suffix(4)), now: now)
+            try archive.append([row(261, now + 1)], now: now + 1)
+        }
+    }
+    let pruned = DispatchSemaphore(value: 0)
+    let prune = pruneLocalMessageArchive(postbox: postbox, accountId: accountPeerId.toInt64(), now: now + LocalMessageArchive.retentionSeconds + 1)
+        .start(completed: { pruned.signal() })
+    expect(pruned.wait(timeout: .now() + 5) == .success, "scheduled retention drain completes")
+    prune.dispose()
+    try onArchiveQueue {
+        try transact(postbox.valueBox) { archive in
+            expect(postbox.completedTransactions == 3, "retention commits bounded batches")
+            expect(try archive.page(.account, before: nil, limit: 128, now: now + LocalMessageArchive.retentionSeconds + 1).messages == [row(261, now + 1)], "retention preserves the newest in-window row")
+        }
+    }
+
+    let firstCommit = DispatchSemaphore(value: 0)
+    let releaseCommit = DispatchSemaphore(value: 0)
+    let interrupted = try onArchiveQueue {
+        Postbox(valueBox: box("managed-logout"), queue: queue, afterCommit: { count in
+            if count == 1 {
+                firstCommit.signal()
+                _ = releaseCommit.wait(timeout: .now() + 5)
+            }
+        })
+    }
+    try onArchiveQueue {
+        try transact(interrupted.valueBox) { archive in
+            try archive.append((1 ... 128).map { row(Int32($0)) }, now: now)
+            try archive.append([row(129)], now: now)
+        }
+    }
+    let first = closeLocalMessageArchive(postbox: interrupted, accountPeerId: accountPeerId).start(completed: {
+        preconditionFailure("Disposed logout cleanup must not complete")
+    })
+    expect(firstCommit.wait(timeout: .now() + 5) == .success, "logout commits first close batch")
+    first.dispose()
+    releaseCommit.signal()
+    queue.sync {
+        transact(interrupted.valueBox) { archive in
+            expect(interrupted.completedTransactions == 1 && archive.valueBox.count(LocalMessageArchive.table) == 5, "cancelled logout leaves a closed archive with remaining work")
+            expectError(.closed, "capture cannot reopen interrupted logout") {
+                try archive.append([row(130)], now: now)
+            }
+        }
+    }
+    let reopened = try onArchiveQueue { Postbox(valueBox: box("managed-logout"), queue: queue) }
+    let closed = DispatchSemaphore(value: 0)
+    let resumed = closeLocalMessageArchive(postbox: reopened, accountPeerId: accountPeerId).start(completed: { closed.signal() })
+    expect(closed.wait(timeout: .now() + 5) == .success, "logout resumes from durable close marker")
+    resumed.dispose()
+    queue.sync {
+        expect(reopened.valueBox.count(LocalMessageArchive.table) == 1, "completed logout removes remaining data before continuation")
+    }
+}
+
 @main
 private struct ArchiveTests {
     static func main() throws {
         defer { try? FileManager.default.removeItem(at: directory) }
-        var result: Result<Void, Error>?
-        queue.sync { result = Result { try run() } }
-        try result!.get()
+        try onArchiveQueue(run)
+        try checkMaintenance()
     }
 }

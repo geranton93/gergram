@@ -1,4 +1,5 @@
 import argparse
+import os
 import shutil
 import subprocess
 import tempfile
@@ -42,6 +43,12 @@ def run(pinned, signal_build, directory):
 
     fixture = directory / "fixture"
     fixture.mkdir()
+    maintenance_path = Path("submodules/TelegramCore/Sources/Account/LocalArchiveMaintenance.swift")
+    subprocess.run([
+        "git", "-C", str(directory), "apply", f"--include={maintenance_path}",
+        str(ROOT / "scripts" / "telegram-ios-local-archive-maintenance.patch"),
+    ], check=True)
+    (fixture / maintenance_path.name).write_text((directory / maintenance_path).read_text().replace("import Postbox\n", ""))
     for name in ("ArchiveTests.swift", "Support.swift"):
         shutil.copyfile(FIXTURE / name, fixture / name)
     for name in ("ValueBox.swift", "ValueBoxKey.swift", "SqliteValueBox.swift", "Database.swift"):
@@ -55,8 +62,11 @@ def run(pinned, signal_build, directory):
     (fixture / "PinnedIdentifiers.swift").write_text(peer + message + buffers)
 
     executable = directory / "archive-tests"
+    command = ["xcrun", "swiftc", "-O", "-module-cache-path", str(directory / "cache")]
+    if os.environ.get("GERGRAM_TEST_ASAN") == "1":
+        command.append("-sanitize=address")
     subprocess.run([
-        "xcrun", "swiftc", "-O", "-module-cache-path", str(directory / "cache"),
+        *command,
         "-I", str(signal_build), str(signal_build / "libSwiftSignalKit.a"),
         *map(str, sorted(fixture.glob("*.swift"))), str(archive), "-o", str(executable),
     ], check=True)

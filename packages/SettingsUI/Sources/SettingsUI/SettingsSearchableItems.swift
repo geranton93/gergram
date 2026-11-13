@@ -580,6 +580,12 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(17), title: localizedString("Gergram.Chat.MonospaceFont"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .monospaceFont)
         }),
+        SettingsSearchableItem(id: .appearance(18), title: localizedString("Gergram.Chat.BubbleRadius"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .messageBubbleRadius)
+        }),
+        SettingsSearchableItem(id: .appearance(19), title: localizedString("Gergram.Appearance.AnimateSwitches"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .switchAnimations)
+        }),
     ]
 }
 

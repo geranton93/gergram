@@ -1595,16 +1595,17 @@ public class ChatRowItem: TableRowItem {
         guard let neighbors = bubbleNeighbors else {
             return nil
         }
-        return messageBubbleCorners(incoming: isIncoming, neighbors: neighbors, inset: inset)
+        return messageBubbleCorners(incoming: isIncoming, neighbors: neighbors, inset: inset, radius: messageBubbleRadius)
     }
 
     var hidesMessageBubbleTail = MessageBubbleTailPreferences.shared.isHidden
+    var messageBubbleRadius = MessageBubbleRadiusPreferences.shared.radius
 
     public var bubbleImage:(CGImage, NSEdgeInsets)? {
         guard let neighbors = bubbleNeighbors else {
             return nil
         }
-        return messageBubbleMaskImage(incoming: isIncoming, neighbors: neighbors, showsTail: !hidesMessageBubbleTail)
+        return messageBubbleMaskImage(incoming: isIncoming, neighbors: neighbors, showsTail: !hidesMessageBubbleTail, radius: messageBubbleRadius)
     }
 
     public let downloadSettings: AutomaticMediaDownloadSettings

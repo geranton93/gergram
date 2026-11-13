@@ -1081,6 +1081,7 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
     case addressName(section:Int, name:[UserInfoAddress], viewType: GeneralViewType)
     case verifiedInfo(sectionId: Int, value: PeerVerification?, viewType: GeneralViewType)
     case peerId(section:Int, value: String, label: String, viewType: GeneralViewType)
+    case joinDate(section: Int, value: String, viewType: GeneralViewType)
     case sharedMedia(section:Int, viewType: GeneralViewType)
     case balance(section: Int, stars: String, canSeeStars: Bool, viewType: GeneralViewType)
     case notifications(section:Int, settings: PeerNotificationSettings?, viewType: GeneralViewType)
@@ -1123,6 +1124,7 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
         case let .about(section, text, _): return .about(section: section, text: text, viewType: viewType)
         case let .addressName(section, name, _): return .addressName(section: section, name: name, viewType: viewType)
         case let .peerId(section, value, label, _): return .peerId(section: section, value: value, label: label, viewType: viewType)
+        case let .joinDate(section, value, _): return .joinDate(section: section, value: value, viewType: viewType)
         case let .sharedMedia(section, _): return .sharedMedia(section: section, viewType: viewType)
         case let .balance(section, stars, canSeeStars, _): return .balance(section: section, stars: stars, canSeeStars: canSeeStars, viewType: viewType)
         case let .notifications(section, settings, _): return .notifications(section: section, settings: settings, viewType: viewType)
@@ -1229,6 +1231,11 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             } else {
                 return false
             }
+        case let .joinDate(section, value, viewType):
+            if case .joinDate(section, value, viewType) = entry {
+                return true
+            }
+            return false
         case let .peerId(section, value, label, viewType):
             if case .peerId(section, value, label, viewType) = entry {
                 return true
@@ -1530,6 +1537,8 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return 4
         case .peerId:
             return 5
+        case .joinDate:
+            return 38
         case .groupDescriptionSetup:
             return 6
         case .groupAboutDescription:
@@ -1611,7 +1620,7 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return sectionId
         case let .addressName(sectionId, _, _):
             return sectionId
-        case let .peerId(sectionId, _, _, _):
+        case let .peerId(sectionId, _, _, _), let .joinDate(sectionId, _, _):
             return sectionId
         case let .setTitle(sectionId, _, _):
             return sectionId
@@ -1696,7 +1705,7 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
             return (sectionId * 100000) + stableIndex
         case let .addressName(sectionId, _, _):
             return (sectionId * 100000) + stableIndex
-        case let .peerId(sectionId, _, _, _):
+        case let .peerId(sectionId, _, _, _), let .joinDate(sectionId, _, _):
             return (sectionId * 100000) + stableIndex
         case let .setTitle(sectionId, _, _):
             return (sectionId * 100000) + stableIndex
@@ -1824,6 +1833,10 @@ enum GroupInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
                 arguments.copy(link)
             }, linkInteractions: interactions, qrCode: { control in
                 arguments.openQrStudio(from: control)
+            })
+        case let .joinDate(_, value, viewType):
+            return TextAndLabelItem(initialSize, stableId: stableId.hashValue, label: localizedString("Gergram.Profile.JoinedOn"), copyMenuText: strings().textCopyText, text: value, context: arguments.context, viewType: viewType, canCopy: true, _copyToClipboard: {
+                arguments.copy(value)
             })
         case let .peerId(_, value, label, viewType):
             return  TextAndLabelItem(initialSize, stableId: stableId.hashValue, label: label, copyMenuText: strings().textCopyText, text: value, context: arguments.context, viewType: viewType, canCopy: true, _copyToClipboard: {
@@ -2030,7 +2043,7 @@ enum GroupInfoSection : Int {
 }
 
 
-func groupInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments: PeerInfoArguments<Context>, inputActivities: [PeerId: PeerInputActivity], channelMembers: [RenderedChannelParticipant] = [], mediaTabsData: PeerMediaTabsData, inviteLinksCount: Int32, joinRequestsCount: Int32, availableReactions: AvailableReactions?, revenueState: StarsRevenueStatsContextState?, peerIdFormat: ProfilePeerIdFormat?) -> [PeerInfoEntry] {
+func groupInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments: PeerInfoArguments<Context>, inputActivities: [PeerId: PeerInputActivity], channelMembers: [RenderedChannelParticipant] = [], mediaTabsData: PeerMediaTabsData, inviteLinksCount: Int32, joinRequestsCount: Int32, availableReactions: AvailableReactions?, revenueState: StarsRevenueStatsContextState?, peerIdFormat: ProfilePeerIdFormat?, joinDate: String?) -> [PeerInfoEntry] {
     var entries: [GroupInfoEntry<Context>] = []
     if let group = peerViewMainPeer(view), let arguments = arguments as? GroupInfoArguments<Context>, let state = arguments.state as? GroupInfoState {
         
@@ -2348,6 +2361,9 @@ func groupInfoEntries<Context: AccountContextProtocol>(view: PeerView, arguments
                 aboutBlock.append(GroupInfoEntry<Context>.peerId(section: GroupInfoSection.desc.rawValue, value: peerIdText, label: profilePeerIdLabel(for: group, cachedData: view.cachedData), viewType: .singleItem))
             }
 
+            if let joinDate {
+                aboutBlock.append(.joinDate(section: GroupInfoSection.desc.rawValue, value: joinDate, viewType: .singleItem))
+            }
             applyBlock(aboutBlock)
 
             if let channel = peerViewMainPeer(view) as? TelegramChannel, let communityId = channel.linkedCommunityId {

@@ -550,6 +550,9 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(7), title: localizedString("Gergram.Chat.EditedIndicator"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .editedIndicator)
         }),
+        SettingsSearchableItem(id: .appearance(8), title: localizedString("Gergram.Profile.ShowJoinDate"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .profileJoinDate)
+        }),
     ]
 }
 

@@ -589,46 +589,27 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
     
     entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_custom_chat_wallpapers,
                             data: .init(name: localizedString("Gergram.Chat.HideCustomWallpapers"), color: appearance.presentation.colors.text,
-                                        type: .switchable(hidesCustomChatWallpapers), viewType: .innerItem, action: {
+                                        type: .switchable(hidesCustomChatWallpapers), viewType: .lastItem, action: {
                                             ChatWallpaperVisibilityPreferences.shared.setHidden(!hidesCustomChatWallpapers)
                                         })))
     index += 1
 
-    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_composer_emoji_hover,
-                            data: .init(name: localizedString("Gergram.Composer.OpenEmojiOnHover"), color: appearance.presentation.colors.text,
-                                        type: .switchable(opensComposerEmojiOnHover), viewType: .innerItem, action: {
-                                            ComposerEmojiHoverPreferences.shared.setEnabled(!opensComposerEmojiOnHover)
-                                        })))
-    index += 1
+    func beginSection(_ title: String) {
+        entries.append(.sectionId(sectionId, type: .normal))
+        sectionId += 1
+        entries.append(.desc(sectionId: sectionId, index: index, text: .plain(title), data: .init(viewType: .textTopItem)))
+        index += 1
+    }
 
-    let chatAppearanceOptions = [
-        (_id_switch_animations, "Gergram.Appearance.AnimateSwitches", animatesSwitches, SwitchAnimationPreferences.shared.setEnabled),
-        (_id_fast_share, "Gergram.Chat.HideFastShare", hidesFastShare, ChatAffordancePreferences.shared.setHidesFastShare),
-        (_id_greeting_sticker, "Gergram.Chat.HideGreetingSticker", hidesGreetingSticker, ChatAffordancePreferences.shared.setHidesGreetingSticker),
-        (_id_adaptive_music_cover, "Gergram.Profile.AdaptiveMusicCover", adaptiveMusicCover, ProfileMusicCoverPreferences.shared.setAdaptive),
-        (_id_streamer_mode_menu_bar, "Gergram.Appearance.StreamerModeMenuBar", showsStreamerModeMenuBar, StreamerModeMenuBarPreferences.shared.setVisible),
-        (_id_premium_statuses, "Gergram.Chat.HidePremiumStatuses", hidesPremiumStatuses, PremiumStatusVisibilityPreferences.shared.setHidden),
-        (_id_simple_quotes_and_replies, "Gergram.Chat.SimpleQuotesAndReplies", simplifiesQuotesAndReplies, ChatReplyAppearancePreferences.shared.setSimplified),
-        (_id_message_tails, "Gergram.Chat.HideMessageTails", hidesMessageTails, MessageBubbleTailPreferences.shared.setHidden),
-        (_id_media_spoilers, "Gergram.Chat.RevealMediaSpoilers", revealsMediaSpoilers, ChatMediaSpoilerPreferences.shared.setEnabled)
-    ]
-    for (identifier, key, enabled, update) in chatAppearanceOptions {
+    func addToggle(_ identifier: InputDataIdentifier, _ key: String, _ enabled: Bool, _ viewType: GeneralViewType, _ update: @escaping (Bool) -> Void) {
         entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: identifier,
                                 data: .init(name: localizedString(key), color: appearance.presentation.colors.text,
-                                            type: .switchable(enabled), viewType: .innerItem, action: { update(!enabled) })))
+                                            type: .switchable(enabled), viewType: viewType, action: { update(!enabled) })))
         index += 1
     }
 
-    for kind in ChatReactionVisibilityPreferences.ChatKind.allCases {
-        let hidden = hiddenReactionKinds.contains(kind)
-        entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil,
-                                identifier: InputDataIdentifier("chat-reactions-\(kind.rawValue)"),
-                                data: .init(name: localizedString("Gergram.Chat.HideReactions.\(kind.rawValue)"), color: appearance.presentation.colors.text,
-                                            type: .switchable(hidden), viewType: .innerItem, action: {
-                                                ChatReactionVisibilityPreferences.shared.setHidden(!hidden, for: kind)
-                                            })))
-        index += 1
-    }
+    beginSection(localizedString("Gergram.Appearance.ChatLayout"))
+    addToggle(_id_message_tails, "Gergram.Chat.HideMessageTails", hidesMessageTails, .firstItem, MessageBubbleTailPreferences.shared.setHidden)
 
     let widthTitle: (ChatMessageWidth) -> String = { localizedString("Gergram.Chat.MessageWidth.\($0.rawValue)") }
     let widthOptions = ChatMessageWidth.allCases.map { width in
@@ -684,15 +665,31 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
     }
     entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_edited_indicator,
                             data: .init(name: localizedString("Gergram.Chat.EditedIndicator"), color: appearance.presentation.colors.text,
-                                        type: .contextSelector(editedIndicatorTitle(editedIndicatorStyle), editedIndicatorOptions), viewType: .innerItem)))
+                                        type: .contextSelector(editedIndicatorTitle(editedIndicatorStyle), editedIndicatorOptions), viewType: .lastItem)))
     index += 1
 
-    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_profile_join_date,
-                            data: .init(name: localizedString("Gergram.Profile.ShowJoinDate"), color: appearance.presentation.colors.text,
-                                        type: .switchable(showsProfileJoinDate), viewType: .innerItem, action: {
-        ProfileJoinDatePreferences.shared.setVisible(!showsProfileJoinDate)
-    })))
-    index += 1
+    beginSection(localizedString("Gergram.Appearance.ChatContent"))
+    addToggle(_id_premium_statuses, "Gergram.Chat.HidePremiumStatuses", hidesPremiumStatuses, .firstItem, PremiumStatusVisibilityPreferences.shared.setHidden)
+    addToggle(_id_simple_quotes_and_replies, "Gergram.Chat.SimpleQuotesAndReplies", simplifiesQuotesAndReplies, .innerItem, ChatReplyAppearancePreferences.shared.setSimplified)
+    addToggle(_id_media_spoilers, "Gergram.Chat.RevealMediaSpoilers", revealsMediaSpoilers, .innerItem, ChatMediaSpoilerPreferences.shared.setEnabled)
+    for kind in ChatReactionVisibilityPreferences.ChatKind.allCases {
+        addToggle(.init("chat-reactions-\(kind.rawValue)"), "Gergram.Chat.HideReactions.\(kind.rawValue)", hiddenReactionKinds.contains(kind), kind == .channel ? .lastItem : .innerItem) { hidden in
+            ChatReactionVisibilityPreferences.shared.setHidden(hidden, for: kind)
+        }
+    }
+
+    beginSection(localizedString("Gergram.Appearance.ChatControls"))
+    addToggle(_id_composer_emoji_hover, "Gergram.Composer.OpenEmojiOnHover", opensComposerEmojiOnHover, .firstItem, ComposerEmojiHoverPreferences.shared.setEnabled)
+    addToggle(_id_fast_share, "Gergram.Chat.HideFastShare", hidesFastShare, .innerItem, ChatAffordancePreferences.shared.setHidesFastShare)
+    addToggle(_id_greeting_sticker, "Gergram.Chat.HideGreetingSticker", hidesGreetingSticker, .lastItem, ChatAffordancePreferences.shared.setHidesGreetingSticker)
+
+    beginSection(localizedString("Gergram.Appearance.AppControls"))
+    addToggle(_id_switch_animations, "Gergram.Appearance.AnimateSwitches", animatesSwitches, .firstItem, SwitchAnimationPreferences.shared.setEnabled)
+    addToggle(_id_streamer_mode_menu_bar, "Gergram.Appearance.StreamerModeMenuBar", showsStreamerModeMenuBar, .lastItem, StreamerModeMenuBarPreferences.shared.setVisible)
+
+    beginSection(localizedString("Gergram.Appearance.Profile"))
+    addToggle(_id_adaptive_music_cover, "Gergram.Profile.AdaptiveMusicCover", adaptiveMusicCover, .firstItem, ProfileMusicCoverPreferences.shared.setAdaptive)
+    addToggle(_id_profile_join_date, "Gergram.Profile.ShowJoinDate", showsProfileJoinDate, .innerItem, ProfileJoinDatePreferences.shared.setVisible)
 
     let icon = generateSettingsMenuPeerColorsLabelIcon(peer: state.myPeer, context: arguments.context, isDark: appearance.presentation.colors.isDark)
     

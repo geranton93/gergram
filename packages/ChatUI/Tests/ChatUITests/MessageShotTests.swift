@@ -48,6 +48,44 @@ final class MessageShotTests: XCTestCase {
         XCTAssertEqual(try png("Public secret."), try png("Public hidden."))
     }
 
+    func testReplyExcerptCompactsWhitespaceAndBoundsComposedCharacters() {
+        XCTAssertEqual(MessageShotRenderer.Reply.excerpt(source: "  First\n\tsecond  "), "First second")
+        XCTAssertNil(MessageShotRenderer.Reply.excerpt(source: " \n "))
+        XCTAssertNil(MessageShotRenderer.Reply.excerpt(source: String(repeating: "x", count: 16_001)))
+
+        let prefix = String(repeating: "a", count: 138)
+        XCTAssertEqual(MessageShotRenderer.Reply.excerpt(source: prefix + "💡trailing"), prefix + "…")
+    }
+
+    func testReplyQuoteMatchesTheCurrentUTF16SourceWithoutSubstitutingCopiedText() {
+        let source = "a💡 e\u{0301} secret"
+        XCTAssertEqual(MessageShotRenderer.Reply.excerpt(source: source, quote: "💡", quoteOffset: 1), "💡")
+        XCTAssertNil(MessageShotRenderer.Reply.excerpt(source: source, quote: "💡", quoteOffset: 2))
+        XCTAssertNil(MessageShotRenderer.Reply.excerpt(source: source, quote: "é", quoteOffset: 4))
+        XCTAssertNil(MessageShotRenderer.Reply.excerpt(source: source, quote: "hidden", quoteOffset: 7))
+        XCTAssertNil(MessageShotRenderer.Reply.excerpt(source: source, quote: "secret", quoteOffset: nil))
+        XCTAssertNil(MessageShotRenderer.Reply.excerpt(source: source, quote: "secret", quoteOffset: Int.max))
+    }
+
+    func testReplyAddsInsetAccentAndHeightToTheMessageCard() throws {
+        let reply = MessageShotRenderer.Reply(title: text("Reply to a sender"), excerpt: text("Current source"), accent: .red)
+        let baseline = MessageShotRenderer.Row(header: text("Author"), body: text("Body"), background: .white)
+        let row = MessageShotRenderer.Row(header: baseline.header, body: baseline.body, background: .white, reply: reply)
+        let withoutReply = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(MessageShotRenderer.png(rows: [baseline], background: nil))))
+        let withReply = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: nil))))
+
+        XCTAssertEqual(withReply.pixelsWide, withoutReply.pixelsWide)
+        XCTAssertGreaterThan(withReply.pixelsHigh, withoutReply.pixelsHigh)
+        let accent = (0 ..< withReply.pixelsHigh).compactMap { withReply.colorAt(x: 58, y: $0)?.usingColorSpace(.deviceRGB) }
+        XCTAssertTrue(accent.contains { $0.redComponent > $0.greenComponent + 0.3 && $0.redComponent > $0.blueComponent + 0.3 }, "\(accent.prefix(20))")
+    }
+
+    func testReplyTextCountsTowardExportBudget() {
+        let reply = MessageShotRenderer.Reply(title: text("Author"), excerpt: text(String(repeating: "x", count: 16_000)), accent: .red)
+        let row = MessageShotRenderer.Row(header: text(""), body: text(""), background: .white, reply: reply)
+        XCTAssertNil(MessageShotRenderer.png(rows: [row], background: nil))
+    }
+
     func testTimestampPreferenceDefaultsToVisibleAndPersistsBothValues() throws {
         let suiteName = "MessageShotTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

@@ -7,17 +7,56 @@ enum MessageShotRenderer {
         let thumbnail: CGImage?
     }
 
+    struct Reply {
+        let title: NSAttributedString
+        let excerpt: NSAttributedString
+        let accent: NSColor
+
+        static func excerpt(source: String, quote: String? = nil, quoteOffset: Int? = nil) -> String? {
+            let sourceLength = source.utf16.prefix(16_001).count
+            guard sourceLength <= 16_000 else { return nil }
+
+            let text: String
+            if let quote {
+                let quoteLength = quote.utf16.prefix(sourceLength + 1).count
+                guard let offset = quoteOffset, offset >= 0, quoteLength > 0, quoteLength <= sourceLength,
+                      offset <= sourceLength - quoteLength,
+                      let range = Range(NSRange(location: offset, length: quoteLength), in: source),
+                      source[range].utf16.elementsEqual(quote.utf16) else {
+                    return nil
+                }
+                text = String(source[range])
+            } else {
+                text = source
+            }
+
+            let oneLine = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !oneLine.isEmpty else { return nil }
+            var excerpt = ""
+            var remaining = 139
+            for character in oneLine {
+                let length = character.utf16.count
+                guard length <= remaining else { return excerpt + "…" }
+                excerpt.append(character)
+                remaining -= length
+            }
+            return excerpt
+        }
+    }
+
     struct Row {
         let header: NSAttributedString
         let body: NSAttributedString
         let background: NSColor
+        let reply: Reply?
         let attachments: [Attachment]
         let footer: NSAttributedString?
 
-        init(header: NSAttributedString, body: NSAttributedString, background: NSColor, attachments: [Attachment] = [], footer: NSAttributedString? = nil) {
+        init(header: NSAttributedString, body: NSAttributedString, background: NSColor, reply: Reply? = nil, attachments: [Attachment] = [], footer: NSAttributedString? = nil) {
             self.header = header
             self.body = body
             self.background = background
+            self.reply = reply
             self.attachments = attachments
             self.footer = footer
         }
@@ -72,6 +111,7 @@ enum MessageShotRenderer {
     private enum Part {
         case text(NSAttributedString)
         case image(CGImage)
+        case reply(Reply)
     }
 
     private struct RowLayout {
@@ -131,7 +171,8 @@ enum MessageShotRenderer {
         let textLength = rows.reduce(0) { length, row in
             let labels = row.attachments.reduce(0) { $0 + $1.label.length }
             let separators = max(0, row.attachments.count - (row.body.length == 0 ? 1 : 0))
-            return length + row.header.length + row.body.length + labels + separators + (row.footer?.length ?? 0)
+            let replyLength = row.reply.map { $0.title.length + $0.excerpt.length } ?? 0
+            return length + row.header.length + row.body.length + labels + separators + replyLength + (row.footer?.length ?? 0)
         }
         guard textLength <= 16_000 else { return nil }
 
@@ -140,25 +181,35 @@ enum MessageShotRenderer {
         let padding: CGFloat = 12
         let rowSpacing: CGFloat = 8
         let textSpacing: CGFloat = 4
+        let replyPadding: CGFloat = 8
+        let replySpacing: CGFloat = 2
         let cardWidth = width - 2 * margin
         let textWidth = cardWidth - 2 * padding
         let drawingOptions: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
 
-        func height(of text: NSAttributedString) -> CGFloat {
-            ceil(text.boundingRect(with: NSSize(width: textWidth, height: .greatestFiniteMagnitude), options: drawingOptions).height)
+        func height(of text: NSAttributedString, width: CGFloat) -> CGFloat {
+            ceil(text.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: drawingOptions).height)
+        }
+        let replyTextWidth = textWidth - 2 * replyPadding
+        func replyHeight(_ reply: Reply) -> CGFloat {
+            2 * replyPadding + height(of: reply.title, width: replyTextWidth)
+                + replySpacing + height(of: reply.excerpt, width: replyTextWidth)
         }
 
         func measure(withThumbnails: Bool) -> [RowLayout] {
             rows.map { row in
-                let header = row.header.length == 0 ? 0 : height(of: row.header)
-                var content = parts(for: row, withThumbnails: withThumbnails)
+                let header = row.header.length == 0 ? 0 : height(of: row.header, width: textWidth)
+                var content: [Part] = row.reply.map { [.reply($0)] } ?? []
+                content += parts(for: row, withThumbnails: withThumbnails)
                 if let footer = row.footer, footer.length > 0 {
                     content.append(.text(footer))
                 }
                 let parts = content.map { part -> (Part, CGSize) in
                     switch part {
                     case let .text(text):
-                        return (part, CGSize(width: textWidth, height: height(of: text)))
+                        return (part, CGSize(width: textWidth, height: height(of: text, width: textWidth)))
+                    case let .reply(reply):
+                        return (part, CGSize(width: textWidth, height: replyHeight(reply)))
                     case let .image(image):
                         let scale = min(0.5, textWidth / CGFloat(image.width), 160 / CGFloat(image.height))
                         return (part, CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale))
@@ -215,6 +266,17 @@ enum MessageShotRenderer {
                 switch part {
                 case let .text(text):
                     text.draw(with: rect, options: drawingOptions)
+                case let .reply(reply):
+                    reply.accent.withAlphaComponent(0.12).setFill()
+                    NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+                    reply.accent.setFill()
+                    NSBezierPath(roundedRect: NSRect(x: rect.minX, y: rect.minY, width: 3, height: rect.height), xRadius: 1, yRadius: 1).fill()
+                    let titleHeight = height(of: reply.title, width: replyTextWidth)
+                    let x = rect.minX + replyPadding
+                    let y = rect.minY + replyPadding
+                    reply.title.draw(with: NSRect(x: x, y: y, width: replyTextWidth, height: titleHeight), options: drawingOptions)
+                    let excerptY = y + titleHeight + replySpacing
+                    reply.excerpt.draw(with: NSRect(x: x, y: excerptY, width: replyTextWidth, height: rect.maxY - replyPadding - excerptY), options: drawingOptions)
                 case let .image(image):
                     NSImage(cgImage: image, size: size).draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
                 }

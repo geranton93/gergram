@@ -2,6 +2,7 @@ import AppKit
 import ChatModeTypes
 import ColorPalette
 import DateUtils
+import InAppSettings
 import LocalAnimations
 import Localization
 import MessageUtils
@@ -16,7 +17,19 @@ import TGUIKit
 import UniformTypeIdentifiers
 
 enum ChatMessageShotAction {
-    private typealias Snapshot = (messages: [Message], cachedData: CachedPeerData?)
+    private struct Snapshot {
+        let messages: [Message]
+        let replyTargets: [MessageId: Message]
+        let cachedData: CachedPeerData?
+    }
+
+    private struct ReplyExcerpt: Equatable {
+        let target: MessageId
+        let version: UInt32
+        let title: String
+        let text: String
+    }
+
     private typealias PreparedShot = (snapshot: Snapshot, previews: [MessageId: Preview])
 
     private struct PreviewRequest {
@@ -204,6 +217,56 @@ enum ChatMessageShotAction {
         return previews
     }
 
+    private static func localReplyTarget(for message: Message, threadId: Int64?) -> ReplyMessageAttribute? {
+        guard let reply = message.replyAttribute, reply.messageId != message.id,
+              reply.messageId.peerId == message.id.peerId, reply.messageId.namespace == Namespaces.Message.Cloud,
+              reply.messageId.id > 0, reply.innerSubject == nil,
+              reply.isQuote || !ChatRowItem.hidesReply(to: reply, in: message, threadId: threadId) else {
+            return nil
+        }
+        return reply
+    }
+
+    private static func containsTextSpoilers(_ entities: [MessageTextEntity]) -> Bool {
+        entities.contains { entity in
+            if case .Spoiler = entity.type { return true }
+            return false
+        }
+    }
+
+    private static func replyExcerpts(in snapshot: Snapshot, interaction: ChatInteraction) -> [MessageId: ReplyExcerpt] {
+        guard !snapshot.replyTargets.isEmpty, !BlockedSenderVisibilitySettings.isEnabled else { return [:] }
+        let visibility = ChatLocalMessageVisibility.get(interaction.interactionContext.account)
+        var excerpts: [MessageId: ReplyExcerpt] = [:]
+        for message in snapshot.messages {
+            guard let reply = localReplyTarget(for: message, threadId: interaction.chatLocation.threadId),
+                  let target = snapshot.replyTargets[reply.messageId], !visibility.isHidden(target),
+                  supportsMessage(target, interaction: interaction, cachedData: snapshot.cachedData),
+                  supportsPreview(target, interaction: interaction),
+                  !target.attributes.contains(where: { attribute in
+                      guard let attribute = attribute as? TextEntitiesMessageAttribute else { return false }
+                      return containsTextSpoilers(attribute.entities)
+                  }) else {
+                continue
+            }
+            let quote: EngineMessageReplyQuote?
+            if reply.isQuote {
+                guard let flatQuote = reply.quote, flatQuote.richText == nil, !containsTextSpoilers(flatQuote.entities) else { continue }
+                quote = flatQuote
+            } else {
+                quote = nil
+            }
+            guard let author = target.effectiveAuthor?.displayTitle,
+                  !author.isEmpty, author.utf16.prefix(257).count <= 256,
+                  let excerpt = MessageShotRenderer.Reply.excerpt(source: target.text, quote: quote?.text, quoteOffset: quote?.offset) else {
+                continue
+            }
+            let title = quote == nil ? strings().chatReplyMessagePanelTitle(author) : strings().chatReplyQuotePanelTitle(author)
+            excerpts[message.id] = ReplyExcerpt(target: target.id, version: target.stableVersion, title: title, text: excerpt)
+        }
+        return excerpts
+    }
+
     private static func supportsSnapshot(_ snapshot: Snapshot, ids: Set<MessageId>, interaction: ChatInteraction) -> Bool {
         Set(snapshot.messages.map(\.id)) == ids && snapshot.messages.allSatisfy {
             supportsMessage($0, interaction: interaction, cachedData: snapshot.cachedData)
@@ -211,19 +274,21 @@ enum ChatMessageShotAction {
     }
 
     private static func export(ids: Set<MessageId>, selection: Set<MessageId>, chatTheme: TelegramPresentationTheme?, interaction: ChatInteraction, destination: Destination) {
-        guard supportsChat(interaction), (interaction.presentation.selectionState?.selectedIds ?? []) == selection else { return }
+        let context = interaction.interactionContext
+        guard (context.isCurrent || context.isExternal), context.window.isVisible, interaction.canAnimateUpdates(),
+              supportsChat(interaction), (interaction.presentation.selectionState?.selectedIds ?? []) == selection else { return }
 
         let options = MessageShotOptions()
         let presentationTheme = chatTheme ?? theme
         let palette = options.theme.palette(current: presentationTheme.colors)
-        let context = interaction.interactionContext
         let location = interaction.chatLocation
         let mode = interaction.mode
         let peerId = location.peerId
         let refreshRequired = peerId.namespace == Namespaces.Peer.CloudUser && peerId != context.peerId
 
         func isCurrent(_ interaction: ChatInteraction) -> Bool {
-            interaction.canAnimateUpdates() && supportsChat(interaction)
+            (context.isCurrent || context.isExternal) && context.window.isVisible
+                && interaction.canAnimateUpdates() && supportsChat(interaction)
                 && interaction.chatLocation == location && interaction.mode == mode
                 && (interaction.presentation.selectionState?.selectedIds ?? []) == selection
         }
@@ -235,13 +300,29 @@ enum ChatMessageShotAction {
                 guard (!refreshRequired || cachedData is CachedUserData), !peerIsRestricted(peer, cachedData: cachedData) else {
                     return nil
                 }
-                return (ids.compactMap { transaction.getMessage($0) }, cachedData)
+                let messages = ids.compactMap { transaction.getMessage($0) }
+                let hasHiddenSenders = transaction.getPreferencesEntry(key: ApplicationSpecificPreferencesKeys.localShadowBannedSenders) != nil
+                let filters = transaction.getPreferencesEntry(key: ApplicationSpecificPreferencesKeys.localMessageFilters)
+                let hasActiveFilters = filters.map { $0.get(LocalMessageFilterPreferences.self)?.isEnabled ?? true } ?? false
+                let hasLocalReplyFilters = hasHiddenSenders || hasActiveFilters
+                var replyTargets: [MessageId: Message] = [:]
+                if !hasLocalReplyFilters {
+                    for message in messages {
+                        if let reply = localReplyTarget(for: message, threadId: location.threadId), replyTargets[reply.messageId] == nil {
+                            replyTargets[reply.messageId] = transaction.getMessage(reply.messageId)
+                        }
+                    }
+                }
+                return Snapshot(messages: messages, replyTargets: replyTargets, cachedData: cachedData)
             }
         }
 
-        func unchanged(_ current: Snapshot, since previous: Snapshot) -> Bool {
-            let versions = Dictionary(uniqueKeysWithValues: previous.messages.map { ($0.id, $0.stableVersion) })
-            return current.messages.count == versions.count && current.messages.allSatisfy { versions[$0.id] == $0.stableVersion }
+        func versions(in snapshot: Snapshot) -> [MessageId: UInt32] {
+            Dictionary(uniqueKeysWithValues: snapshot.messages.map { ($0.id, $0.stableVersion) })
+        }
+
+        func unchanged(_ current: Snapshot, since previous: [MessageId: UInt32]) -> Bool {
+            current.messages.count == previous.count && current.messages.allSatisfy { previous[$0.id] == $0.stableVersion }
         }
 
         let refresh = refreshRequired ? context.engine.peers.fetchAndUpdateCachedPeerData(peerId: peerId) : .single(true)
@@ -257,12 +338,13 @@ enum ChatMessageShotAction {
             guard !requests.isEmpty else { return .single((snapshot, [:])) }
 
             let mediaBox = context.account.postbox.mediaBox
+            let initialVersions = versions(in: snapshot)
             return Signal<[PreviewRequest], NoError>.single(requests)
             |> deliverOn(previewQueue)
             |> map { decodePreviews($0, mediaBox: mediaBox) }
             |> mapToSignal { previews in
                 readMessages() |> map { current -> PreparedShot? in
-                    guard let current, unchanged(current, since: snapshot) else { return nil }
+                    guard let current, unchanged(current, since: initialVersions) else { return nil }
                     return (current, previews)
                 }
             }
@@ -276,32 +358,47 @@ enum ChatMessageShotAction {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotUnavailable"))
                 return
             }
+            let replies = replyExcerpts(in: snapshot, interaction: interaction)
             let canvasBackground = options.showsBackground ? palette.background : nil
             guard snapshot.messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
-                  let png = MessageShotRenderer.png(rows: rows(for: snapshot.messages, previews: previews, interaction: interaction, options: options, palette: palette, fontSize: presentationTheme.fontSize), background: canvasBackground) else {
+                  let png = MessageShotRenderer.png(rows: rows(for: snapshot.messages, replies: replies, previews: previews, interaction: interaction, options: options, palette: palette, fontSize: presentationTheme.fontSize), background: canvasBackground) else {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotRenderFailed"))
                 return
             }
 
+            let renderedVersions = versions(in: snapshot)
+            let previewIds = Set(previews.keys)
+            let validate: () -> Signal<Bool?, NoError> = { [weak interaction] in
+                readMessages()
+                |> deliverOnMainQueue
+                |> map { [weak interaction] current -> Bool? in
+                    guard let interaction, isCurrent(interaction) else { return nil }
+                    guard let current, unchanged(current, since: renderedVersions),
+                          supportsSnapshot(current, ids: ids, interaction: interaction) else { return false }
+                    if !replies.isEmpty {
+                        let currentReplies = replyExcerpts(in: current, interaction: interaction)
+                        guard replies.allSatisfy({ currentReplies[$0.key] == $0.value }) else { return false }
+                    }
+                    return previewIds.isEmpty || current.messages.allSatisfy { !previewIds.contains($0.id) || supportsPreview($0, interaction: interaction) }
+                }
+            }
             switch destination {
             case .clipboard:
-                let item = NSPasteboardItem()
-                guard item.setData(png, forType: .png) else { return }
-                NSPasteboard.general.clearContents()
-                if NSPasteboard.general.writeObjects([item]) {
-                    showModalText(for: context.window, text: strings().contextAlertCopied)
-                }
-            case .file:
-                save(png, in: context.window) { [weak interaction] in
-                    readMessages()
-                    |> deliverOnMainQueue
-                    |> map { [weak interaction] current -> Bool? in
-                        guard let interaction, isCurrent(interaction) else { return nil }
-                        guard let current, unchanged(current, since: snapshot),
-                              supportsSnapshot(current, ids: ids, interaction: interaction) else { return false }
-                        return previews.isEmpty || current.messages.allSatisfy { previews[$0.id] == nil || supportsPreview($0, interaction: interaction) }
+                _ = validate().startStandalone(next: { valid in
+                    guard let valid else { return }
+                    guard valid else {
+                        showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotUnavailable"))
+                        return
                     }
-                }
+                    let item = NSPasteboardItem()
+                    guard item.setData(png, forType: .png) else { return }
+                    NSPasteboard.general.clearContents()
+                    if NSPasteboard.general.writeObjects([item]) {
+                        showModalText(for: context.window, text: strings().contextAlertCopied)
+                    }
+                })
+            case .file:
+                save(png, in: context.window, validate: validate)
             }
         })
     }
@@ -331,7 +428,7 @@ enum ChatMessageShotAction {
         }
     }
 
-    private static func rows(for messages: [Message], previews: [MessageId: Preview], interaction: ChatInteraction, options: MessageShotOptions, palette: ColorPalette, fontSize: CGFloat) -> [MessageShotRenderer.Row] {
+    private static func rows(for messages: [Message], replies: [MessageId: ReplyExcerpt], previews: [MessageId: Preview], interaction: ChatInteraction, options: MessageShotOptions, palette: ColorPalette, fontSize: CGFloat) -> [MessageShotRenderer.Row] {
         let context = interaction.interactionContext
         let colors = TelegramChatColors(palette, true)
         return messages.sorted { $0.index < $1.index }.map { message in
@@ -389,7 +486,14 @@ enum ChatMessageShotAction {
             } else {
                 footer = nil
             }
-            return MessageShotRenderer.Row(header: header, body: text, background: colors.bubbleBackgroundColor(incoming, true), attachments: attachments, footer: footer)
+            let reply = replies[message.id].map { excerpt in
+                MessageShotRenderer.Reply(
+                    title: NSAttributedString(string: excerpt.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: palette.accent]),
+                    excerpt: NSAttributedString(string: excerpt.text, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: colors.textColor(incoming, true)]),
+                    accent: palette.accent
+                )
+            }
+            return MessageShotRenderer.Row(header: header, body: text, background: colors.bubbleBackgroundColor(incoming, true), reply: reply, attachments: attachments, footer: footer)
         }
     }
 }

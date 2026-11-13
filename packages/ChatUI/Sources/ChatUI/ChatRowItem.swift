@@ -29,6 +29,8 @@ import HTMLBubbles
 
 private let forwardKeyString = ":##"
 
+private let chatEditedIndicatorImage = TelegramThemeHooks.shared.image(.iconChatActionEditMessage)
+
 private let chatDateFormatterWithSeconds: DateFormatter = {
     let formatter = DateFormatter()
     formatter.dateStyle = .none
@@ -182,6 +184,8 @@ public class ChatRowItem: TableRowItem {
     public private(set) var replyCount:TextViewLayout?
     public private(set) var postAuthor:TextViewLayout?
     public private(set) var editedLabel:TextViewLayout?
+    private(set) var editedIcon: CGImage?
+    private var announcesEdit = false
     public private(set) var paidMessage:TextViewLayout?
     public private(set) var diceStake:TextViewLayout?
 
@@ -2715,11 +2719,10 @@ public class ChatRowItem: TableRowItem {
             view.showHiddenForwardTooltip()
         }
         
-        let editedAttribute = messages.compactMap({
-            return $0.editedAttribute
-        }).sorted(by: {
-            $0.date < $1.date
-        }).first
+        let editedMessage = messages.compactMap { message in
+            message.editedAttribute.map { (id: message.id, attribute: $0) }
+        }.min { $0.attribute.date < $1.attribute.date }
+        let editedAttribute = editedMessage?.attribute
         
         
         
@@ -2767,34 +2770,43 @@ public class ChatRowItem: TableRowItem {
             }
 
             if editedAttribute != nil || message.id.namespace == Namespaces.Message.Cloud {
-                if isEditMarkVisible || isUnsent, message.id.peerId != context.peerId, let editedAttribute {
-                    
-                    
-                    var string = strings().chatMessageEdited
-                    
+                if isEditMarkVisible || isUnsent, message.id.peerId != context.peerId, let editedMessage {
+                    let editedAttribute = editedMessage.attribute
+                    let style = entry.additionalData(editedMessage.id).editedIndicatorStyle
                     let color = isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? theme.colors.grayText : theme.chat.grayText(isIncoming, object.renderType == .bubble)
                     let font: NSFont = renderType == .bubble ? .normal(.small) : .normal(.short)
+                    var relativeDate: String?
                     if message_primary_edited_date, self.date == nil {
                         let editedDate = Date(timeIntervalSince1970: TimeInterval(editedAttribute.date))
                         let dateFormatter = FastSettings.showMessageTimestampSeconds ? chatDateFormatterWithSeconds : DateSelectorUtil.chatDateFormatter
                         let time: String
                         if Calendar.current.isDateInToday(editedDate) {
-                            string = strings().chatRowEdited("\(strings().timeToday) \(strings().timeAt)")
+                            relativeDate = "\(strings().timeToday) \(strings().timeAt)"
                             time = dateFormatter.string(from: editedDate)
                         } else if Calendar.current.isDateInYesterday(editedDate) {
-                            string = strings().chatRowEdited("\(strings().timeYesterday) \(strings().timeAt)")
+                            relativeDate = "\(strings().timeYesterday) \(strings().timeAt)"
                             time = dateFormatter.string(from: editedDate)
                         } else {
                             time = DateUtils.string(forLastSeen: editedAttribute.date)
                         }
-                        let timeAttr: NSAttributedString = .initialize(string: time, color: color, font: font)
+                        let dateText = style == .text ? time : relativeDate.map { "\($0) \(time)" } ?? time
+                        let timeAttr: NSAttributedString = .initialize(string: dateText, color: color, font: font)
                         self.date = TextViewLayout(timeAttr, maximumNumberOfLines: 1)
                         self.date?.measure(width: .greatestFiniteMagnitude)
                     }
-                                        
-                    let attr: NSAttributedString = .initialize(string: string, color: color, font: font)
-                    editedLabel = TextViewLayout(attr, maximumNumberOfLines: 1)
-                    editedLabel?.measure(width: .greatestFiniteMagnitude)
+
+                    announcesEdit = style != .hidden
+                    switch style {
+                    case .text:
+                        let string = relativeDate.map { strings().chatRowEdited($0) } ?? strings().chatMessageEdited
+                        let attr: NSAttributedString = .initialize(string: string, color: color, font: font)
+                        editedLabel = TextViewLayout(attr, maximumNumberOfLines: 1)
+                        editedLabel?.measure(width: .greatestFiniteMagnitude)
+                    case .icon:
+                        editedIcon = chatEditedIndicatorImage.precomposed(color)
+                    case .hidden:
+                        break
+                    }
                 }
                 
                 
@@ -3912,7 +3924,7 @@ public class ChatRowItem: TableRowItem {
             status = .sent(read: isRead, played: ChatMessageAccessibility.isConsumable(kind) ? (consumed ?? false) : nil)
         }
         let date = ChatMessageAccessibility.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(message.timestamp)))
-        return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: message.author?.displayTitle, announceAuthor: announceAuthor, caption: ChatMessageAccessibility.caption(for: message, kind: kind), date: date, status: status, reply: reply, forward: forward, isSelected: accessibilitySelected, pluralRecipients: announceAuthor)
+        return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: message.author?.displayTitle, announceAuthor: announceAuthor, caption: ChatMessageAccessibility.caption(for: message, kind: kind), date: date, status: status, reply: reply, forward: forward, isSelected: accessibilitySelected, pluralRecipients: announceAuthor, isEdited: announcesEdit)
     }
 
     open var accessibilityKind: ChatMessageAccessibility.Kind {

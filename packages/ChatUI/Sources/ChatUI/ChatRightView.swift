@@ -302,8 +302,9 @@ public class ChatRightView: View, ViewDisplayDelegate {
                 x = rect.maxX
             }
             
-            if let editLabel = item.editedLabel {
-                var rect = size.bounds.focus(editLabel.layoutSize)
+            let editSize = item.editedLabel?.layoutSize ?? item.editedIcon.map { _ in NSSize(width: 14, height: 14) }
+            if let editSize {
+                var rect = size.bounds.focus(editSize)
                 rect.origin.x = x + 2
                 self.edit = rect
                 x = rect.maxX
@@ -490,6 +491,7 @@ public class ChatRightView: View, ViewDisplayDelegate {
     private var postAuthorView: ChatRightTextLayer?
     private var pinView: ChatRightIconLayer?
     private var editView: ChatRightTextLayer?
+    private var editIconView: ChatRightIconLayer?
     private var dateView: ChatRightTextLayer?
     private var failedView: ChatRightIconLayer?
     private weak var item:ChatRowItem?
@@ -813,6 +815,22 @@ public class ChatRightView: View, ViewDisplayDelegate {
                 ChatRightView.removeIcon(view, animated: animated)
             }
         }
+        if let editedIcon = item.editedIcon, let editRect = frames.edit {
+            if self.editIconView == nil {
+                let view = ChatRightView.makeIconLayer(editRect)
+                self.editIconView = view
+                self.contentLayer.addSublayer(view)
+                if animated {
+                    view.animateAlpha(from: 0, to: 1, duration: 0.2)
+                    view.animateScaleCenter(from: 0.1, to: 1, duration: 0.2)
+                }
+            }
+            self.editIconView?.image = editedIcon
+        } else if let view = self.editIconView {
+            self.editIconView = nil
+            ChatRightView.removeIcon(view, animated: animated)
+        }
+
         if let channelViews = item.channelViews, let viewsImageRect = frames.viewsImage, let viewsCountRect = frames.viewsCount {
             if self.viewsCountView == nil {
                 self.viewsCountView = ChatRightView.makeTextLayer(viewsCountRect)
@@ -900,6 +918,9 @@ public class ChatRightView: View, ViewDisplayDelegate {
         if let frame = frames.edit, let view = editView {
             transition.updateFrame(layer: view, frame: frame)
             view.updateDrawLayer()
+        }
+        if let frame = frames.edit, let view = editIconView {
+            transition.updateFrame(layer: view, frame: frame)
         }
         if let frame = frames.state, let view = stateView {
             transition.updateFrame(layer: view, frame: frame)

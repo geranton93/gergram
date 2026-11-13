@@ -247,6 +247,7 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
     case autoNight
     case chatMode
     case accentColor
+    case editedIndicator
     public func isEqual(to other: ItemListItemTag) -> Bool {
         if let other = other as? ThemeSettingsEntryTag, self == other {
             return true
@@ -265,6 +266,8 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
             return .general(_id_theme_auto_night)
         case .chatMode:
             return .general(_id_theme_chat_mode)
+        case .editedIndicator:
+            return .general(_id_edited_indicator)
         case .accentColor:
             return .custom(_id_theme_accent_list)
         }
@@ -339,7 +342,20 @@ private let _id_name_color = InputDataIdentifier("_id_name_color")
 
 private let _id_dock_icon = InputDataIdentifier("_id_dock_icon")
 
-private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
+private let _id_edited_indicator = InputDataIdentifier("_id_edited_indicator")
+
+private func editedIndicatorTitle(_ style: ChatEditedIndicatorStyle) -> String {
+    switch style {
+    case .text:
+        return localizedString("Gergram.Chat.EditedIndicator.Text")
+    case .icon:
+        return localizedString("Gergram.Chat.EditedIndicator.Icon")
+    case .hidden:
+        return localizedString("Gergram.Chat.EditedIndicator.Hidden")
+    }
+}
+
+private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, editedIndicatorStyle: ChatEditedIndicatorStyle, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
     
     var entries:[InputDataEntry] = []
     var sectionId: Int32 = 0
@@ -507,6 +523,16 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
         index += 1
     }
     
+    let editedIndicatorOptions = ChatEditedIndicatorStyle.allCases.map { style in
+        ContextMenuItem(editedIndicatorTitle(style), handler: {
+            ChatEditedIndicatorPreferences.shared.set(style)
+        }, itemImage: style == editedIndicatorStyle ? MenuAnimation.menu_check_selected.value : nil)
+    }
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_edited_indicator,
+                            data: .init(name: localizedString("Gergram.Chat.EditedIndicator"), color: appearance.presentation.colors.text,
+                                        type: .contextSelector(editedIndicatorTitle(editedIndicatorStyle), editedIndicatorOptions), viewType: .innerItem)))
+    index += 1
+
     let icon = generateSettingsMenuPeerColorsLabelIcon(peer: state.myPeer, context: arguments.context, isDark: appearance.presentation.colors.isDark)
     
     entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_name_color, data: InputDataGeneralData(name: strings().appearanceYourNameColor, color: appearance.presentation.colors.text, type: .imageContext(icon, ""), viewType: .lastItem, action: arguments.userNameColor)))
@@ -795,8 +821,8 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
             }
     } |> deliverOnMainQueue
     
-    let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager)) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings in
-        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, arguments: arguments)
+    let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager), ChatEditedIndicatorPreferences.shared.signal) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings, editedIndicatorStyle in
+        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, editedIndicatorStyle: editedIndicatorStyle, arguments: arguments)
     }
     |> map { entries in
          return InputDataSignalValue(entries: entries, animated: true)

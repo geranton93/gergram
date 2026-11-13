@@ -184,19 +184,21 @@ final class PremiumStatusRenderer {
         }
     }
 
-    func set(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, color: NSColor?, isSelected: Bool, isBig: Bool, animated: Bool, playTwice: Bool = true, isLite: Bool, autoupdate: Bool = true) {
+    func set(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, color: NSColor?, isSelected: Bool, isBig: Bool, animated: Bool, playTwice: Bool = true, isLite: Bool, autoupdate: Bool = true, hidesDecorativeStatus: Bool = false) {
         guard let host = self.host else {
             return
         }
 
         self.lite = isLite
         
-        if let size = PremiumStatusControl.controlSize(peer, isBig, left: left) {
+        if let size = PremiumStatusControl.controlSize(peer, isBig, left: left, hidesDecorativeStatus: hidesDecorativeStatus) {
             host.setStatusHostSize(size)
         }
-        host.statusHostLayer?.opacity = color != nil && peer.emojiStatus != nil ? 0.4 : 1
+        let emojiStatus = hidesDecorativeStatus ? nil : peer.emojiStatus
+        let showsPremiumBadge = !hidesDecorativeStatus && peer.isPremium && emojiStatus == nil
+        host.statusHostLayer?.opacity = color != nil && emojiStatus != nil ? 0.4 : 1
 
-        if (peer.isFake || peer.isScam || peer.isPremium || peer.isVerified) && !left, ((peer.isPremium && peer.emojiStatus == nil) || !peer.isPremium || peer.isFake || peer.isScam || peer.isVerified) && !left  {
+        if !left, peer.isVerified || peer.isScam || peer.isFake || showsPremiumBadge {
 
             let current: SimpleLayer
             if let layer = self.imageLayer {
@@ -215,7 +217,7 @@ final class PremiumStatusRenderer {
                 image = isSelected ? theme.icons.scamActive : theme.icons.scam
             } else if peer.isFake {
                 image = isSelected ? theme.icons.fakeActive : theme.icons.fake
-            } else if peer.isPremium {
+            } else if showsPremiumBadge {
                 if isBig {
                     let color = color ?? theme.colors.accent
                     if isSelected {
@@ -336,7 +338,7 @@ final class PremiumStatusRenderer {
             }
         }
         
-        if let status = peer.emojiStatus, !peer.isFake && !peer.isScam, !left {
+        if let status = emojiStatus, !peer.isFake && !peer.isScam, !left {
             let fileId: Int64 = status.fileId
             makeStatus(fileId)
         } else if let status = peer.verificationIconFileId, left {
@@ -352,7 +354,7 @@ final class PremiumStatusRenderer {
             self.statusConfiguration = nil
         }
         
-        if let status = peer.emojiStatus, case let .starGift(_, _, _, _, _, innerColor, _, _, _) = status.content, !left {
+        if let status = emojiStatus, case let .starGift(_, _, _, _, _, innerColor, _, _, _) = status.content, !left {
             let starsLayer: StarsEffectLayer
             if let current = self.starsLayer {
                 starsLayer = current
@@ -381,7 +383,7 @@ final class PremiumStatusRenderer {
         host.statusDidUpdate()
         
         self.peerObservation.update(peer: peer, account: account, enabled: autoupdate) { [weak self] updated in
-            self?.set(updated, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: isLite, autoupdate: autoupdate)
+            self?.set(updated, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: isLite, autoupdate: autoupdate, hidesDecorativeStatus: hidesDecorativeStatus)
         }
     }
 
@@ -439,8 +441,8 @@ public final class PremiumStatusControl : Control, PremiumStatusRenderHost {
         renderer.layout()
     }
     
-    public func set(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, color: NSColor?, isSelected: Bool, isBig: Bool, animated: Bool, playTwice: Bool = true, isLite: Bool, autoupdate: Bool = true) {
-        renderer.set(peer, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: isLite, autoupdate: autoupdate)
+    public func set(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, color: NSColor?, isSelected: Bool, isBig: Bool, animated: Bool, playTwice: Bool = true, isLite: Bool, autoupdate: Bool = true, hidesDecorativeStatus: Bool = false) {
+        renderer.set(peer, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: isLite, autoupdate: autoupdate, hidesDecorativeStatus: hidesDecorativeStatus)
     }
     
     @objc public func updateAnimatableContent() -> Void {
@@ -476,32 +478,31 @@ public final class PremiumStatusControl : Control, PremiumStatusRenderHost {
         animatableContentObserver?.update(for: self, target: self, selector: #selector(updateAnimatableContent), options: [.contentBounds, .documentFrame, .ownFrame])
     }
     
-    public static func control(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, isSelected: Bool, isBig: Bool = false, playTwice: Bool = false, color: NSColor? = nil, cached: PremiumStatusControl?, animated: Bool, autoupdate: Bool = true) -> PremiumStatusControl? {
-        var current: PremiumStatusControl? = nil
-        if (peer.isVerified || peer.isScam || peer.isFake || peer.isPremium || peer.emojiStatus != nil) && !left || (left && peer.verificationIconFileId != nil) {
-            current = cached ?? PremiumStatusControl(frame: .zero)
-        }
-                
-        current?.set(peer, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: TelegramUtilsHooks.shared.isLite(.emoji), autoupdate: autoupdate)
+    public static func control(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, isSelected: Bool, isBig: Bool = false, playTwice: Bool = false, color: NSColor? = nil, cached: PremiumStatusControl?, animated: Bool, autoupdate: Bool = true, hidesDecorativeStatus: Bool = false) -> PremiumStatusControl? {
+        let showsControl = hasControl(peer, left: left, hidesDecorativeStatus: hidesDecorativeStatus)
+        let current = showsControl ? cached ?? PremiumStatusControl(frame: .zero) : nil
+        current?.set(peer, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: TelegramUtilsHooks.shared.isLite(.emoji), autoupdate: autoupdate, hidesDecorativeStatus: hidesDecorativeStatus)
         return current
     }
-    
-    public static func hasControl(_ peer: Peer, left: Bool) -> Bool {
-        return (peer.isVerified || peer.isScam || peer.isFake || peer.isPremium || peer.emojiStatus != nil) && !left || (left && peer.verificationIconFileId != nil)
-    }
-    public static func controlSize(_ peer: Peer, _ isBig: Bool, left: Bool) -> NSSize? {
-        if hasControl(peer, left: left) {
-            var addition: NSSize = .zero
-            if peer.isScam || peer.isFake {
-                addition.width += 20
-            }
-            if peer.isVerified && peer.emojiStatus != nil, !left {
-                addition.width += 18
-            }
-            return isBig ? NSMakeSize(20 + addition.width, 20 + addition.height) : NSMakeSize(16 + addition.width, 16 + addition.height)
-        } else {
-            return nil
+
+    public static func hasControl(_ peer: Peer, left: Bool, hidesDecorativeStatus: Bool = false) -> Bool {
+        if left {
+            return peer.verificationIconFileId != nil
         }
+        return peer.isVerified || peer.isScam || peer.isFake
+            || (!hidesDecorativeStatus && (peer.isPremium || peer.emojiStatus != nil))
+    }
+
+    public static func controlSize(_ peer: Peer, _ isBig: Bool, left: Bool, hidesDecorativeStatus: Bool = false) -> NSSize? {
+        guard hasControl(peer, left: left, hidesDecorativeStatus: hidesDecorativeStatus) else { return nil }
+        var addition: NSSize = .zero
+        if peer.isScam || peer.isFake {
+            addition.width += 20
+        }
+        if !left, !hidesDecorativeStatus, peer.isVerified && peer.emojiStatus != nil {
+            addition.width += 18
+        }
+        return isBig ? NSMakeSize(20 + addition.width, 20 + addition.height) : NSMakeSize(16 + addition.width, 16 + addition.height)
     }
 }
 
@@ -573,8 +574,8 @@ public final class PremiumStatusLayer: SimpleLayer, PremiumStatusRenderHost {
         updatePlayback()
     }
 
-    public func set(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, color: NSColor?, isSelected: Bool, isBig: Bool, animated: Bool, playTwice: Bool = true, isLite: Bool, autoupdate: Bool = true) {
-        renderer.set(peer, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: isLite, autoupdate: autoupdate)
+    public func set(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, color: NSColor?, isSelected: Bool, isBig: Bool, animated: Bool, playTwice: Bool = true, isLite: Bool, autoupdate: Bool = true, hidesDecorativeStatus: Bool = false) {
+        renderer.set(peer, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: isLite, autoupdate: autoupdate, hidesDecorativeStatus: hidesDecorativeStatus)
     }
 
     @objc public func updatePlayback() {
@@ -594,12 +595,12 @@ public final class PremiumStatusLayer: SimpleLayer, PremiumStatusRenderHost {
         animatableContentObserver?.update(for: view, target: self, selector: #selector(updatePlayback), options: [.contentBounds, .documentFrame, .ownFrame])
     }
 
-    public static func layer(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, isSelected: Bool, isBig: Bool = false, playTwice: Bool = false, color: NSColor? = nil, cached: PremiumStatusLayer?, animated: Bool, autoupdate: Bool = true) -> PremiumStatusLayer? {
-        guard PremiumStatusControl.hasControl(peer, left: left) else {
+    public static func layer(_ peer: Peer, account: Account, inlinePacksContext: InlineStickersContext?, left: Bool, isSelected: Bool, isBig: Bool = false, playTwice: Bool = false, color: NSColor? = nil, cached: PremiumStatusLayer?, animated: Bool, autoupdate: Bool = true, hidesDecorativeStatus: Bool = false) -> PremiumStatusLayer? {
+        guard PremiumStatusControl.hasControl(peer, left: left, hidesDecorativeStatus: hidesDecorativeStatus) else {
             return nil
         }
         let current = cached ?? PremiumStatusLayer()
-        current.set(peer, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: TelegramUtilsHooks.shared.isLite(.emoji), autoupdate: autoupdate)
+        current.set(peer, account: account, inlinePacksContext: inlinePacksContext, left: left, color: color, isSelected: isSelected, isBig: isBig, animated: animated, playTwice: playTwice, isLite: TelegramUtilsHooks.shared.isLite(.emoji), autoupdate: autoupdate, hidesDecorativeStatus: hidesDecorativeStatus)
         return current
     }
 }

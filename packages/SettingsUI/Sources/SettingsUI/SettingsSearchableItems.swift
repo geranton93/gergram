@@ -559,6 +559,15 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(10), title: localizedString("Gergram.Composer.OpenEmojiOnHover"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .composerEmojiHover)
         }),
+        SettingsSearchableItem(id: .appearance(13), title: localizedString("Gergram.Chat.SimpleQuotesAndReplies"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .simpleQuotesAndReplies)
+        }),
+        SettingsSearchableItem(id: .appearance(12), title: localizedString("Gergram.Chat.HidePremiumStatuses"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .premiumStatuses)
+        }),
+        SettingsSearchableItem(id: .appearance(11), title: localizedString("Gergram.Appearance.StreamerModeMenuBar"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .streamerModeMenuBar)
+        }),
     ]
 }
 

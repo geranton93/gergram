@@ -1860,7 +1860,10 @@ public class ChatRowItem: TableRowItem {
     
     private var _reactionsLayout: ChatReactionsLayout?
     private var hasNoReactionsLayout: Bool = false
+    var hidesMessageReactions = false
+
     public var reactionsLayout: ChatReactionsLayout? {
+        guard !hidesMessageReactions else { return nil }
         if let value = _reactionsLayout {
             return value
         } else if hasNoReactionsLayout {
@@ -2826,7 +2829,20 @@ public class ChatRowItem: TableRowItem {
                 let formatterEdited = DateSelectorUtil.chatFullDateFormatter
                 fullDate = "\(fullDate) (\(formatterEdited.string(from: Date(timeIntervalSince1970: TimeInterval(forwardInfo.date)))))"
             }
-            let replyPresentation = { [self] in ChatAccessoryPresentation(background: hasBubble ? theme.chat.backgroundColor(isIncoming, object.renderType == .bubble) : isBubbled ?  theme.colors.grayForeground : theme.colors.background, colors: theme.chat.replyTitle(self), enabledText: theme.chat.replyText(self), disabledText: theme.chat.replyDisabledText(self), quoteIcon: theme.chat.replyQuote(self), pattern: theme.chat.replyPattern(self), giftEmojiFileId: theme.chat.replyGiftEmojiId(self), app: theme) }
+            let simplifiesReplies = ChatReplyAppearancePreferences.shared.isSimplified
+            let replyPresentation = { [self] in
+                ChatAccessoryPresentation(
+                    background: hasBubble ? theme.chat.backgroundColor(isIncoming, object.renderType == .bubble) : isBubbled ? theme.colors.grayForeground : theme.colors.background,
+                    colors: theme.chat.replyTitle(self),
+                    enabledText: theme.chat.replyText(self),
+                    disabledText: theme.chat.replyDisabledText(self),
+                    quoteIcon: theme.chat.replyQuote(self),
+                    pattern: simplifiesReplies ? nil : theme.chat.replyPattern(self),
+                    giftEmojiFileId: simplifiesReplies ? nil : theme.chat.replyGiftEmojiId(self),
+                    app: theme,
+                    fillsReplyBackground: !simplifiesReplies
+                )
+            }
 
             let referencesPending = context.account.viewTracker.pendingMessageReferences.hasLoadingReferences(messageId: message.id)
             for attribute in message.attributes {
@@ -3445,8 +3461,14 @@ public class ChatRowItem: TableRowItem {
         return max(nameWidth, forwardWidth, replyWidth, topicReplyWidth, badgeWidth)//min(max(max(nameWidth, forwardWidth), replyWidth), contentSize.width)
     }
     
+    private var hidesDecorativeAuthorStatus = PremiumStatusVisibilityPreferences.shared.isHidden
+
+    func setHidesDecorativeAuthorStatus(_ hidden: Bool) {
+        hidesDecorativeAuthorStatus = hidden
+    }
+
     public var hasStatus: Bool {
-        if let peer = self.peer, let message = self.message, PremiumStatusControl.hasControl(peer, left: false) {
+        if let peer = self.peer, let message = self.message, PremiumStatusControl.hasControl(peer, left: false, hidesDecorativeStatus: hidesDecorativeAuthorStatus) {
             if authorText != nil, let peer = message.peers[message.id.peerId] {
                 if peer.isGroup || peer.isSupergroup || peer.isGigagroup {
                     return true
@@ -3457,7 +3479,7 @@ public class ChatRowItem: TableRowItem {
     }
     
     public var statusSize: CGFloat {
-        if let peer = self.peer, hasStatus, let controlSize = PremiumStatusControl.controlSize(peer, false, left: false) {
+        if let peer = self.peer, hasStatus, let controlSize = PremiumStatusControl.controlSize(peer, false, left: false, hidesDecorativeStatus: hidesDecorativeAuthorStatus) {
             return controlSize.width
         }
         return 0
@@ -3472,7 +3494,7 @@ public class ChatRowItem: TableRowItem {
     public func statusLayer(_ cached: PremiumStatusLayer?, animated: Bool) -> PremiumStatusLayer? {
         if let peer = peer, let attr = authorText?.attributedString, !attr.string.isEmpty, hasStatus {
             if let color = attr.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor {
-                return PremiumStatusLayer.layer(peer, account: context.account, inlinePacksContext: context.inlinePacksContext, left: false, isSelected: false, color: color, cached: cached, animated: animated)
+                return PremiumStatusLayer.layer(peer, account: context.account, inlinePacksContext: context.inlinePacksContext, left: false, isSelected: false, color: color, cached: cached, animated: animated, hidesDecorativeStatus: hidesDecorativeAuthorStatus)
             }
         }
         return nil
@@ -3481,7 +3503,7 @@ public class ChatRowItem: TableRowItem {
     public func status(_ cached: PremiumStatusControl?, animated: Bool) -> PremiumStatusControl? {
         if let peer = peer, let attr = authorText?.attributedString, !attr.string.isEmpty, hasStatus {
             if let color = attr.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor {
-                return PremiumStatusControl.control(peer, account: context.account, inlinePacksContext: context.inlinePacksContext, left: false, isSelected: false, color: color, cached: cached, animated: animated)
+                return PremiumStatusControl.control(peer, account: context.account, inlinePacksContext: context.inlinePacksContext, left: false, isSelected: false, color: color, cached: cached, animated: animated, hidesDecorativeStatus: hidesDecorativeAuthorStatus)
             }
         }
         return nil

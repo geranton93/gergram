@@ -201,12 +201,14 @@ public final class TextViewBlockQuote {
     public var frame: CGRect
     public var colors: PeerNameColors.Colors
     public var isCode: Bool
+    public let fillsBackground: Bool
     public var header: (TextNodeLayout, TextNode)?
-    init(frame: CGRect, range: NSRange, colors: PeerNameColors.Colors, isCode: Bool, header: (TextNodeLayout, TextNode)?) {
+    init(frame: CGRect, range: NSRange, colors: PeerNameColors.Colors, isCode: Bool, header: (TextNodeLayout, TextNode)?, fillsBackground: Bool) {
         self.frame = frame
         self.range = range
         self.colors = colors
         self.isCode = isCode
+        self.fillsBackground = fillsBackground
         self.header = header
     }
     
@@ -227,13 +229,15 @@ public final class TextViewBlockQuoteData: NSObject {
     public let isCode: Bool
     public let header: (TextNodeLayout, TextNode)?
     public let collapsable: Bool
-    public init(id: Int, colors: PeerNameColors.Colors, isCode: Bool = false, space: CGFloat = 4, header: (TextNodeLayout, TextNode)? = nil, collapsable: Bool = false) {
+    public let fillsBackground: Bool
+    public init(id: Int, colors: PeerNameColors.Colors, isCode: Bool = false, space: CGFloat = 4, header: (TextNodeLayout, TextNode)? = nil, collapsable: Bool = false, fillsBackground: Bool = true) {
         self.id = id
         self.colors = colors
         self.isCode = isCode
         self.space = space
         self.header = header
         self.collapsable = collapsable
+        self.fillsBackground = fillsBackground
         super.init()
     }
     
@@ -270,7 +274,7 @@ public final class TextViewBlockQuoteData: NSObject {
         if self.space != other.space {
             return false
         }
-        if self.collapsable != other.collapsable {
+        if self.collapsable != other.collapsable || self.fillsBackground != other.fillsBackground {
             return false
         }
         switch (self.header, other.header) {
@@ -293,6 +297,7 @@ public final class TextViewBlockQuoteData: NSObject {
         hasher.combine(space)
         hasher.combine(isCode)
         hasher.combine(collapsable)
+        hasher.combine(fillsBackground)
         if let header {
             hasher.combine(ObjectIdentifier(header.0))
             hasher.combine(ObjectIdentifier(header.1))
@@ -1543,7 +1548,7 @@ public final class TextViewLayout : Equatable {
                             frame.origin.y -= blockQuote.headerInset
                             frame.size.height += blockQuote.headerInset
                         }
-                        blockQuotes.append(.init(frame: frame, range: NSMakeRange(lineRange.location, lineRange.length), colors: blockQuote.colors, isCode: blockQuote.isCode, header: blockQuote.header))
+                        blockQuotes.append(.init(frame: frame, range: NSMakeRange(lineRange.location, lineRange.length), colors: blockQuote.colors, isCode: blockQuote.isCode, header: blockQuote.header, fillsBackground: blockQuote.fillsBackground))
                     }
 
                     if needsRunDecorations {
@@ -2685,12 +2690,15 @@ private func drawTextViewContent(_ layout: TextViewLayout?, in ctx: CGContext, s
                 let secondaryTintColor = blockQuote.colors.secondary
                 let tertiaryTintColor = blockQuote.colors.tertiary
 
-                if blockAreaIsCleared {
-                    fillBlockBackgroundOnClearedArea(ctx, frame: blockFrame, radius: radius, color: blockColor.withAlphaComponent(blockQuote.isCode ? 0.25 : 0.1).cgColor)
-                } else {
-                    ctx.setFillColor(blockColor.withAlphaComponent(blockQuote.isCode ? 0.25 : 0.1).cgColor)
-                    ctx.addPath(CGPath(roundedRect: blockFrame, cornerWidth: radius, cornerHeight: radius, transform: nil))
-                    ctx.fillPath()
+                if blockQuote.fillsBackground {
+                    let fillColor = blockColor.withAlphaComponent(blockQuote.isCode ? 0.25 : 0.1).cgColor
+                    if blockAreaIsCleared {
+                        fillBlockBackgroundOnClearedArea(ctx, frame: blockFrame, radius: radius, color: fillColor)
+                    } else {
+                        ctx.setFillColor(fillColor)
+                        ctx.addPath(CGPath(roundedRect: blockFrame, cornerWidth: radius, cornerHeight: radius, transform: nil))
+                        ctx.fillPath()
+                    }
                 }
 
                 ctx.setFillColor(tintColor.cgColor)

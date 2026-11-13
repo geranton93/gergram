@@ -208,7 +208,8 @@ public class ChatInputActionsView: View, Notifable {
 
     private func addHoverObserver() {
         entertaiments.set(handler: { [weak self] _ in
-            guard let self, !ChatInputUIHooks.shared.isEntertainmentSidebarVisible(self.window) else { return }
+            guard let self, ComposerEmojiHoverPreferences.shared.isEnabled,
+                  !ChatInputUIHooks.shared.isEntertainmentSidebarVisible(self.window) else { return }
             self.showEntertainment()
         }, for: .LongOver)
     }

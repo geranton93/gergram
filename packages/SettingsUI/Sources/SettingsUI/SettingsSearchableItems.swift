@@ -556,6 +556,9 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(9), title: localizedString("Gergram.Chat.HideCustomWallpapers"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .customChatWallpapers)
         }),
+        SettingsSearchableItem(id: .appearance(10), title: localizedString("Gergram.Composer.OpenEmojiOnHover"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .composerEmojiHover)
+        }),
     ]
 }
 

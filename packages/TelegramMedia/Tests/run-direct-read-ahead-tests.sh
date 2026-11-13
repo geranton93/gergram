@@ -6,7 +6,7 @@ fixture=$(mktemp -d "${TMPDIR:-/tmp}/gergram-direct-read-ahead.XXXXXX")
 trap 'rm -rf "$fixture"' EXIT
 
 mkdir -p "$fixture/Sources/TelegramMedia" "$fixture/Tests/TelegramMediaTests"
-for component in DirectMediaReadAhead DirectMediaReadWaiter; do
+for component in DirectMediaReadAhead DirectMediaReadLifecycle DirectMediaReadWaiter; do
     ln -s "$package_dir/Sources/$component.swift" "$fixture/Sources/TelegramMedia/$component.swift"
     ln -s "$package_dir/Tests/TelegramMediaTests/${component}Tests.swift" "$fixture/Tests/TelegramMediaTests/${component}Tests.swift"
 done

@@ -8,6 +8,18 @@ import SwiftSignalKit
 @testable import TelegramMedia
 
 final class VideoPlaybackTests: XCTestCase {
+    private final class WorkerLifetime {
+        let released: Atomic<Bool>
+
+        init(released: Atomic<Bool>) {
+            self.released = released
+        }
+
+        deinit {
+            let _ = self.released.swap(true)
+        }
+    }
+
     private static let initializeTempBox: Void = {
         TempBox.initializeShared(basePath: NSTemporaryDirectory() + "VideoPlaybackTests-" + UUID().uuidString, processType: "tests", launchSpecificId: Int64.random(in: 0 ... Int64.max))
     }()
@@ -110,11 +122,11 @@ final class VideoPlaybackTests: XCTestCase {
             let lookahead = FFMpegLookahead(
                 seekToTimestamp: 0.0, lookaheadDuration: 10.0,
                 updateState: { value in let _ = state.swap(value) },
-                fetchInRange: { _ in return EmptyDisposable },
-                getDataInRange: { range, completion in
+                fetchInRange: { _, _ in return EmptyDisposable },
+                getDataInRange: { range, _, waiter in
                     let start = min(data.count, max(0, Int(range.lowerBound)))
                     let end = min(data.count, max(start, Int(range.upperBound)))
-                    completion(data.subdata(in: start ..< end))
+                    waiter.receive(data.subdata(in: start ..< end))
                     return EmptyDisposable
                 },
                 isDataCachedInRange: { _ in return true }, size: Int64(data.count)
@@ -180,12 +192,12 @@ final class VideoPlaybackTests: XCTestCase {
         let lookahead = FFMpegLookahead(
             seekToTimestamp: 0.0, lookaheadDuration: 10.0,
             updateState: { value in let _ = state.swap(value) },
-            fetchInRange: { _ in return EmptyDisposable },
-            getDataInRange: { range, completion in
+            fetchInRange: { _, _ in return EmptyDisposable },
+            getDataInRange: { range, _, waiter in
                 let deliver = {
                     let start = min(data.count, max(0, Int(range.lowerBound)))
                     let end = min(data.count, max(start, Int(range.upperBound)))
-                    completion(data.subdata(in: start ..< end))
+                    waiter.receive(data.subdata(in: start ..< end))
                 }
                 if available.with({ $0 }) {
                     deliver()
@@ -206,6 +218,138 @@ final class VideoPlaybackTests: XCTestCase {
         XCTAssertNotNil(state.with { $0?.video })
         XCTAssertTrue(state.with { $0?.isEnded == true })
         withExtendedLifetime(lookahead) {}
+    }
+
+    @objc func testLookaheadReleasesTheRangeBeforeReaderTeardown() throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: fixture("av1")))
+        let state = Atomic<FFMpegLookahead.State?>(value: nil)
+        let rangeReleased = Atomic(value: false)
+        let lookahead = FFMpegLookahead(
+            seekToTimestamp: 0.4, lookaheadDuration: 10.0,
+            updateState: { value in let _ = state.swap(value) },
+            fetchInRange: { _, completed in
+                completed()
+                return ActionDisposable { let _ = rangeReleased.swap(true) }
+            },
+            getDataInRange: { range, _, waiter in
+                waiter.receive(data.subdata(in: Int(range.lowerBound) ..< Int(range.upperBound)))
+                return EmptyDisposable
+            },
+            isDataCachedInRange: { _ in false }, size: Int64(data.count)
+        )
+        for index in 0 ... 10_000 {
+            lookahead.updateCurrentTimestamp(timestamp: 0.4 + Double(index) / 10_000)
+        }
+        spin(timeout: 5.0, until: { state.with { $0?.isEnded == true } })
+        XCTAssertTrue(state.with { $0?.isEnded == true })
+        XCTAssertNotNil(state.with { $0?.video })
+        XCTAssertTrue(rangeReleased.with { $0 })
+        withExtendedLifetime(lookahead) {}
+    }
+
+    @objc func testLookaheadCancellationReleasesTheBlockedWorker() {
+        let readStarted = Atomic(value: false)
+        let rangeReleased = Atomic(value: false)
+        let workerReleased = Atomic(value: false)
+        var lifetime: WorkerLifetime? = WorkerLifetime(released: workerReleased)
+        var lookahead: FFMpegLookahead? = FFMpegLookahead(
+            seekToTimestamp: 0, lookaheadDuration: 10.0,
+            updateState: { [lifetime] _ in withExtendedLifetime(lifetime) {} },
+            fetchInRange: { _, _ in ActionDisposable { let _ = rangeReleased.swap(true) } },
+            getDataInRange: { _, _, _ in
+                let _ = readStarted.swap(true)
+                return EmptyDisposable
+            },
+            isDataCachedInRange: { _ in false }, size: 2_000_000
+        )
+        lifetime = nil
+        spin(timeout: 2.0, until: { readStarted.with { $0 } })
+        XCTAssertTrue(readStarted.with { $0 })
+        for index in 0 ... 10_000 {
+            lookahead?.updateCurrentTimestamp(timestamp: Double(index))
+        }
+        lookahead = nil
+        spin(timeout: 5.0, until: { rangeReleased.with { $0 } && workerReleased.with { $0 } })
+        XCTAssertTrue(rangeReleased.with { $0 })
+        XCTAssertTrue(workerReleased.with { $0 })
+    }
+
+    @objc func testInvalidLookaheadReportsEndAndReleasesTheRange() {
+        let data = Data(repeating: 0x99, count: 4096)
+        let state = Atomic<FFMpegLookahead.State?>(value: nil)
+        let rangeReleased = Atomic(value: false)
+        let lookahead = FFMpegLookahead(
+            seekToTimestamp: 0, lookaheadDuration: 10.0,
+            updateState: { value in let _ = state.swap(value) },
+            fetchInRange: { _, completed in
+                completed()
+                return ActionDisposable { let _ = rangeReleased.swap(true) }
+            },
+            getDataInRange: { range, _, waiter in
+                waiter.receive(data.subdata(in: Int(range.lowerBound) ..< Int(range.upperBound)))
+                return EmptyDisposable
+            },
+            isDataCachedInRange: { _ in false }, size: Int64(data.count)
+        )
+        spin(timeout: 5.0, until: { state.with { $0?.isEnded == true } })
+        XCTAssertTrue(state.with { $0?.isEnded == true })
+        XCTAssertNil(state.with { $0?.seek })
+        XCTAssertTrue(rangeReleased.with { $0 })
+        withExtendedLifetime(lookahead) {}
+    }
+
+    @objc func testFinalReadFailsWhenTheFetchedBytesAreUnreadable() {
+        let fetchCompletion = Promise<Void>()
+        let waiter = DirectMediaReadWaiter()
+        var requestedIncompleteEvents: [Bool] = []
+        let disposable = subscribeDirectMediaRead(fetchCompletion: fetchCompletion.get(), waiter: waiter) { notifyAboutIncomplete in
+            requestedIncompleteEvents.append(notifyAboutIncomplete)
+            return notifyAboutIncomplete ? .single((Data(), false)) : .never()
+        }
+        defer { disposable.dispose() }
+        fetchCompletion.set(.single(()))
+        let completed = expectation(description: "Terminal read completed")
+        DispatchQueue.global().async {
+            XCTAssertEqual(waiter.wait(), .failed)
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 2)
+        waiter.cancel()
+        XCTAssertEqual(requestedIncompleteEvents, [false, true])
+    }
+
+    @objc func testFinalReadDeliversBytesWhenTheFetchCompletesFirst() {
+        let fetchCompletion = Promise<Void>()
+        let waiter = DirectMediaReadWaiter()
+        let bytes = Data([1, 2])
+        let disposable = subscribeDirectMediaRead(fetchCompletion: fetchCompletion.get(), waiter: waiter) { notifyAboutIncomplete in
+            return notifyAboutIncomplete ? .single((bytes, true)) : .never()
+        }
+        defer { disposable.dispose() }
+        fetchCompletion.set(.single(()))
+        let completed = expectation(description: "Terminal read completed")
+        DispatchQueue.global().async {
+            XCTAssertEqual(waiter.wait(), .bytes(bytes))
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 2)
+        waiter.cancel()
+    }
+
+    @objc func testCacheOnlyReadFailsWhenItsBytesAreUnreadable() {
+        let waiter = DirectMediaReadWaiter()
+        let disposable = subscribeDirectMediaRead(fetchCompletion: nil, waiter: waiter) { notifyAboutIncomplete in
+            XCTAssertTrue(notifyAboutIncomplete)
+            return .single((Data(), false))
+        }
+        defer { disposable.dispose() }
+        let completed = expectation(description: "Cache-only read completed")
+        DispatchQueue.global().async {
+            XCTAssertEqual(waiter.wait(), .failed)
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 2)
+        waiter.cancel()
     }
 
     private func expectedFrameHash(codec: String, timestamp: Double) throws -> UInt64 {

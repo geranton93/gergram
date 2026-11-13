@@ -40,24 +40,11 @@ final class DirectMediaReadWaiterTests: XCTestCase {
         XCTAssertEqual(waiter.wait(), .bytes(Data()))
     }
 
-    func testFetchFinishingWithoutTheRequestedBytesReleasesTheRead() {
+    func testFailureWinsOverLateData() {
         let waiter = DirectMediaReadWaiter()
-        let completed = expectation(description: "Read completed")
 
-        DispatchQueue.global().async {
-            XCTAssertEqual(waiter.wait(), .failed)
-            completed.fulfill()
-        }
-        waiter.fetchFinished(requestedBytesOnDisk: false)
-        wait(for: [completed], timeout: 2)
-    }
-
-    func testAvailableBytesStillReachReaderAfterFetchFinishes() {
-        let waiter = DirectMediaReadWaiter()
-        let bytes = Data([0x01, 0x02])
-
-        waiter.fetchFinished(requestedBytesOnDisk: true)
-        waiter.receive(bytes)
-        XCTAssertEqual(waiter.wait(), .bytes(bytes))
+        waiter.receive(nil)
+        waiter.receive(Data([0x01]))
+        XCTAssertEqual(waiter.wait(), .failed)
     }
 }

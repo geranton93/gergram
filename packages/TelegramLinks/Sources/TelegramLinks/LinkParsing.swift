@@ -123,8 +123,14 @@ public func parseInAppLink(_ url: NSString, options: InAppLinkParsingOptions = I
     var value = normalizeURLScheme(url)
     let normalizedURL = value as String
     if GergramSettingsRoute.recognizesScheme(normalizedURL) {
-        guard options.hasContext, let route = GergramSettingsRoute(url: normalizedURL) else { return .nothing }
-        return .settings(link: normalizedURL, section: .gergram(route))
+        guard options.hasContext else { return .nothing }
+        if let route = GergramSettingsRoute(url: normalizedURL) {
+            return .settings(link: normalizedURL, section: .gergram(route))
+        }
+        if let route = GergramPeerRoute(url: normalizedURL) {
+            return .gergramPeer(link: normalizedURL, route: route)
+        }
+        return .nothing
     }
 
     let subdomainRange = url.range(of: ".t.me")

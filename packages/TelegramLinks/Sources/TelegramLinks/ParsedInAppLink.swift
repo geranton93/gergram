@@ -53,6 +53,7 @@ public enum ParsedInAppLink {
     case tonTransfer(link: String, data: ParsedWalletUrl)
     case sendGrams(link: String, data: ParsedSendGramsLink)
     case settings(link: String, section: InAppSettingsSection)
+    case gergramPeer(link: String, route: GergramPeerRoute)
     case invoice(link: String, slug: String)
     case premiumOffer(link: String, ref: String?)
     case restorePurchase(link: String)

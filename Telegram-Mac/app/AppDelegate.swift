@@ -1436,7 +1436,9 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     
     private func processURL(_ url: String?) {
         if let url, GergramSettingsRoute.recognizesScheme(url) {
-            guard let route = GergramSettingsRoute(url: url) else { return }
+            let settingsRoute = GergramSettingsRoute(url: url)
+            let peerRoute = GergramPeerRoute(url: url)
+            guard settingsRoute != nil || peerRoute != nil else { return }
             AppDelegate.eventProcessed = url
 
             var activeContext = self.contextValue?.context
@@ -1452,7 +1454,11 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             if let activeContext {
                 AppDelegate.eventProcessed = nil
                 activeContext.window.deminiaturize(self)
-                execute(inapp: .settings(link: url, context: activeContext, section: .gergram(route)), isExternal: true)
+                if let settingsRoute {
+                    execute(inapp: .settings(link: url, context: activeContext, section: .gergram(settingsRoute)), isExternal: true)
+                } else if let peerRoute {
+                    execute(inapp: .gergramPeer(link: url, context: activeContext, route: peerRoute), isExternal: true)
+                }
             } else {
                 self.window.deminiaturize(self)
             }

@@ -248,6 +248,23 @@ final class LinkParsingTests: XCTestCase {
         guard case .nothing = parse("tg://settings/unknown") else { return XCTFail("Expected nothing") }
     }
 
+    func testGergramPeerLinksRequireAccountContext() {
+        let url = "gergram://chat/bot-api/-1000000000042"
+        guard case let .gergramPeer(link, route) = parse(url) else {
+            return XCTFail("Expected gergram chat route")
+        }
+        XCTAssertEqual(link, url)
+        XCTAssertEqual(route.destination, .chat)
+        XCTAssertEqual(route.peerId.namespace, Namespaces.Peer.CloudChannel)
+        XCTAssertEqual(route.peerId.id._internalGetInt64Value(), 42)
+        for (url, options) in [
+            (url, InAppLinkParsingOptions()),
+            ("gergram://chat/channel/42?account=2", enabled)
+        ] {
+            guard case .nothing = parse(url, options: options) else { return XCTFail(url) }
+        }
+    }
+
     func testGergramSettingsLinksStayLocalAndRequireAccountContext() {
         let cases: [(String, GergramSettingsRoute)] = [
             ("gergram://settings/general/message-context-menu", .messageContextMenu),

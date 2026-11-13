@@ -2673,8 +2673,14 @@ public final class EmojiesController<Context: AccountContextProtocol> : Telegram
                 }
             }))
         default:
+            let showsOnlyAddedPacks = stickerSettings(postbox: context.account.postbox)
+                |> map { $0.showsOnlyAddedPacks }
+                |> distinctUntilChanged
+            let visibleFeaturedPacks = combineLatest(featured, showsOnlyAddedPacks) |> map { featured, showsOnlyAddedPacks in
+                showsOnlyAddedPacks ? [] : featured
+            }
             let orderedTags = self.orderedTags
-            let signal = combineLatest(queue: prepareQueue, emojies, featured, peer, search, reactions, recentUsedEmoji(postbox: context.account.postbox), reactionSettings, iconStatusEmoji, groupEmojiPack, forumTopic, searchCategories, context.reactions.stateValue, onStage.get()) |> filter { $0.12 }
+            let signal = combineLatest(queue: prepareQueue, emojies, visibleFeaturedPacks, peer, search, reactions, recentUsedEmoji(postbox: context.account.postbox), reactionSettings, iconStatusEmoji, groupEmojiPack, forumTopic, searchCategories, context.reactions.stateValue, onStage.get()) |> filter { $0.12 }
             actionsDisposable.add(signal.start(next: { view, featured, peer, search, reactions, recentEmoji, reactionSettings, iconStatusEmoji, groupEmojiPack, forumTopic, searchCategories, availableReactions, _ in
                 
                             

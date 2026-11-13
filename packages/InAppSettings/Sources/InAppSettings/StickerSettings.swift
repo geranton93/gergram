@@ -14,15 +14,17 @@ public struct StickerSettings: Codable, Equatable {
     public var trendingClosedOn: Int64?
     public var dynamicPackOrder: Bool
     public var showsAllRecentStickers: Bool
+    public var showsOnlyAddedPacks: Bool
     public static var defaultSettings: StickerSettings {
         return StickerSettings(emojiStickerSuggestionMode: .all, trendingClosedOn: nil, dynamicPackOrder: true)
     }
     
-    public init(emojiStickerSuggestionMode: EmojiStickerSuggestionMode, trendingClosedOn: Int64?, dynamicPackOrder: Bool, showsAllRecentStickers: Bool = false) {
+    public init(emojiStickerSuggestionMode: EmojiStickerSuggestionMode, trendingClosedOn: Int64?, dynamicPackOrder: Bool, showsAllRecentStickers: Bool = false, showsOnlyAddedPacks: Bool = false) {
         self.emojiStickerSuggestionMode = emojiStickerSuggestionMode
         self.trendingClosedOn = trendingClosedOn
         self.dynamicPackOrder = dynamicPackOrder
         self.showsAllRecentStickers = showsAllRecentStickers
+        self.showsOnlyAddedPacks = showsOnlyAddedPacks
     }
     
     public init(decoder: PostboxDecoder) {
@@ -30,6 +32,7 @@ public struct StickerSettings: Codable, Equatable {
         self.trendingClosedOn = decoder.decodeOptionalInt64ForKey("t.c.o")
         self.dynamicPackOrder = decoder.decodeOptionalBoolForKey("dpo") ?? true
         self.showsAllRecentStickers = decoder.decodeBoolForKey("sars", orElse: false)
+        self.showsOnlyAddedPacks = decoder.decodeBoolForKey("soap", orElse: false)
     }
     
     public func encode(_ encoder: PostboxEncoder) {
@@ -39,6 +42,7 @@ public struct StickerSettings: Codable, Equatable {
         }
         encoder.encodeBool(dynamicPackOrder, forKey: "dpo")
         encoder.encodeBool(showsAllRecentStickers, forKey: "sars")
+        encoder.encodeBool(showsOnlyAddedPacks, forKey: "soap")
 
     }
     
@@ -50,6 +54,7 @@ public struct StickerSettings: Codable, Equatable {
         self.trendingClosedOn = try container.decodeIfPresent(Int64.self, forKey: "t.c.o")
         self.dynamicPackOrder = try container.decodeIfPresent(Bool.self, forKey: "dpo") ?? true
         self.showsAllRecentStickers = try container.decodeIfPresent(Bool.self, forKey: "sars") ?? false
+        self.showsOnlyAddedPacks = try container.decodeIfPresent(Bool.self, forKey: "soap") ?? false
 
     }
     
@@ -59,6 +64,7 @@ public struct StickerSettings: Codable, Equatable {
         try container.encodeIfPresent(self.trendingClosedOn, forKey: "t.c.o")
         try container.encodeIfPresent(self.dynamicPackOrder, forKey: "dpo")
         try container.encode(self.showsAllRecentStickers, forKey: "sars")
+        try container.encode(self.showsOnlyAddedPacks, forKey: "soap")
     }
     
     public func withUpdatedEmojiStickerSuggestionMode(_ emojiStickerSuggestionMode: EmojiStickerSuggestionMode) -> StickerSettings {

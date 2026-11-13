@@ -44,7 +44,8 @@ private final class InstalledStickerPacksControllerArguments {
     let customEmoji: () -> Void
     let toggleDynamicPackOrder:()->Void
     let setShowsAllRecentStickers: (Bool) -> Void
-    init(context: any AccountContextProtocol, openStickerPack: @escaping (StickerPackCollectionInfo) -> Void, removePack: @escaping (ItemCollectionId) -> Void, openStickersBot: @escaping () -> Void, openFeatured: @escaping () -> Void, openArchived: @escaping ([ArchivedStickerPackItem]?) -> Void, openSuggestionOptions: @escaping() -> Void, toggleLoopAnimated: @escaping(Bool)->Void, quickSetup:@escaping(Control)->Void, customEmoji: @escaping() -> Void, toggleDynamicPackOrder:@escaping()->Void, setShowsAllRecentStickers: @escaping (Bool) -> Void) {
+    let setShowsOnlyAddedPacks: (Bool) -> Void
+    init(context: any AccountContextProtocol, openStickerPack: @escaping (StickerPackCollectionInfo) -> Void, removePack: @escaping (ItemCollectionId) -> Void, openStickersBot: @escaping () -> Void, openFeatured: @escaping () -> Void, openArchived: @escaping ([ArchivedStickerPackItem]?) -> Void, openSuggestionOptions: @escaping() -> Void, toggleLoopAnimated: @escaping(Bool)->Void, quickSetup:@escaping(Control)->Void, customEmoji: @escaping() -> Void, toggleDynamicPackOrder:@escaping()->Void, setShowsAllRecentStickers: @escaping (Bool) -> Void, setShowsOnlyAddedPacks: @escaping (Bool) -> Void) {
         self.context = context
         self.openStickerPack = openStickerPack
         self.removePack = removePack
@@ -57,6 +58,7 @@ private final class InstalledStickerPacksControllerArguments {
         self.customEmoji = customEmoji
         self.toggleDynamicPackOrder = toggleDynamicPackOrder
         self.setShowsAllRecentStickers = setShowsAllRecentStickers
+        self.setShowsOnlyAddedPacks = setShowsOnlyAddedPacks
     }
 }
 
@@ -145,6 +147,7 @@ private enum InstalledStickerPacksEntry: TableItemListNodeEntry {
     case customEmoji(sectionId:Int32, GeneralViewType)
     case loopAnimated(sectionId: Int32, Bool, GeneralViewType)
     case showsAllRecentStickers(sectionId: Int32, Bool, GeneralViewType)
+    case showsOnlyAddedPacks(sectionId: Int32, Bool, GeneralViewType)
     case dynamicPackOrder(sectionId: Int32, Bool, GeneralViewType)
     case dynamicPackOrderInfo(sectionId: Int32, GeneralViewType)
 
@@ -179,6 +182,8 @@ private enum InstalledStickerPacksEntry: TableItemListNodeEntry {
             return .index(9)
         case .showsAllRecentStickers:
             return .index(10)
+        case .showsOnlyAddedPacks:
+            return .index(11)
         case let .section(sectionId):
             return .index((sectionId + 1) * 1000 - sectionId)
         }
@@ -201,6 +206,8 @@ private enum InstalledStickerPacksEntry: TableItemListNodeEntry {
             return 5
         case .showsAllRecentStickers:
             return 6
+        case .showsOnlyAddedPacks:
+            return 11
         case .dynamicPackOrder:
             return 7
         case .dynamicPackOrderInfo:
@@ -228,7 +235,7 @@ private enum InstalledStickerPacksEntry: TableItemListNodeEntry {
             return (sectionId * 1000) + stableIndex
         case let .customEmoji(sectionId, _):
             return (sectionId * 1000) + stableIndex
-        case let .loopAnimated(sectionId, _, _), let .showsAllRecentStickers(sectionId, _, _):
+        case let .loopAnimated(sectionId, _, _), let .showsAllRecentStickers(sectionId, _, _), let .showsOnlyAddedPacks(sectionId, _, _):
             return (sectionId * 1000) + stableIndex
         case let .dynamicPackOrder(sectionId, _, _):
             return (sectionId * 1000) + stableIndex
@@ -272,6 +279,10 @@ private enum InstalledStickerPacksEntry: TableItemListNodeEntry {
         case let .showsAllRecentStickers(_, value, viewType):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Stickers.ShowAllRecent"), type: .switchable(value), viewType: viewType, action: {
                 arguments.setShowsAllRecentStickers(!value)
+            })
+        case let .showsOnlyAddedPacks(_, value, viewType):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Stickers.ShowOnlyAddedPacks"), type: .switchable(value), viewType: viewType, action: {
+                arguments.setShowsOnlyAddedPacks(!value)
             })
         case let .customEmoji(_, viewType):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().installedStickersCustomEmoji, icon: theme.icons.installed_stickers_custom_emoji, type: .next, viewType: viewType, action: arguments.customEmoji)
@@ -324,7 +335,8 @@ private func installedStickerPacksControllerEntries(state: InstalledStickerPacks
     
     
     entries.append(.loopAnimated(sectionId: sectionId, autoplayMedia.loopAnimatedStickers, .innerItem))
-    entries.append(.showsAllRecentStickers(sectionId: sectionId, stickerSettings.showsAllRecentStickers, .lastItem))
+    entries.append(.showsAllRecentStickers(sectionId: sectionId, stickerSettings.showsAllRecentStickers, .innerItem))
+    entries.append(.showsOnlyAddedPacks(sectionId: sectionId, stickerSettings.showsOnlyAddedPacks, .lastItem))
     
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
@@ -516,6 +528,12 @@ open class InstalledStickerPacksController<Context: AccountContextProtocol>: Tab
             _ = updateStickerSettingsInteractively(postbox: context.account.postbox, { settings in
                 var settings = settings
                 settings.showsAllRecentStickers = value
+                return settings
+            }).start()
+        }, setShowsOnlyAddedPacks: { value in
+            _ = updateStickerSettingsInteractively(postbox: context.account.postbox, { settings in
+                var settings = settings
+                settings.showsOnlyAddedPacks = value
                 return settings
             }).start()
         })

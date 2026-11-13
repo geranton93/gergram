@@ -79,6 +79,7 @@ class PeerInfoArguments<Context: AccountContextProtocol> {
     
     let toggleNotificationsDisposable = MetaDisposable()
     private let deleteDisposable = MetaDisposable()
+    var hidesProfileStories = false
     var manageStep: ((AnalyticsFlows.PeerInfoManage.Step) -> Void)?
     var getAnalyticsContext: () -> AnalyticsContext = { Analytics.shared.unresolvedContext() }
 
@@ -225,6 +226,7 @@ class PeerInfoArguments<Context: AccountContextProtocol> {
     }
     
     func openStory(_ initialId: StoryInitialIndex?) {
+        guard !hidesProfileStories else { return }
         StoryModalController<Context>.ShowStories(context: context, isHidden: false, initialId: initialId, singlePeer: true, analyticsContext: captureAnalyticsContext())
     }
     
@@ -1174,6 +1176,11 @@ public class PeerInfoController<Context: AccountContextProtocol>: EditableViewCo
             storiesSignal = .single(nil)
         }
         
+        let hideProfileStories = additionalSettings(accountManager: context.sharedContext.accountManager)
+            |> map { $0.hideProfileStories && peerId != context.peerId }
+            |> distinctUntilChanged
+        let visibleStories = combineLatest(storiesSignal, hideProfileStories)
+            |> map { stories, hidden in hidden ? nil : stories }
         let revenueState: Signal<StarsRevenueStatsContextState?, NoError>
         if let revenueContext {
             revenueState = revenueContext.state |> map(Optional.init)
@@ -1301,8 +1308,11 @@ public class PeerInfoController<Context: AccountContextProtocol>: EditableViewCo
             
             
             
+            actionsDisposable.add((hideProfileStories |> deliverOnMainQueue).start(next: { [weak arguments] hidden in
+                arguments?.hidesProfileStories = hidden
+            }))
             let musicAndPeerIdFormat = combineLatest(savedMuicProfileState, FastSettings.profilePeerIdDisplay)
-            return combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(peerId, updateData: true), arguments.statePromise, appearanceSignal, inputActivityState.get(), channelMembersPromise.get(), mediaTabsData, mediaReady, inviteLinksCount, joinRequestsCount, availableReactions, threadData, threadPeer, storiesSignal, personalChannelSignal, revenueState, tonRevenueState, webAppPermissionsState(context: context, peerId: peerId), musicAndPeerIdFormat)
+            return combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(peerId, updateData: true), arguments.statePromise, appearanceSignal, inputActivityState.get(), channelMembersPromise.get(), mediaTabsData, mediaReady, inviteLinksCount, joinRequestsCount, availableReactions, threadData, threadPeer, visibleStories, personalChannelSignal, revenueState, tonRevenueState, webAppPermissionsState(context: context, peerId: peerId), musicAndPeerIdFormat)
             |> mapToQueue { view, state, appearance, inputActivities, channelMembers, mediaTabsData, _, inviteLinksCount, joinRequestsCount, availableReactions, threadData, threadPeer, stories, personalChannel, revenueState, tonRevenueState, webAppPermissionsState, musicAndPeerIdFormat -> Signal<(PeerView, TableUpdateTransition, MessageHistoryThreadData?, EnginePeer?), NoError> in
                     
                     

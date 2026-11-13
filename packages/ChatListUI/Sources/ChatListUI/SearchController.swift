@@ -154,6 +154,19 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
     case loadingPlaceholder
     case emptyList(listType: SearchTags.ListType, postState: TelegramGlobalPostSearchState?, isPremium: Bool, query: String)
     case disclaimer(String)
+
+    func withStoryIndicatorsHidden(_ hidden: Bool) -> ChatListSearchEntry {
+        guard hidden else { return self }
+        switch self {
+        case let .localPeer(peer, index, secretChat, badge, drawBorder, canAddAsTag, _):
+            return .localPeer(peer, index, secretChat, badge, drawBorder, canAddAsTag, nil)
+        case let .recentlySearch(peer, index, secretChat, status, badge, drawBorder, _, canRemoveRecent, isGrossingApp, isRecentApp):
+            return .recentlySearch(peer, index, secretChat, status, badge, drawBorder, nil, canRemoveRecent, isGrossingApp: isGrossingApp, isRecentApp: isRecentApp)
+        default:
+            return self
+        }
+    }
+
     var stableId: ChatListSearchEntryStableId {
         switch self {
         case let .localPeer(peer, _, secretChat, _, _, _, _):
@@ -858,9 +871,9 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
         let viewOnStageSignal: Signal<Bool, NoError> = viewOnStage |> filter { $0 } |> distinctUntilChanged
         let approvedSignal: Signal<ApprovedGlobalPostQueryState?, NoError> = approvedGlobalPostQueryState
         let searchInput = combineLatest(tagsSignal, querySignal, viewOnStageSignal, approvedSignal)
-        let disableGlobalPeerSearch = additionalSettings(accountManager: context.sharedContext.accountManager)
-            |> map { $0.disableGlobalPeerSearch }
-            |> distinctUntilChanged
+        let settings = additionalSettings(accountManager: context.sharedContext.accountManager)
+        let hideStoryIndicators = settings |> map { $0.hideChatListStories } |> distinctUntilChanged
+        let disableGlobalPeerSearch = settings |> map { $0.disableGlobalPeerSearch } |> distinctUntilChanged
         let combinedInput = searchInput |> mapToSignal { tags, query, isVisible, approved -> Signal<(SearchTags, String?, Bool, ApprovedGlobalPostQueryState?, Bool), NoError> in
             if case .common(.root) = target, options.contains(.chats), tags.isEmpty,
                let query, !query.isEmpty, !query.hasPrefix("#"), !query.hasPrefix("$") {
@@ -1767,8 +1780,12 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
         }
         
         
-        let transition = combineLatest(queue: prepareQueue, searchItems, appearanceSignal, context.globalPeerHandler.get() |> distinctUntilChanged) |> map { value, appearance, location in
-            return (value.0.map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}, value.1, value.2 ? nil : location, value.2, value.3, value.4)
+        let transition = combineLatest(queue: prepareQueue, searchItems, appearanceSignal, context.globalPeerHandler.get() |> distinctUntilChanged, hideStoryIndicators)
+        |> map { value, appearance, location, hideStoryIndicators in
+            let entries = value.0.map {
+                AppearanceWrapperEntry(entry: $0.withStoryIndicatorsHidden(hideStoryIndicators), appearance: appearance)
+            }
+            return (entries, value.1, value.2 ? nil : location, value.2, value.3, value.4)
         }
         |> map { entries, loading, location, animated, searchMessagesState, searchMessagesResult -> (TableUpdateTransition, Bool, ChatLocation?, SearchMessagesState?, SearchMessagesResult?) in
             let transition = prepareEntries(from: previousSearchItems.swap(entries) , to: entries, arguments: arguments, initialSize: atomicSize.modify { $0 }, animated: animated, target: target)

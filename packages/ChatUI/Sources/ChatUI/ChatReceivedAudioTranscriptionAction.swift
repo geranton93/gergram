@@ -21,20 +21,45 @@ final class ChatReceivedAudioTranscriptionAction {
     }
 
     private let operation = MetaDisposable()
+    private let windowVisibility = MetaDisposable()
     private var generation: UUID?
     private weak var transcriptSheet: NSWindow?
 
     deinit {
-        operation.dispose()
+        let operation = operation
+        let windowVisibility = windowVisibility
+        Queue.mainQueue().async { [weak sheet = transcriptSheet] in
+            windowVisibility.dispose()
+            operation.dispose()
+            if let sheet {
+                sheet.sheetParent?.endSheet(sheet)
+            }
+        }
     }
 
     func cancel() {
         generation = nil
+        windowVisibility.set(nil)
         operation.set(nil)
-        if let sheet = transcriptSheet, let parent = sheet.sheetParent {
-            parent.endSheet(sheet)
-        }
+        let sheet = transcriptSheet
         transcriptSheet = nil
+        if let sheet {
+            sheet.sheetParent?.endSheet(sheet)
+        }
+    }
+
+    func beginWindowLifetime(_ visibility: Signal<Bool, NoError>) -> UUID {
+        cancel()
+        let generation = UUID()
+        self.generation = generation
+        let observation = MetaDisposable()
+        windowVisibility.set(observation)
+        observation.set((visibility |> filter { !$0 } |> take(1) |> deliverOnMainQueue).start(next: { [weak self] _ in
+            if self?.generation == generation {
+                self?.cancel()
+            }
+        }))
+        return generation
     }
 
     static func menuItem(for message: Message, cachedData: CachedPeerData?, interaction: ChatInteraction) -> ContextMenuItem? {
@@ -87,19 +112,20 @@ final class ChatReceivedAudioTranscriptionAction {
         let context = interaction.interactionContext
         let window = context.window
         guard window.isVisible, window.attachedSheet == nil || window.attachedSheet === transcriptSheet else { return }
-        cancel()
-        let generation = UUID()
-        self.generation = generation
+        let generation = beginWindowLifetime(window.visibility)
+        guard self.generation == generation else { return }
+        let account = context.account
+        let accountPeerId = context.peerId
         let location = interaction.chatLocation
         let mode = interaction.mode
         let isCurrent: () -> Bool = { [weak self, weak interaction, weak window] in
             guard let self, let interaction, let window else { return false }
-            return self.generation == generation && context.window === window && window.isVisible
+            return self.generation == generation && interaction.interactionContext.window === window && window.isVisible
                 && interaction.chatLocation == location && interaction.mode == mode && Self.supportsChat(interaction)
         }
-        let source = context.account.postbox.transaction { transaction -> Source? in
+        let source = account.postbox.transaction { transaction -> Source? in
             guard let current = transaction.getMessage(id), let peer = transaction.getPeer(id.peerId),
-                  let source = Self.source(for: current, peer: peer, cachedData: transaction.getPeerCachedData(peerId: id.peerId), accountPeerId: context.peerId),
+                  let source = Self.source(for: current, peer: peer, cachedData: transaction.getPeerCachedData(peerId: id.peerId), accountPeerId: accountPeerId),
                   source.file.resource.id == resourceId else { return nil }
             return source
         } |> deliverOnMainQueue
@@ -126,7 +152,7 @@ final class ChatReceivedAudioTranscriptionAction {
                 guard isCurrent() else { return .fail(.cancelled) }
                 guard allowed else { return .fail(.denied) }
                 return currentSource |> mapToSignal { current -> Signal<String, Failure> in
-                    return Self.path(for: current, account: context.account)
+                    return Self.path(for: current, account: account)
                     |> mapToSignal { path -> Signal<String, Failure> in
                         return currentSource |> mapToSignal { _ -> Signal<String, Failure> in
                             return ChatReceivedAudioTranscription.recognize(path: path, using: recognizer)
@@ -142,16 +168,26 @@ final class ChatReceivedAudioTranscriptionAction {
 
         let request = MetaDisposable()
         operation.set(request)
-        request.set(showModalProgress(signal: signal, for: window, shouldPresent: {
-            isCurrent() && window.attachedSheet == nil
-        }).start(next: { [weak self] text in
-            DispatchQueue.main.async { [weak self] in
-                guard let self, isCurrent() else { return }
+        request.set(showModalProgress(signal: signal, for: window, shouldPresent: { [weak window] in
+            guard let window else { return false }
+            return isCurrent() && window.attachedSheet == nil
+        }).start(next: { [weak self, weak window] text in
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, self.generation == generation else { return }
+                guard let window, isCurrent() else {
+                    self.cancel()
+                    return
+                }
                 self.showTranscript(text, for: window)
             }
-        }, error: { error in
-            guard isCurrent(), let text = Self.errorText(error) else { return }
-            alert(for: window, header: localizedString("Gergram.Chat.LocalSpeech.Title"), info: text)
+        }, error: { [weak self, weak window] error in
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, self.generation == generation else { return }
+                let shouldShowError = isCurrent()
+                self.cancel()
+                guard shouldShowError, let window, let text = Self.errorText(error) else { return }
+                alert(for: window, header: localizedString("Gergram.Chat.LocalSpeech.Title"), info: text)
+            }
         }))
     }
 
@@ -171,8 +207,8 @@ final class ChatReceivedAudioTranscriptionAction {
                 let reference = FileMediaReference.message(message: MessageReference(source.message), media: file)
                 let fetch = fetchedMediaResource(mediaBox: mediaBox, userLocation: reference.userLocation, userContentType: reference.userContentType,
                     reference: reference.resourceReference(file.resource), range: (0..<size, .default), statsCategory: file.isInstantVideo ? .video : .audio)
-                disposables.add(fetch.start(error: { _ in subscriber.putError(.mediaUnavailable) }, completed: {
-                    disposables.add((data |> take(1)).start(next: { final in
+                disposables.add(fetch.start(error: { _ in subscriber.putError(.mediaUnavailable) }, completed: { [weak disposables] in
+                    disposables?.add((data |> take(1)).start(next: { final in
                         if !final.complete {
                             subscriber.putError(.mediaUnavailable)
                         }
@@ -196,7 +232,10 @@ final class ChatReceivedAudioTranscriptionAction {
     }
 
     private func showTranscript(_ text: String, for window: Window) {
-        guard window.attachedSheet == nil else { return }
+        guard window.attachedSheet == nil else {
+            cancel()
+            return
+        }
         let alert = NSAlert()
         alert.messageText = localizedString("Gergram.Chat.LocalSpeech.Title")
         alert.addButton(withTitle: strings().modalOK)
@@ -219,11 +258,15 @@ final class ChatReceivedAudioTranscriptionAction {
         scrollView.documentView = textView
         alert.accessoryView = scrollView
 
-        let sheet = alert.window
+        alert.beginSheetModal(for: window, completionHandler: trackTranscriptSheet(alert.window))
+    }
+
+    func trackTranscriptSheet(_ sheet: NSWindow) -> (NSApplication.ModalResponse) -> Void {
         transcriptSheet = sheet
-        alert.beginSheetModal(for: window) { [weak self, weak sheet] _ in
-            if self?.transcriptSheet === sheet {
-                self?.transcriptSheet = nil
+        return { [weak self, weak sheet] _ in
+            if let self, let sheet, self.transcriptSheet === sheet {
+                self.transcriptSheet = nil
+                self.cancel()
             }
         }
     }

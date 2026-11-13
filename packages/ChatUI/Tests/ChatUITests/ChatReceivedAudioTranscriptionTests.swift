@@ -1,11 +1,61 @@
+import AppKit
 import AVFoundation
 import CoreMedia
 import Foundation
+import SwiftSignalKit
 import TelegramMediaPlayer
+import TGUIKit
 import XCTest
 @testable import ChatUI
 
 final class ChatReceivedAudioTranscriptionTests: XCTestCase {
+    @MainActor
+    func testWindowVisibilityLossEndsTranscriptSheet() {
+        let window = makeTranscriptWindow()
+        let sheet = makeTranscriptWindow()
+        let action = ChatReceivedAudioTranscriptionAction()
+        _ = action.beginWindowLifetime(window.visibility)
+        window.beginSheet(sheet, completionHandler: action.trackTranscriptSheet(sheet))
+        XCTAssertTrue(sheet.sheetParent === window)
+
+        window.orderOut(nil)
+
+        XCTAssertNil(sheet.sheetParent)
+    }
+
+    @MainActor
+    func testDismissingTranscriptSheetDisposesWindowObservation() {
+        let window = makeTranscriptWindow()
+        let sheet = makeTranscriptWindow()
+        let disposed = expectation(description: "Window visibility observation disposed")
+        let action = ChatReceivedAudioTranscriptionAction()
+        _ = action.beginWindowLifetime(Signal { _ in ActionDisposable { disposed.fulfill() } })
+        window.beginSheet(sheet, completionHandler: action.trackTranscriptSheet(sheet))
+
+        window.endSheet(sheet)
+
+        wait(for: [disposed], timeout: 1)
+        withExtendedLifetime(action) {}
+    }
+
+    @MainActor
+    func testReleasingActionEndsTranscriptSheetAndDisposesWindowObservation() throws {
+        let window = makeTranscriptWindow()
+        let sheet = makeTranscriptWindow()
+        let disposed = expectation(description: "Window visibility observation disposed")
+        var action: ChatReceivedAudioTranscriptionAction? = ChatReceivedAudioTranscriptionAction()
+        _ = action?.beginWindowLifetime(Signal { _ in ActionDisposable { disposed.fulfill() } })
+        window.beginSheet(sheet, completionHandler: try XCTUnwrap(action).trackTranscriptSheet(sheet))
+        XCTAssertTrue(sheet.sheetParent === window)
+        let trackedAction = { [weak action] in action }
+
+        action = nil
+
+        XCTAssertNil(trackedAction())
+        XCTAssertNil(sheet.sheetParent)
+        wait(for: [disposed], timeout: 1)
+    }
+
     func testSpeechRequestRequiresSupportedOnDeviceRecognition() throws {
         guard #available(macOS 10.15, *) else { return }
         XCTAssertNil(ChatReceivedAudioTranscription.makeRequest(supportsOnDeviceRecognition: false))
@@ -116,5 +166,13 @@ final class ChatReceivedAudioTranscriptionTests: XCTestCase {
             formatDescription: try XCTUnwrap(format), sampleCount: samples, presentationTimeStamp: .zero,
             packetDescriptions: nil, sampleBufferOut: &buffer), noErr)
         return MediaTrackFrame(type: .audio, sampleBuffer: try XCTUnwrap(buffer), resetDecoder: false, decoded: true)
+    }
+
+    @MainActor
+    private func makeTranscriptWindow() -> Window {
+        _ = NSApplication.shared
+        let window = Window(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        return window
     }
 }

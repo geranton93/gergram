@@ -66,7 +66,7 @@ public protocol ModalPreviewRowViewProtocol {
     func fileAtPoint(_ point:NSPoint) -> (QuickPreviewMedia, NSView?)?
 }
 
-public protocol ModalPreviewProtocol {
+public protocol ModalPreviewProtocol: AnyObject {
     func fileAtLocationInWindow(_ point:NSPoint) -> (QuickPreviewMedia, NSView?)?
     
 }
@@ -94,25 +94,30 @@ public func startModalPreviewHandle(_ global: ModalPreviewProtocol, window: Wind
 public func showModalPreview(_ reference: QuickPreviewMedia, window: Window, context: any AccountContextProtocol, dismissTitle: String) -> Disposable? {
     guard window.isKeyWindow else { return nil }
     activePreviewHandler?.stopHandler()
-    let modal = PreviewModalController(context, dismissTitle: dismissTitle)
-    modal.update(with: reference)
-    showModal(with: modal, for: window, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-    return ActionDisposable { [weak modal] in modal?.closePreview() }
+    let handler = ModalPreviewHandler(nil, window: window, context: context, dismissTitle: dismissTitle)
+    activePreviewHandler = handler
+    handler.startHandler(initial: (reference, nil))
+    return ActionDisposable { [weak handler] in handler?.stopHandler() }
 }
 
 private final class ModalPreviewHandler: NSObject {
-    private let global: ModalPreviewProtocol
-    private let sourceWindow: Window
+    private weak var global: ModalPreviewProtocol?
+    private weak var sourceWindow: Window?
     private let modal: PreviewModalController
+    private let visibilityObservation = MetaDisposable()
     private weak var eventWindow: Window?
 
-    init(_ global: ModalPreviewProtocol, window: Window, context: any AccountContextProtocol) {
+    init(_ global: ModalPreviewProtocol?, window: Window, context: any AccountContextProtocol, dismissTitle: String? = nil) {
         self.global = global
         self.sourceWindow = window
-        self.modal = PreviewModalController(context)
+        self.modal = PreviewModalController(context, dismissTitle: dismissTitle)
     }
 
     func startHandler(initial: (QuickPreviewMedia, NSView?)) {
+        guard let sourceWindow else {
+            removeHandlers()
+            return
+        }
         modal.update(with: initial.0)
         let animation: ModalAnimationType
         if let view = initial.1, let content = sourceWindow.contentView {
@@ -124,20 +129,32 @@ private final class ModalPreviewHandler: NSObject {
         }
         modal.onClose = { [weak self] in self?.removeHandlers() }
         showModal(with: modal, for: sourceWindow, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, animationType: animation)
+        guard activePreviewHandler === self else { return }
         let eventWindow = modal.modal?.window ?? sourceWindow
         self.eventWindow = eventWindow
-        installPointerHandlers(in: eventWindow)
-        if eventWindow !== sourceWindow {
-            installPointerHandlers(in: sourceWindow)
-        }
-        eventWindow.set(escape: { [weak self] _ in
-            guard let self else { return .rejected }
-            self.stopHandler()
-            return .invoked
-        }, with: self, priority: .supreme)
         let center = NotificationCenter.default
-        center.addObserver(self, selector: #selector(previewWindowDidClose), name: NSWindow.didResignKeyNotification, object: eventWindow)
+        if global != nil {
+            installPointerHandlers(in: eventWindow)
+            if eventWindow !== sourceWindow {
+                installPointerHandlers(in: sourceWindow)
+            }
+            eventWindow.set(escape: { [weak self] _ in
+                guard let self else { return .rejected }
+                self.stopHandler()
+                return .invoked
+            }, with: self, priority: .supreme)
+            center.addObserver(self, selector: #selector(previewWindowDidClose), name: NSWindow.didResignKeyNotification, object: eventWindow)
+        }
         center.addObserver(self, selector: #selector(previewWindowDidClose), name: NSWindow.willCloseNotification, object: sourceWindow)
+        if eventWindow !== sourceWindow {
+            center.addObserver(self, selector: #selector(previewWindowDidClose), name: NSWindow.willCloseNotification, object: eventWindow)
+        }
+        let visibility = eventWindow === sourceWindow
+            ? sourceWindow.visibility
+            : combineLatest(sourceWindow.visibility, eventWindow.visibility) |> map { $0.0 && $0.1 }
+        visibilityObservation.set((visibility |> filter { !$0 } |> take(1) |> deliverOnMainQueue).start(next: { [weak self] _ in
+            self?.previewWindowDidClose()
+        }))
     }
 
     private func installPointerHandlers(in window: Window) {
@@ -160,7 +177,7 @@ private final class ModalPreviewHandler: NSObject {
     }
 
     private func preview(at event: NSEvent) -> (QuickPreviewMedia, NSView?)? {
-        guard let window = event.window else { return nil }
+        guard let window = event.window, let sourceWindow, let global else { return nil }
         let point = window === sourceWindow
             ? event.locationInWindow
             : sourceWindow.convertPoint(fromScreen: window.convertPoint(toScreen: event.locationInWindow))
@@ -168,13 +185,15 @@ private final class ModalPreviewHandler: NSObject {
     }
 
     @objc private func previewWindowDidClose() {
-        stopHandler()
+        stopHandler(immediately: true)
     }
 
-    func stopHandler(returningTo view: NSView? = nil) {
+    func stopHandler(returningTo view: NSView? = nil, immediately: Bool = false) {
         guard activePreviewHandler === self else { return }
         removeHandlers()
-        if let view, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if immediately {
+            modal.close(animationType: .noneDelayed(duration: 0))
+        } else if let view, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let content = modal.genericView.contentView?.getContentView() ?? modal.genericView
             let rect = view.convert(view.bounds, to: modal.genericView.superview?.superview?.superview)
             modal.close(animationType: .scaleToRect(rect, content))
@@ -184,9 +203,10 @@ private final class ModalPreviewHandler: NSObject {
     }
 
     private func removeHandlers() {
+        visibilityObservation.dispose()
         eventWindow?.removeAllHandlers(for: self)
         if eventWindow !== sourceWindow {
-            sourceWindow.removeAllHandlers(for: self)
+            sourceWindow?.removeAllHandlers(for: self)
         }
         NotificationCenter.default.removeObserver(self)
         if activePreviewHandler === self {

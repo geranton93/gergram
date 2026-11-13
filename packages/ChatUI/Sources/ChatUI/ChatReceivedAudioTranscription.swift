@@ -128,10 +128,11 @@ enum ChatReceivedAudioTranscription {
                 guard let self else { return }
                 do {
                     try streamAudio(path: path, isCancelled: { self.terminal.with { $0 } }) { self.request.appendAudioSampleBuffer($0) }
+                    guard !self.terminal.with({ $0 }) else { return }
+                    self.request.endAudio()
                     DispatchQueue.main.async { [weak self] in
                         guard let self, !self.terminal.with({ $0 }) else { return }
                         self.didFeedAudio = true
-                        self.request.endAudio()
                         self.finishIfReady()
                     }
                 } catch {
@@ -150,8 +151,7 @@ enum ChatReceivedAudioTranscription {
 
         private func finish(_ result: Result<String, Failure>) {
             guard !terminal.swap(true) else { return }
-            task?.cancel()
-            task = nil
+            cancelTask()
             switch result {
             case let .success(text):
                 subscriber.putNext(text)
@@ -163,9 +163,16 @@ enum ChatReceivedAudioTranscription {
 
         func cancel() {
             guard !terminal.swap(true) else { return }
-            DispatchQueue.main.async {
-                self.task?.cancel()
-                self.task = nil
+            Queue.mainQueue().async {
+                self.cancelTask()
+            }
+        }
+
+        private func cancelTask() {
+            guard let task else { return }
+            self.task = nil
+            Self.decodeQueue.async {
+                task.cancel()
             }
         }
     }
@@ -187,17 +194,23 @@ enum ChatReceivedAudioTranscription {
     static func streamFrames(next: () -> FFMpegFileReader.ReadFrameResult, isCancelled: () -> Bool, append: (CMSampleBuffer) -> Void) throws {
         var budget = AudioBudget()
         while !isCancelled() {
-            switch next() {
-            case let .frame(frame):
-                let sampleBuffer = frame.sampleBuffer
-                try budget.consume(sampleBuffer)
-                guard !isCancelled() else { throw Failure.cancelled }
-                append(sampleBuffer)
-            case .endOfStream:
-                guard budget.samples > 0 else { throw Failure.mediaUnavailable }
+            let reachedEnd = try autoreleasepool {
+                switch next() {
+                case let .frame(frame):
+                    let sampleBuffer = frame.sampleBuffer
+                    try budget.consume(sampleBuffer)
+                    guard !isCancelled() else { throw Failure.cancelled }
+                    append(sampleBuffer)
+                    return false
+                case .endOfStream:
+                    guard budget.samples > 0 else { throw Failure.mediaUnavailable }
+                    return true
+                case .waitingForMoreData, .error:
+                    throw Failure.mediaUnavailable
+                }
+            }
+            if reachedEnd {
                 return
-            case .waitingForMoreData, .error:
-                throw Failure.mediaUnavailable
             }
         }
         throw Failure.cancelled

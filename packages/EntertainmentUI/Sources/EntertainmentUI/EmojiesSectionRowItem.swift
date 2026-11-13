@@ -677,6 +677,11 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
     private var largeHoldTimer: SwiftSignalKit.Timer?
     private var largeInvoked: Bool = false
 
+    deinit {
+        largeHoldTimer?.invalidate()
+        previewHandle?.dispose()
+    }
+
     private func startLargeHold(_ current: (InlineStickerItemLayer, EmojiesSectionRowItem.Item, Bool), send: @escaping(StickerPackItem, NSRect?)->Void) {
         let layer = current.0
         layer.zPosition = 1

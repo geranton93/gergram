@@ -7,6 +7,47 @@ public enum LocalMessageFilterTransfer {
         case invalidFile
         case unsupportedVersion
         case differentAccount
+        case unsupportedSharedBackup
+        case sharedRuleCollision
+        case tooManyRules
+    }
+
+    public enum Import {
+        case replacement(LocalMessageFilterPreferences)
+        case sharedRules(SharedRuleBackup)
+    }
+
+    public struct SharedRuleBackup {
+        public let rules: [LocalMessageFilterRule]
+
+        fileprivate init(rules: [LocalMessageFilterRule]) {
+            self.rules = rules
+        }
+
+        public func merging(into current: LocalMessageFilterPreferences) throws -> SharedRuleImport {
+            let existing = current.rules
+            var merged = current
+            var added = 0
+            var updated = 0
+            for rule in rules {
+                if let previous = existing.first(where: { $0.id == rule.id }) {
+                    guard previous.chatId == nil else { throw Error.sharedRuleCollision }
+                    guard previous != rule else { continue }
+                    updated += 1
+                } else {
+                    guard merged.rules.count < LocalMessageFilterPreferences.maximumRules else { throw Error.tooManyRules }
+                    added += 1
+                }
+                guard merged.upsert(rule) else { throw Error.invalidFile }
+            }
+            return SharedRuleImport(preferences: merged, added: added, updated: updated)
+        }
+    }
+
+    public struct SharedRuleImport {
+        public let preferences: LocalMessageFilterPreferences
+        public let added: Int
+        public let updated: Int
     }
 
     public static let maximumBytes = 1024 * 1024
@@ -15,6 +56,11 @@ public enum LocalMessageFilterTransfer {
 
     private struct Header: Decodable {
         let format: String
+        let version: Int
+    }
+
+    private struct ImportHeader: Decodable {
+        let format: String?
         let version: Int
     }
 
@@ -125,5 +171,91 @@ public enum LocalMessageFilterTransfer {
             }
         }
         return preferences
+    }
+
+    public static func decodeImport(_ data: Data, accountPeerId: PeerId) throws -> Import {
+        guard data.count <= maximumBytes else { throw Error.fileTooLarge }
+        guard let header = try? JSONDecoder().decode(ImportHeader.self, from: data) else { throw Error.invalidFile }
+        if header.format != nil {
+            return .replacement(try decode(data, accountPeerId: accountPeerId))
+        }
+        guard header.version == 2 else { throw Error.unsupportedVersion }
+        let backup: SharedRuleBackupDocument
+        do {
+            backup = try JSONDecoder().decode(SharedRuleBackupDocument.self, from: data)
+        } catch let error as Error {
+            throw error
+        } catch {
+            throw Error.invalidFile
+        }
+        return .sharedRules(SharedRuleBackup(rules: backup.rules))
+    }
+
+    private struct BackupKey: CodingKey {
+        let stringValue: String
+        let intValue: Int? = nil
+
+        init(stringValue: String) {
+            self.stringValue = stringValue
+        }
+
+        init?(intValue: Int) {
+            return nil
+        }
+    }
+
+    private struct SharedRuleBackupDocument: Decodable {
+        let rules: [LocalMessageFilterRule]
+
+        private enum Key: String, CodingKey {
+            case version, filters, exclusions, peers, removeFiltersById, removeExclusions
+        }
+
+        init(from decoder: Decoder) throws {
+            let keys = try decoder.container(keyedBy: BackupKey.self).allKeys
+            guard keys.allSatisfy({ Key(rawValue: $0.stringValue) != nil }) else { throw Error.invalidFile }
+            let values = try decoder.container(keyedBy: Key.self)
+            for key in [Key.exclusions, .removeFiltersById, .removeExclusions] where values.contains(key) {
+                if try !values.decodeNil(forKey: key), try !values.nestedUnkeyedContainer(forKey: key).isAtEnd {
+                    throw Error.unsupportedSharedBackup
+                }
+            }
+            if values.contains(.peers), try !values.decodeNil(forKey: .peers),
+               try !values.nestedContainer(keyedBy: BackupKey.self, forKey: .peers).allKeys.isEmpty {
+                throw Error.unsupportedSharedBackup
+            }
+
+            var filters = try values.nestedUnkeyedContainer(forKey: .filters)
+            guard let count = filters.count, count > 0 else { throw Error.invalidFile }
+            guard count <= LocalMessageFilterPreferences.maximumRules else { throw Error.tooManyRules }
+            var rules: [LocalMessageFilterRule] = []
+            rules.reserveCapacity(count)
+            var ids = Set<UUID>()
+            while !filters.isAtEnd {
+                let rule = try filters.decode(SharedBackupRule.self).rule
+                guard ids.insert(rule.id).inserted, LocalMessageFilterEvaluation.isValid(rule) else { throw Error.invalidFile }
+                rules.append(rule)
+            }
+            self.rules = rules
+        }
+    }
+
+    private struct SharedBackupRule: Decodable {
+        let rule: LocalMessageFilterRule
+
+        private enum Key: String, CodingKey {
+            case id, text, dialogId, enabled, reversed, caseInsensitive
+        }
+
+        init(from decoder: Decoder) throws {
+            let keys = try decoder.container(keyedBy: BackupKey.self).allKeys
+            guard keys.allSatisfy({ Key(rawValue: $0.stringValue) != nil }) else { throw Error.invalidFile }
+            let values = try decoder.container(keyedBy: Key.self)
+            guard values.contains(.dialogId) else { throw Error.invalidFile }
+            guard try values.decodeNil(forKey: .dialogId) else { throw Error.unsupportedSharedBackup }
+            rule = try LocalMessageFilterRule(id: values.decode(UUID.self, forKey: .id), pattern: values.decode(String.self, forKey: .text),
+                isEnabled: values.decode(Bool.self, forKey: .enabled), isReversed: values.decode(Bool.self, forKey: .reversed),
+                isCaseInsensitive: values.decode(Bool.self, forKey: .caseInsensitive))
+        }
     }
 }

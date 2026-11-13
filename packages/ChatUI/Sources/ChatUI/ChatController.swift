@@ -2507,6 +2507,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     private var entertainmentUpdateScheduled = false
     private enum WallpaperResult : Equatable {
         case result(Wallpaper?)
+        case hidden(ThemeWallpaper)
         case loading 
     }
     private struct WallpaperTuple : Equatable {
@@ -3969,9 +3970,13 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         }
 
         
-        let themeWallpaper: Signal<WallpaperResult, NoError> = wallpaper |> mapToSignal { value in
-            let wallpaper = value.wallpaper
+        let hideCustomWallpapers = ChatWallpaperVisibilityPreferences.shared.signal
+        let themeWallpaper: Signal<WallpaperResult, NoError> = combineLatest(wallpaper, hideCustomWallpapers) |> mapToSignal { value, hidden in
             let appearance = value.appearance
+            if hidden {
+                return .single(.hidden(appearance.presentation.wallpaper))
+            }
+            let wallpaper = value.wallpaper
             
             if let wallpaper = wallpaper {
                 if backgroundExists(wallpaper, palette: appearance.presentation.colors) {
@@ -4161,6 +4166,11 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                             current.presentation = self?.cachedPresentation(current.presentation, withWallpaper: theme.wallpaper) ?? current.presentation.withUpdatedWallpaper(theme.wallpaper)
                         }
                     }
+                case let .hidden(globalWallpaper):
+                    let base = self?.cachedPresentation(theme, withEmoticonThemes: emoticonThemes) ?? theme.withUpdatedEmoticonThemes(emoticonThemes)
+                    let visibleWallpaper = presentation.temp ? base.wallpaper : globalWallpaper
+                    current.bespoke_wallpaper = visibleWallpaper
+                    current.presentation = self?.cachedPresentation(base, withWallpaper: visibleWallpaper) ?? base.withUpdatedWallpaper(visibleWallpaper)
                 case .loading:
                     break
                 }

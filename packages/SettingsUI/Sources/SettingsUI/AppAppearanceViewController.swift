@@ -249,6 +249,7 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
     case accentColor
     case editedIndicator
     case profileJoinDate
+    case customChatWallpapers
     public func isEqual(to other: ItemListItemTag) -> Bool {
         if let other = other as? ThemeSettingsEntryTag, self == other {
             return true
@@ -271,6 +272,8 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
             return .general(_id_edited_indicator)
         case .profileJoinDate:
             return .general(_id_profile_join_date)
+        case .customChatWallpapers:
+            return .general(_id_custom_chat_wallpapers)
         case .accentColor:
             return .custom(_id_theme_accent_list)
         }
@@ -346,6 +349,7 @@ private let _id_name_color = InputDataIdentifier("_id_name_color")
 private let _id_dock_icon = InputDataIdentifier("_id_dock_icon")
 
 private let _id_edited_indicator = InputDataIdentifier("_id_edited_indicator")
+private let _id_custom_chat_wallpapers = InputDataIdentifier("_id_custom_chat_wallpapers")
 private let _id_profile_join_date = InputDataIdentifier("_id_profile_join_date")
 
 private func editedIndicatorTitle(_ style: ChatEditedIndicatorStyle) -> String {
@@ -359,7 +363,7 @@ private func editedIndicatorTitle(_ style: ChatEditedIndicatorStyle) -> String {
     }
 }
 
-private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, editedIndicatorStyle: ChatEditedIndicatorStyle, showsProfileJoinDate: Bool, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
+private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, editedIndicatorStyle: ChatEditedIndicatorStyle, showsProfileJoinDate: Bool, hidesCustomChatWallpapers: Bool, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
     
     var entries:[InputDataEntry] = []
     var sectionId: Int32 = 0
@@ -527,6 +531,13 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
         index += 1
     }
     
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_custom_chat_wallpapers,
+                            data: .init(name: localizedString("Gergram.Chat.HideCustomWallpapers"), color: appearance.presentation.colors.text,
+                                        type: .switchable(hidesCustomChatWallpapers), viewType: .innerItem, action: {
+                                            ChatWallpaperVisibilityPreferences.shared.setHidden(!hidesCustomChatWallpapers)
+                                        })))
+    index += 1
+
     let editedIndicatorOptions = ChatEditedIndicatorStyle.allCases.map { style in
         ContextMenuItem(editedIndicatorTitle(style), handler: {
             ChatEditedIndicatorPreferences.shared.set(style)
@@ -832,8 +843,8 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
             }
     } |> deliverOnMainQueue
     
-    let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager), ChatEditedIndicatorPreferences.shared.signal, ProfileJoinDatePreferences.shared.signal) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings, editedIndicatorStyle, showsProfileJoinDate in
-        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, editedIndicatorStyle: editedIndicatorStyle, showsProfileJoinDate: showsProfileJoinDate, arguments: arguments)
+    let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager), ChatEditedIndicatorPreferences.shared.signal, ProfileJoinDatePreferences.shared.signal, ChatWallpaperVisibilityPreferences.shared.signal) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings, editedIndicatorStyle, showsProfileJoinDate, hidesCustomChatWallpapers in
+        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, editedIndicatorStyle: editedIndicatorStyle, showsProfileJoinDate: showsProfileJoinDate, hidesCustomChatWallpapers: hidesCustomChatWallpapers, arguments: arguments)
     }
     |> map { entries in
          return InputDataSignalValue(entries: entries, animated: true)

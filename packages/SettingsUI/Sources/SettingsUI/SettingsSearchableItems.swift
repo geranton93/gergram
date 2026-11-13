@@ -586,6 +586,15 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(19), title: localizedString("Gergram.Appearance.AnimateSwitches"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .switchAnimations)
         }),
+        SettingsSearchableItem(id: .appearance(20), title: localizedString("Gergram.Chat.HideFastShare"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .fastShare)
+        }),
+        SettingsSearchableItem(id: .appearance(21), title: localizedString("Gergram.Chat.HideGreetingSticker"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .greetingSticker)
+        }),
+        SettingsSearchableItem(id: .appearance(22), title: localizedString("Gergram.Profile.AdaptiveMusicCover"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .adaptiveMusicCover)
+        }),
     ]
 }
 

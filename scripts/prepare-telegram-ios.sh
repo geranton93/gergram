@@ -11,20 +11,39 @@ if [ ! -f "$ios/submodules/TelegramVoip/Package.swift" ]; then
 fi
 
 case "$#:${1:-}" in
-    0:)
-        if git -C "$ios" apply --reverse --check "$patch" 2>/dev/null; then
-            exit 0
-        fi
-        ;;
-    1:--reverse)
-        if git -C "$ios" apply --check "$patch" 2>/dev/null; then
-            exit 0
-        fi
-        ;;
+    0:) target_direction=forward; current_direction=reverse ;;
+    1:--reverse) target_direction=reverse; current_direction=forward ;;
     *)
         printf 'Usage: %s [--reverse]\n' "$0" >&2
         exit 2
         ;;
 esac
 
-git -C "$ios" apply --whitespace=nowarn "$@" "$patch"
+archive="submodules/Postbox/Sources/LocalMessageArchive.swift"
+postbox="submodules/Postbox/Sources/Postbox.swift"
+
+apply_group() {
+    group="$1"
+    direction="$2"
+    shift 2
+    if [ "$direction" = reverse ]; then
+        set -- --reverse "$@"
+    fi
+    if [ "$group" = archive ]; then
+        git -C "$ios" apply --include="$archive" --include="$postbox" "$@" "$patch"
+    else
+        git -C "$ios" apply --exclude="$archive" --exclude="$postbox" "$@" "$patch"
+    fi
+}
+
+groups_to_apply=""
+for patch_group in base archive; do
+    if ! apply_group "$patch_group" "$current_direction" --check 2>/dev/null; then
+        apply_group "$patch_group" "$target_direction" --check
+        groups_to_apply="$groups_to_apply $patch_group"
+    fi
+done
+
+for patch_group in $groups_to_apply; do
+    apply_group "$patch_group" "$target_direction" --whitespace=nowarn
+done

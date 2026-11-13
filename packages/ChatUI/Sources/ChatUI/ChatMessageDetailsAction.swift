@@ -19,13 +19,13 @@ enum ChatMessageDetailsAction {
         let id = message.id
         let location = interaction.chatLocation
         let mode = interaction.mode
-        let details = Self.details(for: message)
+        let details = Self.details(for: message, interaction: interaction)
         let formatter = DateSelectorUtil.chatFullDateFormatter
         let menu = ContextMenu()
         for field in ChatMessageDetails.Field.allCases {
             guard let value = details.value(for: field, dateFormatter: formatter) else { continue }
             let label = localizedString("Gergram.Chat.MessageDetails\(field.rawValue)")
-            let title = String(format: localizedString("Gergram.Chat.MessageDetailsField"), label, value)
+            let title = String(format: localizedString("Gergram.Chat.MessageDetailsField"), label, field.menuValue(value))
             menu.addItem(ContextMenuItem(title, handler: { [weak interaction] in
                 guard let interaction, interaction.chatLocation == location, interaction.mode == mode else { return }
                 copy(field, from: id, interaction: interaction)
@@ -38,8 +38,10 @@ enum ChatMessageDetailsAction {
     }
 
     private static func supportsChat(_ interaction: ChatInteraction) -> Bool {
-        guard !interaction.isLogInteraction, !interaction.interactionContext.isFrozen,
-              interaction.presentation.reportMode == nil, interaction.presentation.state != .selecting else {
+        let context = interaction.interactionContext
+        guard !interaction.isLogInteraction, !context.isFrozen, (context.isCurrent || context.isExternal),
+              context.window.isVisible, interaction.presentation.reportMode == nil, interaction.presentation.state != .selecting,
+              !interaction.presentation.isNotAccessible, interaction.canAnimateUpdates() else {
             return false
         }
         switch interaction.mode {
@@ -67,7 +69,7 @@ enum ChatMessageDetailsAction {
         return canForwardMessage(message, chatInteraction: interaction)
     }
 
-    private static func details(for message: Message) -> ChatMessageDetails {
+    private static func details(for message: Message, interaction: ChatInteraction) -> ChatMessageDetails {
         let forwarded: Int32? = message.forwardInfo.flatMap { info in
             info.psaType?.isEmpty == false || message.media.contains(where: { $0 is TelegramMediaStory }) ? nil : info.date
         }
@@ -77,7 +79,56 @@ enum ChatMessageDetailsAction {
             editedAt: message.editedAttribute?.date,
             forwardedAt: forwarded,
             views: message.attributes.lazy.compactMap { ($0 as? ViewCountMessageAttribute)?.count }.first,
-            forwards: message.attributes.lazy.compactMap { ($0 as? ForwardCountMessageAttribute)?.count }.first
+            forwards: message.attributes.lazy.compactMap { ($0 as? ForwardCountMessageAttribute)?.count }.first,
+            media: mediaDetails(
+                for: message.media,
+                isConcealed: message.isMediaSpoilered || message.isSensitiveContent(
+                    platform: "ios", contentSettings: interaction.interactionContext.contentSettings
+                )
+            )
+        )
+    }
+
+    static func mediaDetails(for attachments: [Media], isConcealed: Bool) -> ChatMessageDetails.MediaDetails? {
+        guard !isConcealed else { return nil }
+
+        for media in attachments {
+            if let file = media as? TelegramMediaFile, let resource = file.resource as? CloudDocumentMediaResource {
+                return .init(
+                    fileSize: file.size.flatMap { $0 > 0 ? $0 : nil } ?? resource.size,
+                    mimeType: file.mimeType,
+                    fileName: file.fileName,
+                    dimensions: file.dimensions.map { ($0.width, $0.height) },
+                    dataCenter: resource.datacenterId
+                )
+            }
+            if let image = media as? TelegramMediaImage {
+                let videos = image.videoRepresentations.compactMap {
+                    imageDetails(resource: $0.resource, dimensions: $0.dimensions, mimeType: "video/mp4")
+                }
+                if let video = videos.max(by: { $0.pixelArea < $1.pixelArea }) {
+                    return video
+                }
+                let photos = image.representations.compactMap {
+                    imageDetails(resource: $0.resource, dimensions: $0.dimensions, mimeType: "image/jpeg")
+                }
+                if let photo = photos.max(by: { $0.pixelArea < $1.pixelArea }) {
+                    return photo
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func imageDetails(resource: TelegramMediaResource, dimensions: PixelDimensions, mimeType: String) -> ChatMessageDetails.MediaDetails? {
+        let dataCenter = (resource as? CloudPhotoSizeMediaResource)?.datacenterId ?? (resource as? CloudFileMediaResource)?.datacenterId
+        guard let dataCenter, dimensions.width > 0, dimensions.height > 0 else { return nil }
+        return .init(
+            fileSize: resource.size,
+            mimeType: mimeType,
+            fileName: nil,
+            dimensions: (dimensions.width, dimensions.height),
+            dataCenter: dataCenter
         )
     }
 
@@ -92,11 +143,11 @@ enum ChatMessageDetailsAction {
         }
 
         _ = (load |> deliverOnMainQueue).startStandalone(next: { [weak interaction] result in
-            guard let interaction, interaction.canAnimateUpdates(), supportsChat(interaction),
+            guard let interaction, supportsChat(interaction),
                   interaction.chatLocation == location, interaction.mode == mode,
                   let (message, peer, cachedData) = result,
                   supportsMessage(message, peer: peer, cachedData: cachedData, interaction: interaction),
-                  let value = details(for: message).value(for: field, dateFormatter: DateSelectorUtil.chatFullDateFormatter) else {
+                  let value = details(for: message, interaction: interaction).value(for: field, dateFormatter: DateSelectorUtil.chatFullDateFormatter) else {
                 return
             }
             copyToClipboard(value)

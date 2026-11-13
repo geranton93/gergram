@@ -837,35 +837,29 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
         |> distinctUntilChanged
 
         
-        self.preloadStorySubscriptionsDisposable = (self.context.engine.messages.preloadStorySubscriptions(isHidden: self.mode.groupId == .archive, preferHighQuality: preferHighQualityStories)
-                   |> deliverOnMainQueue).start(next: { [weak self] resources in
-                       guard let `self` = self else {
-                           return
-                       }
-                       
-                       var validIds: [MediaId] = []
-                       for (_, info) in resources.sorted(by: { $0.value.priority < $1.value.priority }) {
-                           if let mediaId = info.media.id {
-                               validIds.append(mediaId)
-                               if self.preloadStoryResourceDisposables[mediaId] == nil {
-                                   self.preloadStoryResourceDisposables[mediaId] = preloadStoryMedia(context: self.context, info: info).startStrict()
-                               }
-                           }
-                       }
-                       
-                       var removeIds: [MediaId] = []
-                       for (id, disposable) in self.preloadStoryResourceDisposables {
-                           if !validIds.contains(id) {
-                               removeIds.append(id)
-                               disposable.dispose()
-                           }
-                       }
-                       for id in removeIds {
-                           self.preloadStoryResourceDisposables.removeValue(forKey: id)
-                       }
-                   })
-
-
+        let speculativeStories = self.context.engine.messages.preloadStorySubscriptions(
+            isHidden: self.mode.groupId == .archive,
+            preferHighQuality: preferHighQualityStories
+        )
+        let hideStories = additionalSettings(accountManager: context.sharedContext.accountManager)
+            |> map { $0.hideChatListStories }
+            |> distinctUntilChanged
+        self.preloadStorySubscriptionsDisposable = (combineLatest(speculativeStories, hideStories)
+        |> deliverOnMainQueue).start(next: { [weak self] resources, hideStories in
+            guard let self else { return }
+            let orderedResources = hideStories ? [] : resources.values.sorted { $0.priority < $1.priority }
+            var activeIDs = Set<MediaId>()
+            for info in orderedResources {
+                guard let mediaId = info.media.id, activeIDs.insert(mediaId).inserted else { continue }
+                if self.preloadStoryResourceDisposables[mediaId] == nil {
+                    self.preloadStoryResourceDisposables[mediaId] = preloadStoryMedia(context: self.context, info: info).startStrict()
+                }
+            }
+            let removedIDs = self.preloadStoryResourceDisposables.keys.filter { !activeIDs.contains($0) }
+            for id in removedIDs {
+                self.preloadStoryResourceDisposables.removeValue(forKey: id)?.dispose()
+            }
+        })
 
         let arguments = Arguments(context: context, openFilterSettings: { filter in
             if case .filter = filter {

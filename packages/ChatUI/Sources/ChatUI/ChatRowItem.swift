@@ -2563,8 +2563,13 @@ public class ChatRowItem: TableRowItem {
                             self.adminBadgeIsRank = rankType != .none
                             self.adminBadgeRankType = rankType
                             self.adminBadgeColor = rankType != .none ? badgeColor : nil
-                        }
-                        else if ChatRowItem.authorIsChannel(message: message, account: context.account) {
+                        } else if ChatRowItem.authorIsChannel(message: message, account: context.account)
+                            || ChatChannelAuthorBadge.showsDirectAuthor(
+                                in: (coreMessageMainPeer(message) as? TelegramChannel)?.info,
+                                author: (message.author as? TelegramChannel)?.info,
+                                displaysAuthor: peer.id == message.author?.id,
+                                isIncoming: isIncoming
+                            ) {
                             badge = .initialize(string: " " + strings().chatChannelBadge, color: !hasBubble ? theme.colors.grayText : theme.chat.grayText(isIncoming, object.renderType == .bubble), font: .normal(.short))
                             self.adminBadgeIsRank = false
                             self.adminBadgeColor = nil

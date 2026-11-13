@@ -12,6 +12,11 @@ enum ChatZalgoTextFilter {
         return NSAttributedString(attributedString: result)
     }
 
+    static func displayName(_ name: String, enabled: Bool) -> String {
+        guard enabled else { return name }
+        return filteredText(name) ?? name
+    }
+
     private static func filteredText(_ text: String) -> String? {
         let scalars = text.unicodeScalars
         var result = String()

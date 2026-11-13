@@ -3,6 +3,14 @@ import XCTest
 @testable import ChatUI
 
 final class ChatZalgoTextFilterTests: XCTestCase {
+    func testDisplayNamesRespectPreferenceAndPreserveOrdinaryScripts() {
+        let displayName = "A\u{0301} Л\u{0301} 👩🏽‍💻 שלום"
+        XCTAssertEqual(ChatZalgoTextFilter.displayName(displayName, enabled: true), displayName)
+        let malformed = "N\u{0301}\u{0308}\u{0327}ame\u{202E}"
+        XCTAssertEqual(ChatZalgoTextFilter.displayName(malformed, enabled: false), malformed)
+        XCTAssertEqual(ChatZalgoTextFilter.displayName(malformed, enabled: true), "N\u{2060}\u{2060}\u{2060}ame\u{2060}")
+    }
+
     func testOrdinaryMarksAndEmojiHaveNoPresentationOverride() {
         let text = "e\u{0301}\u{0323} का a\u{20DD} 👩🏽‍💻 שלום"
         XCTAssertNil(ChatZalgoTextFilter.presentation(for: NSAttributedString(string: text)))

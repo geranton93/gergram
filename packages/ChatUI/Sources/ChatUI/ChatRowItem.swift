@@ -1946,6 +1946,10 @@ public class ChatRowItem: TableRowItem {
     
     
     public init(_ initialSize:NSSize, _ chatInteraction:ChatInteraction, _ context: any AccountContextProtocol, _ object: ChatHistoryEntry, theme: TelegramPresentationTheme) {
+        let filtersAuthorNames = FastSettings.filterZalgoText && object.message?.adAttribute == nil
+        func displayName(_ name: String) -> String {
+            ChatZalgoTextFilter.displayName(name, enabled: filtersAuthorNames)
+        }
         self.entry = object
         self.hasVerticalMonoforum = ChatRowItem.hasVerticalMonoforum(object)
         self.effectiveCommentMessage = ChatRowItem.effectiveCommentMessage(object)
@@ -2281,13 +2285,13 @@ public class ChatRowItem: TableRowItem {
 
                     if ChatRowItem.authorIsChannel(message: message, account: context.account) {
                         if let author = info.author {
-                            let range = attr.append(string: author.displayTitle, color: presentation.chat.linkColor(isIncoming, object.renderType == .bubble), font: .medium(.text))
+                            let range = attr.append(string: displayName(author.displayTitle), color: presentation.chat.linkColor(isIncoming, object.renderType == .bubble), font: .medium(.text))
                             
                             let appLink = ChatHistoryLink.peerInfo(link: "", peerId: author.id, action: nil, openChat: !(author is TelegramUser), postId: info.sourceMessageId?.id, callback: chatInteraction.openInfo)
                             attr.add(link: appLink, for: range, color: presentation.chat.linkColor(isIncoming, object.renderType == .bubble))
                         } else {
                             let color = presentation.chat.linkColor(isIncoming, object.renderType == .bubble)
-                            let range = attr.append(string: info.authorTitle, color: color, font: .normal(.text))
+                            let range = attr.append(string: displayName(info.authorTitle), color: color, font: .normal(.text))
                             attr.add(link: LinkHooks.shared.callbackLink("hid", { _ in
                                 hiddenFwdTooltip?()
                             }), for: range, color: color)
@@ -2302,9 +2306,9 @@ public class ChatRowItem: TableRowItem {
                         }
                         
                         if let source = info.source, source.isChannel {
-                            var range = attr.append(string: source.displayTitle, color: color, font: .medium(.text))
+                            var range = attr.append(string: displayName(source.displayTitle), color: color, font: .medium(.text))
                             if info.author?.id != source.id {
-                                let subrange = attr.append(string: " (\(info.authorTitle))", color: color, font: .medium(.text))
+                                let subrange = attr.append(string: " (\(displayName(info.authorTitle)))", color: color, font: .medium(.text))
                                 range.length += subrange.length
                             }
                             
@@ -2313,7 +2317,7 @@ public class ChatRowItem: TableRowItem {
                             attr.add(link: appLink, for: range, color: color)
                             
                         } else {
-                            let range = attr.append(string: info.authorTitle, color: color, font: info.author == nil ? .normal(.text) : .medium(.text))
+                            let range = attr.append(string: displayName(info.authorTitle), color: color, font: info.author == nil ? .normal(.text) : .medium(.text))
                             
                             var linkAbility: Bool = true
                             if let channel = info.author as? TelegramChannel {
@@ -2431,7 +2435,7 @@ public class ChatRowItem: TableRowItem {
                 }
                 
                 var attr: NSMutableAttributedString = NSMutableAttributedString()
-                let fullName = author.compactDisplayTitle
+                let fullName = displayName(author.compactDisplayTitle)
                 
                 let text = strings().chatBubblesForwardedStory(fullName)
                 
@@ -2518,12 +2522,12 @@ public class ChatRowItem: TableRowItem {
                         attr.addAttribute(NSAttributedString.Key.link, value: ChatHistoryLink.peerInfo(link: "", peerId: bot.id, action: nil, openChat: false, postId: nil, callback: chatInteraction.openInfo), range: botRange)
                         if let caller = message.peers[guestAttr.peerId] {
                             _ = attr.append(string: strings().chatRowBotForConnector, color: grayColor, font: .medium(.text))
-                            _ = attr.append(string: caller.compactDisplayTitle, color: linkColor, font: .medium(.text))
+                            _ = attr.append(string: displayName(caller.compactDisplayTitle), color: linkColor, font: .medium(.text))
                         }
                     } else {
                         if canFillAuthorName {
                             authorVerificationPeer = ChatAuthorVerification.peer(author: titlePeer, chatId: message.id.peerId, displaysAuthor: !isBubbled || hasBubble)
-                            let range = attr.append(string: title, color: nameColor, font: .medium(.text))
+                            let range = attr.append(string: displayName(title), color: nameColor, font: .medium(.text))
                             if peer.id.id._internalGetInt64Value() != 0 {
                                 attr.addAttribute(NSAttributedString.Key.link, value: ChatHistoryLink.peerInfo(link: "", peerId:peer.id, action:nil, openChat: peer.isChannel, postId: nil, callback: chatInteraction.openInfo), range: range)
                             } else {
@@ -2668,7 +2672,7 @@ public class ChatRowItem: TableRowItem {
                 let attr: NSMutableAttributedString = NSAttributedString.initialize(string: dateText, color: dateColor, font: dateFont).mutableCopy() as! NSMutableAttributedString
                 
                 if let attribute = message.inlineBotAttribute, let peerId = attribute.peerId, let peer = message.peers[peerId] {
-                    attr.insert(.initialize(string: "\(attribute.title ?? peer.displayTitle), ", color: dateColor, font: dateFont), at: 0)
+                    attr.insert(.initialize(string: "\(displayName(attribute.title ?? peer.displayTitle)), ", color: dateColor, font: dateFont), at: 0)
                 }
                 
                 if let repeatPeriod = message.scheduleRepeatPeriod {
@@ -3909,6 +3913,11 @@ public class ChatRowItem: TableRowItem {
         let incoming = message.effectivelyIncoming(accountPeerId)
         let kind = accessibilityKind
         let announceAuthor = accessibilityAnnouncesAuthor
+        let filtersAuthorNames = FastSettings.filterZalgoText && message.adAttribute == nil
+        func displayName(_ name: String) -> String {
+            ChatZalgoTextFilter.displayName(name, enabled: filtersAuthorNames)
+        }
+        let authorName = message.author.map { displayName($0.displayTitle) }
         var reply: ChatMessageAccessibility.Reply?
         if let attribute = message.replyAttribute, let replied = message.associatedMessages[attribute.messageId] {
             var text = ""
@@ -3920,18 +3929,18 @@ public class ChatRowItem: TableRowItem {
                     text = ChatMessageAccessibility(kind: repliedKind, isIncoming: true, authorName: nil, announceAuthor: false, caption: nil, date: "", status: .none).label
                 }
             }
-            reply = .init(authorName: replied.author?.displayTitle, isIncoming: replied.effectivelyIncoming(accountPeerId), text: text)
+            reply = .init(authorName: replied.author.map { displayName($0.displayTitle) }, isIncoming: replied.effectivelyIncoming(accountPeerId), text: text)
         }
         var forward: ChatMessageAccessibility.Forward?
         if let info = message.forwardInfo {
             if info.author?.id == accountPeerId {
                 forward = .you
             } else if let name = info.author?.displayTitle ?? info.authorSignature {
-                forward = .from(name)
+                forward = .from(displayName(name))
             }
         }
         guard details else {
-            return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: message.author?.displayTitle, announceAuthor: announceAuthor, caption: nil, date: "", status: .none, reply: reply, forward: forward, pluralRecipients: announceAuthor)
+            return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: authorName, announceAuthor: announceAuthor, caption: nil, date: "", status: .none, reply: reply, forward: forward, pluralRecipients: announceAuthor)
         }
         let status: ChatMessageAccessibility.Status
         if incoming {
@@ -3945,7 +3954,7 @@ public class ChatRowItem: TableRowItem {
             status = .sent(read: isRead, played: ChatMessageAccessibility.isConsumable(kind) ? (consumed ?? false) : nil)
         }
         let date = ChatMessageAccessibility.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(message.timestamp)))
-        return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: message.author?.displayTitle, announceAuthor: announceAuthor, caption: ChatMessageAccessibility.caption(for: message, kind: kind), date: date, status: status, reply: reply, forward: forward, isSelected: accessibilitySelected, pluralRecipients: announceAuthor, isEdited: announcesEdit)
+        return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: authorName, announceAuthor: announceAuthor, caption: ChatMessageAccessibility.caption(for: message, kind: kind), date: date, status: status, reply: reply, forward: forward, isSelected: accessibilitySelected, pluralRecipients: announceAuthor, isEdited: announcesEdit)
     }
 
     open var accessibilityKind: ChatMessageAccessibility.Kind {

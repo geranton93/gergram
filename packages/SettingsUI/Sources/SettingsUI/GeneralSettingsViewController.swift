@@ -44,6 +44,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case enterBehavior(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case cmdEnterBehavior(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case sendWithoutSound(sectionId: Int, enabled: Bool)
+    case confirmStickerSends(sectionId: Int, enabled: Bool)
+    case confirmGifSends(sectionId: Int, enabled: Bool)
     case emojiReplacements(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case predictEmoji(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case bigEmoji(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
@@ -122,6 +124,10 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 22
         case .sendWithoutSound:
             return Self.sendWithoutSoundStableId
+        case .confirmStickerSends:
+            return 38
+        case .confirmGifSends:
+            return 39
         case .callSettings:
             return 23
         case .previewChats:
@@ -189,7 +195,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return (sectionId * 1000) + stableId
         case let .enterBehavior(sectionId, _, _):
             return (sectionId * 1000) + stableId
-        case let .cmdEnterBehavior(sectionId, _, _), let .sendWithoutSound(sectionId, _):
+        case let .cmdEnterBehavior(sectionId, _, _), let .sendWithoutSound(sectionId, _),
+             let .confirmStickerSends(sectionId, _), let .confirmGifSends(sectionId, _):
             return (sectionId * 1000) + stableId
         case let .forceTouchReply(sectionId, _, _):
             return (sectionId * 1000) + stableId
@@ -297,8 +304,16 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
                 arguments.toggleForceTouchAction(.edit)
             })
         case let .sendWithoutSound(_, enabled):
-            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Settings.SendWithoutSoundByDefault"), type: .switchable(enabled), viewType: .lastItem, action: {
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Settings.SendWithoutSoundByDefault"), type: .switchable(enabled), viewType: .innerItem, action: {
                 arguments.toggleSendWithoutSound(!enabled)
+            })
+        case let .confirmStickerSends(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ConfirmStickerSends"), type: .switchable(enabled), viewType: .innerItem, action: {
+                ChatMediaSendConfirmationPreferences.shared.set(!enabled, for: .sticker)
+            })
+        case let .confirmGifSends(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ConfirmGifSends"), type: .switchable(enabled), viewType: .lastItem, action: {
+                ChatMediaSendConfirmationPreferences.shared.set(!enabled, for: .gif)
             })
         case let .forceTouchReply(sectionId: _, enabled, viewType):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsForceTouchReply, type: .selectable(enabled), viewType: viewType, action: {
@@ -436,7 +451,7 @@ private final class GeneralSettingsArguments {
    
 }
 
-private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool, filterZalgoText: Bool, sendWithoutSound: Bool, forceTouchAction: ForceTouchAction) -> [GeneralSettingsEntry] {
+private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool, filterZalgoText: Bool, sendWithoutSound: Bool, forceTouchAction: ForceTouchAction, mediaSendConfirmation: ChatMediaSendConfirmationOptions) -> [GeneralSettingsEntry] {
     var sectionId:Int = 1
     var entries:[GeneralSettingsEntry] = []
     
@@ -529,6 +544,8 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.enterBehavior(sectionId: sectionId, enabled: FastSettings.sendingType == .enter, viewType: .firstItem))
     entries.append(.cmdEnterBehavior(sectionId: sectionId, enabled: FastSettings.sendingType == .cmdEnter, viewType: .innerItem))
     entries.append(.sendWithoutSound(sectionId: sectionId, enabled: sendWithoutSound))
+    entries.append(.confirmStickerSends(sectionId: sectionId, enabled: mediaSendConfirmation.stickers))
+    entries.append(.confirmGifSends(sectionId: sectionId, enabled: mediaSendConfirmation.gifs))
     
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
@@ -694,13 +711,13 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
         
         let baseSettingsSignal: Signal<BaseApplicationSettings, NoError> = .single(context.sharedContext.baseSettings) |> then(baseAppSettings(accountManager: context.sharedContext.accountManager))
         
-        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, sendWithoutSound.get()) |> map { settings, _, forceTouchAction, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds, filterZalgoText, sendWithoutSound -> TableUpdateTransition in
+        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, sendWithoutSound.get(), ChatMediaSendConfirmationPreferences.shared.signal) |> map { settings, _, forceTouchAction, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds, filterZalgoText, sendWithoutSound, mediaSendConfirmation -> TableUpdateTransition in
             
             let baseSettings: BaseApplicationSettings = settings
             
             let secretChatSettings = preferencesView.values[PreferencesKeys.secretChatSettings]?.get(SecretChatSettings.self) ?? SecretChatSettings.defaultSettings
             
-            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds, filterZalgoText: filterZalgoText, sendWithoutSound: sendWithoutSound, forceTouchAction: forceTouchAction).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
+            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds, filterZalgoText: filterZalgoText, sendWithoutSound: sendWithoutSound, forceTouchAction: forceTouchAction, mediaSendConfirmation: mediaSendConfirmation).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
             let previous = previos.swap(entries)
             return prepareEntries(left: previous, right: entries, arguments: arguments, initialSize: initialSize.modify({$0}))
             

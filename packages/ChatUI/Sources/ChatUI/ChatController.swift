@@ -2586,6 +2586,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     private let shareContactDisposable:MetaDisposable = MetaDisposable()
     private let peerInputActivitiesDisposable:MetaDisposable = MetaDisposable()
     private let connectionStatusDisposable:MetaDisposable = MetaDisposable()
+    private let mediaSendConfirmation = ChatMediaSendConfirmation()
     private let messagesActionDisposable:MetaDisposable = MetaDisposable()
     private let unblockDisposable:MetaDisposable = MetaDisposable()
     private let updatePinnedDisposable:MetaDisposable = MetaDisposable()
@@ -7573,18 +7574,58 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 stickerRequest?.end()
                 return
             }
+            let kind: ChatMediaSendConfirmationPreferences.Kind?
+            switch (strongSelf.mode, chatAnalyticsMessageKind(file)) {
+            case (.history, .sticker), (.thread, .sticker), (.scheduled, .sticker):
+                kind = .sticker
+            case (.history, .gif), (.thread, .gif), (.scheduled, .gif):
+                kind = .gif
+            default:
+                kind = nil
+            }
+            if kind != nil && strongSelf.mediaSendConfirmation.isPending {
+                stickerRequest?.end()
+                return
+            }
+            let confirmationKind = kind.flatMap { kind in
+                ChatMediaSendConfirmationPreferences.shared.isEnabled(for: kind) ? kind : nil
+            }
+            let sendScheduled = schedule || preSchedule != nil || strongSelf.mode == .scheduled
+            let canSendConfirmedFile: () -> Bool = { [weak strongSelf] in
+                guard let controller = strongSelf, let confirmationKind,
+                      let peer = controller.chatInteraction.peer else { return false }
+                let context = controller.context
+                let interaction = controller.chatInteraction
+                let presentation = interaction.presentation
+                let right: TelegramChatBannedRightsFlags = confirmationKind == .sticker ? .banSendStickers : .banSendGifs
+                return (context.isCurrent || context.isExternal) && context.window.isVisible && !context.isFrozen
+                    && interaction.canAnimateUpdates() && !presentation.isNotAccessible && presentation.isBlocked != true
+                    && (sendScheduled || (presentation.slowMode?.hasLocked != true && !presentation.slowModeMultipleLocked))
+                    && permissionText(from: peer, for: right, cachedData: presentation.cachedData) == nil
+                    && peer.canSendMessage(controller.mode.isThreadMode, media: file, threadData: presentation.threadInfo, cachedData: presentation.cachedData)
+            }
+
             let sound = strongSelf.chatInteraction.resolvedSendSound(requestedSound)
             let silent = sound.notificationIsSilent ?? false
             if peer.canSendMessage(strongSelf.mode.isThreadMode, media: file, threadData: strongSelf.chatInteraction.presentation.threadInfo, cachedData: strongSelf.chatInteraction.presentation.cachedData) {
 
                 let confirmationAction = strongSelf.chatInteraction.captureDeferredSendAction()
-                let invoke:()->Void = { [strongSelf] in
+                let invoke: () -> Void = { [weak strongSelf] in
+                    guard let strongSelf else {
+                        stickerRequest?.end()
+                        return
+                    }
                     guard confirmationAction.takeIfCurrent(onInvalidated: { stickerRequest?.end() }) else { return }
+                    let context = strongSelf.context
                     let origin = strongSelf.chatInteraction.captureAnalyticsContext(inherited: analyticsContext).restricting(peerId: makePeerId())
                     let presentation = origin.beginPresentation()
                     defer { presentation.end() }
                     stickerRequest?.restrict(to: origin)
                     func apply(_ controller: ChatController, atDate: Date?, repeatPeriod: Int32?) {
+                        if confirmationKind != nil && !canSendConfirmedFile() {
+                            stickerRequest?.end()
+                            return
+                        }
                         let replyId = takeReplyId()
                         _ = controller.nextTransaction.execute()
                         let hasFwd = !controller.chatInteraction.presentation.interfaceState.forwardMessageIds.isEmpty
@@ -7670,69 +7711,113 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     }
                 }
                 
-                let chatInteraction = strongSelf.chatInteraction
-                let presentation = chatInteraction.presentation
-                let messagesCount = 1
-                
-                if let payStars = presentation.sendPaidMessageStars, let peer = presentation.peer, let starsState = presentation.starsState {
-                    let starsPrice = Int(payStars.value * Int64(messagesCount))
-                    let amount = strings().starListItemCountOther(starsPrice)
-                    let showPurchase: () -> Void = {
-                        let origin = chatInteraction.captureAnalyticsContext(inherited: analyticsContext)
-                        let presentation = origin.beginPresentation()
-                        defer { presentation.end() }
-                        stickerRequest?.fail(.paymentRequired)
-                        FeatureNavigationHooks.shared.showStarsPurchaseWithContext(context, context.window, .stars, nil, Int64(starsPrice), origin)
+                let continueSend: () -> Void = { [weak strongSelf] in
+                    guard let strongSelf else {
+                        stickerRequest?.end()
+                        return
                     }
-                    
-                    if !presentation.alwaysPaidMessage {
-                        
-                        let messageCountText = strings().chatPayStarsConfirmMessagesOther(messagesCount)
-                        
-                        stickerRequest?.step(.openConfirmation)
-                        let confirmationPresentation = analyticsContext.beginPresentation()
-                        var confirmationResolved = false
-                        verifyAlert(for: chatInteraction.interactionContext.window, header: strings().chatPayStarsConfirmTitle, information: strings().chatPayStarsConfirmText(peer.displayTitle, amount, amount, messageCountText), ok: strings().chatPayStarsConfirmPayOther(messagesCount), option: strings().chatPayStarsConfirmCheckbox, optionIsSelected: false, successHandler: { result in
+                    let context = strongSelf.context
+                    let chatInteraction = strongSelf.chatInteraction
+                    let presentation = chatInteraction.presentation
+                    let messagesCount = 1
+
+                    if let payStars = presentation.sendPaidMessageStars, let peer = presentation.peer, let starsState = presentation.starsState {
+                        let starsPrice = Int(payStars.value * Int64(messagesCount))
+                        let amount = strings().starListItemCountOther(starsPrice)
+                        let showPurchase: () -> Void = { [weak chatInteraction] in
+                            guard let chatInteraction else {
+                                stickerRequest?.end()
+                                return
+                            }
                             let origin = chatInteraction.captureAnalyticsContext(inherited: analyticsContext)
                             let presentation = origin.beginPresentation()
                             defer { presentation.end() }
-                            stickerRequest?.restrict(to: origin)
-                            confirmationResolved = true
-                            guard confirmationAction.isAvailable, chatPaidMessagePriceIsCurrent(chatInteraction, payStars) else { return }
-                            if starsState.balance.value > starsPrice {
-                                chatInteraction.update({ current in
-                                    return current
-                                        .withUpdatedAlwaysPaidMessage(result == .thrid)
+                            stickerRequest?.fail(.paymentRequired)
+                            FeatureNavigationHooks.shared.showStarsPurchaseWithContext(context, context.window, .stars, nil, Int64(starsPrice), origin)
+                        }
+
+                        if !presentation.alwaysPaidMessage {
+
+                            let messageCountText = strings().chatPayStarsConfirmMessagesOther(messagesCount)
+
+                            stickerRequest?.step(.openConfirmation)
+                            verifyChatSendPayment(for: chatInteraction.interactionContext.window,
+                                header: strings().chatPayStarsConfirmTitle,
+                                information: strings().chatPayStarsConfirmText(peer.displayTitle, amount, amount, messageCountText),
+                                ok: strings().chatPayStarsConfirmPayOther(messagesCount),
+                                option: strings().chatPayStarsConfirmCheckbox,
+                                analyticsContext: analyticsContext,
+                                successHandler: { [weak chatInteraction] result in
+                                    guard let chatInteraction else {
+                                        stickerRequest?.end()
+                                        return
+                                    }
+                                    let origin = chatInteraction.captureAnalyticsContext(inherited: analyticsContext)
+                                    stickerRequest?.restrict(to: origin)
+                                    guard confirmationAction.isAvailable, confirmationKind == nil || canSendConfirmedFile(),
+                                          chatPaidMessagePriceIsCurrent(chatInteraction, payStars) else {
+                                        stickerRequest?.end()
+                                        return
+                                    }
+                                    let balance = confirmationKind == nil ? starsState.balance.value : chatInteraction.presentation.starsState?.balance.value
+                                    if let balance, balance > starsPrice {
+                                        chatInteraction.update { $0.withUpdatedAlwaysPaidMessage(result == .thrid) }
+                                        if result == .thrid {
+                                            FastSettings.toggleCofirmPaid(peer.id, price: Int(payStars.value))
+                                        }
+                                        invoke()
+                                    } else {
+                                        showPurchase()
+                                    }
+                                }, cancelHandler: {
+                                    stickerRequest?.step(.cancelConfirmation)
+                                    stickerRequest?.cancel()
+                                }, dismissed: {
+                                    stickerRequest?.end()
                                 })
-                                if result == .thrid {
-                                    FastSettings.toggleCofirmPaid(peer.id, price: Int(payStars.value))
-                                }
+                        } else {
+                            if starsState.balance.value > starsPrice {
                                 invoke()
                             } else {
                                 showPurchase()
                             }
-                        }, cancelHandler: {
-                            let presentation = analyticsContext.beginPresentation()
-                            defer { presentation.end() }
-                            confirmationResolved = true
-                            stickerRequest?.step(.cancelConfirmation)
-                            stickerRequest?.cancel()
-                        }, onDeinit: {
-                            DispatchQueue.main.async {
-                                if !confirmationResolved { stickerRequest?.end() }
-                                confirmationPresentation.end()
-                            }
-                        })
-                        
-                    } else {
-                        if starsState.balance.value > starsPrice {
-                            invoke()
-                        } else {
-                            showPurchase()
                         }
+                    } else {
+                        invoke()
                     }
+                }
+
+                if let confirmationKind {
+                    guard canSendConfirmedFile() else {
+                        stickerRequest?.end()
+                        return
+                    }
+                    let title = localizedString(confirmationKind == .sticker ? "Gergram.Chat.ConfirmStickerSend" : "Gergram.Chat.ConfirmGifSend")
+                    let data = ModalAlertData(title: title, info: "", ok: strings().modalSend, mode: .confirm(text: strings().modalCancel, isThird: false))
+                    let visibility = context.window.visibility
+                    let lifetime: Signal<Bool, NoError>
+                    if context.isExternal {
+                        lifetime = visibility
+                    } else {
+                        let accountId = context.account.id
+                        let activeAccount = context.sharedContext.activeAccounts |> map { $0.primary?.id == accountId } |> distinctUntilChanged
+                        lifetime = combineLatest(visibility, activeAccount) |> map { $0 && $1 }
+                    }
+                    strongSelf.mediaSendConfirmation.start(lifetime: lifetime, present: { accept, cancel, dismiss in
+                        return showDismissableModalAlert(for: context.window, data: data, completion: { _ in accept() }, cancel: cancel, onDeinit: dismiss)
+                    }, accepted: {
+                        guard confirmationAction.isAvailable, canSendConfirmedFile() else {
+                            stickerRequest?.end()
+                            return
+                        }
+                        continueSend()
+                    }, cancelled: {
+                        stickerRequest?.cancel()
+                    }, dismissed: {
+                        stickerRequest?.end()
+                    })
                 } else {
-                    invoke()
+                    continueSend()
                 }
             } else {
                 stickerRequest?.fail(.chatPermission)
@@ -11790,6 +11875,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     }
 
     public override func readyToDetach() {
+        mediaSendConfirmation.cancel()
         cancelAlwaysUseAIRequest()
         chatInteraction.voiceTranscription?.stopForNavigation()
         chatInteraction.receivedAudioTranscription.cancel()
@@ -11803,6 +11889,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
 
     public override func viewWillDisappear(_ animated: Bool) {
+        mediaSendConfirmation.cancel()
         cancelAlwaysUseAIRequest()
         chatInteraction.invalidateDeferredSendActions()
         super.viewWillDisappear(animated)

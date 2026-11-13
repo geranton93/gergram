@@ -127,21 +127,30 @@ final class ChatMediaSendConfirmationTests: XCTestCase {
         }
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = ChatMediaSendConfirmationPreferences(defaults: defaults)
-        var changes: [(Bool, Bool)] = []
-        let disposable = preferences.signal.start(next: { changes.append(($0.stickers, $0.gifs)) })
+        var changes: [ChatMediaSendConfirmationOptions] = []
+        let disposable = preferences.signal.start(next: { changes.append($0) })
         defer { disposable.dispose() }
 
         XCTAssertFalse(preferences.isEnabled(for: .sticker))
         XCTAssertFalse(preferences.isEnabled(for: .gif))
+        XCTAssertFalse(preferences.isEnabled(for: .voiceMessage))
+        XCTAssertFalse(preferences.isEnabled(for: .roundVideo))
         preferences.set(true, for: .sticker)
         preferences.set(true, for: .sticker)
         preferences.set(true, for: .gif)
         preferences.set(false, for: .sticker)
-        XCTAssertEqual(changes.map(\.0), [false, true, true, false])
-        XCTAssertEqual(changes.map(\.1), [false, false, true, true])
+        preferences.set(true, for: .voiceMessage)
+        preferences.set(true, for: .roundVideo)
+        preferences.set(false, for: .voiceMessage)
+        XCTAssertEqual(changes.map(\.stickers), [false, true, true, false, false, false, false])
+        XCTAssertEqual(changes.map(\.gifs), [false, false, true, true, true, true, true])
+        XCTAssertEqual(changes.map(\.voiceMessages), [false, false, false, false, true, true, false])
+        XCTAssertEqual(changes.map(\.roundVideos), [false, false, false, false, false, true, true])
 
         let reopened = ChatMediaSendConfirmationPreferences(defaults: defaults)
         XCTAssertFalse(reopened.isEnabled(for: .sticker))
         XCTAssertTrue(reopened.isEnabled(for: .gif))
+        XCTAssertFalse(reopened.isEnabled(for: .voiceMessage))
+        XCTAssertTrue(reopened.isEnabled(for: .roundVideo))
     }
 }

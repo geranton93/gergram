@@ -108,6 +108,8 @@ public class ChatInputRecordingView: View {
     private let previewDisposable = MetaDisposable()
     private let resumeDisposable = MetaDisposable()
     private let submissionDisposable = MetaDisposable()
+    private let sendConfirmationDisposable = MetaDisposable()
+    private var isConfirmingSend = false
 
     private var overlayWindow: ChatRecorderOverlayWindow?
 
@@ -243,6 +245,22 @@ public class ChatInputRecordingView: View {
 
         submissionDisposable.set((recorder.submissionState.get() |> deliverOnMainQueue).start(next: { [weak self] state in
             self?.updateSubmissionState(state)
+        }))
+
+        sendConfirmationDisposable.set((chatInteraction.recordingSendConfirmationPresented.get() |> deliverOnMainQueue).start(next: { [weak self] isPresented in
+            guard let self else { return }
+            self.isConfirmingSend = isPresented
+            if isPresented {
+                if self.state != .fixed {
+                    self.hold(transition: .immediate)
+                }
+                self.overlayWindow?.detach()
+                if self.previewPlayer?.isPlaying == true {
+                    self.previewPlayer?.toggle()
+                }
+            } else if !self.isDismissing, self.window != nil {
+                self.overlayWindow?.attach()
+            }
         }))
 
         updateLocalizationAndTheme(theme: theme)
@@ -466,6 +484,7 @@ public class ChatInputRecordingView: View {
         previewDisposable.dispose()
         resumeDisposable.dispose()
         submissionDisposable.dispose()
+        sendConfirmationDisposable.dispose()
     }
 
     public required init?(coder: NSCoder) {
@@ -534,7 +553,9 @@ public class ChatInputRecordingView: View {
         overlayWindow?.detach()
         let overlayWindow = ChatRecorderOverlayWindow(parent: window)
         self.overlayWindow = overlayWindow
-        overlayWindow.attach()
+        if !isConfirmingSend {
+            overlayWindow.attach()
+        }
 
         if let contentView = window.contentView, let floatingHost = overlayWindow.contentView {
             for view in floatingControls {
@@ -554,7 +575,7 @@ public class ChatInputRecordingView: View {
 
         let mouseMoved: (NSEvent) -> KeyHandlerResult = { [weak self] _ in
             guard let self else { return .rejected }
-            if self.isPaused {
+            if self.isPaused || self.isConfirmingSend {
                 return .rejected
             }
             self.overlayView.updateInside()
@@ -565,7 +586,7 @@ public class ChatInputRecordingView: View {
 
         window.set(mouseHandler: { [weak self] _ -> KeyHandlerResult in
             guard let self else { return .rejected }
-            if self.draggingPreview {
+            if self.draggingPreview || self.isConfirmingSend {
                 return .rejected
             }
             if self.isMouseOverTranscription {
@@ -582,13 +603,17 @@ public class ChatInputRecordingView: View {
             return self.proccessMouseUp()
         }
 
-        window.set(mouseHandler: { _ in return .invoked }, with: self, for: .leftMouseDown, priority: .modal)
+        window.set(mouseHandler: { [weak self] _ in
+            self?.isConfirmingSend == true ? .invokeNext : .invoked
+        }, with: self, for: .leftMouseDown, priority: .modal)
         window.set(mouseHandler: proccessMouseUp, with: self, for: .leftMouseUp, priority: .modal)
         window.set(mouseHandler: { [weak self] _ in
-            return self?.isMouseOverTranscription == true ? .invokeNext : .invoked
+            guard let self else { return .rejected }
+            return self.isConfirmingSend || self.isMouseOverTranscription ? .invokeNext : .invoked
         }, with: self, for: .rightMouseDown, priority: .modal)
         window.set(mouseHandler: { [weak self] _ in
-            return self?.isMouseOverTranscription == true ? .invokeNext : .invoked
+            guard let self else { return .rejected }
+            return self.isConfirmingSend || self.isMouseOverTranscription ? .invokeNext : .invoked
         }, with: self, for: .rightMouseUp, priority: .modal)
         overlayWindow.set(mouseHandler: { _ in return .invoked }, with: self, for: .leftMouseDown, priority: .modal)
         overlayWindow.set(mouseHandler: proccessMouseUp, with: self, for: .leftMouseUp, priority: .modal)
@@ -724,7 +749,7 @@ public class ChatInputRecordingView: View {
 
         let proccessMouseUp: (NSEvent) -> KeyHandlerResult = { [weak self] _ in
             guard let self else { return .rejected }
-            if findModal(InputDataModalController.self) != nil {
+            if self.isConfirmingSend || findModal(InputDataModalController.self) != nil {
                 return .rejected
             }
             if self.isMouseOverChatNavigation || self.isMouseOverTranscription {
@@ -938,6 +963,7 @@ public class ChatInputRecordingView: View {
     }
 
     private func proccessMouseUp() -> KeyHandlerResult {
+        guard !isConfirmingSend else { return .invokeNext }
         if isTranscribing {
             chatInteraction.voiceTranscription?.perform(.edit)
             return .invoked
@@ -984,6 +1010,7 @@ public class ChatInputRecordingView: View {
             startBlinking()
         }
         pauseControl.kind = paused ? .recordMore : .pause
+        pauseControl.isEnabled = (recorder as? ChatRecordingVideoState)?.hasReachedDurationLimit != true
         overlayView.updatePaused(paused)
         layoutFloatingControls(transition: .animated(duration: 0.3, curve: .spring))
         needsLayout = true
@@ -1073,6 +1100,7 @@ public class ChatInputRecordingView: View {
     }
 
     private func resumeRecording() {
+        guard (recorder as? ChatRecordingVideoState)?.hasReachedDurationLimit != true else { return }
         guard let parent, preview != nil, isPaused, !isResuming, !recorder.isPreparingSubmission, !isDismissing, !recorder.isCancelled else {
             return
         }
@@ -1120,6 +1148,7 @@ public class ChatInputRecordingView: View {
     private func setResuming(_ value: Bool) {
         isResuming = value
         pauseControl.isEnabled = !value && !recorder.isPreparingSubmission
+            && (recorder as? ChatRecordingVideoState)?.hasReachedDurationLimit != true
         scrubber.userInteractionEnabled = !value && !recorder.isPreparingSubmission
     }
 
@@ -1155,7 +1184,7 @@ public class ChatInputRecordingView: View {
         guard !isResuming, !recorder.isPreparingSubmission else { return }
         recorder.isOneTime = singleTimeControl.isSelected
         recorder.analyticsRecordingJourney?.setOneTime(singleTimeControl.isSelected)
-        recorder.send(from: chatInteraction, via: .release, closingOtherModals: true)
+        chatInteraction.submitRecording(recorder, via: .release)
     }
 
     private func stopAndCancel() {

@@ -46,6 +46,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case sendWithoutSound(sectionId: Int, enabled: Bool)
     case confirmStickerSends(sectionId: Int, enabled: Bool)
     case confirmGifSends(sectionId: Int, enabled: Bool)
+    case confirmVoiceSends(sectionId: Int, enabled: Bool)
+    case confirmRoundVideoSends(sectionId: Int, enabled: Bool)
     case emojiReplacements(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case predictEmoji(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case bigEmoji(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
@@ -128,6 +130,10 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 38
         case .confirmGifSends:
             return 39
+        case .confirmVoiceSends:
+            return 40
+        case .confirmRoundVideoSends:
+            return 41
         case .callSettings:
             return 23
         case .previewChats:
@@ -196,7 +202,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
         case let .enterBehavior(sectionId, _, _):
             return (sectionId * 1000) + stableId
         case let .cmdEnterBehavior(sectionId, _, _), let .sendWithoutSound(sectionId, _),
-             let .confirmStickerSends(sectionId, _), let .confirmGifSends(sectionId, _):
+             let .confirmStickerSends(sectionId, _), let .confirmGifSends(sectionId, _),
+             let .confirmVoiceSends(sectionId, _), let .confirmRoundVideoSends(sectionId, _):
             return (sectionId * 1000) + stableId
         case let .forceTouchReply(sectionId, _, _):
             return (sectionId * 1000) + stableId
@@ -312,8 +319,16 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
                 ChatMediaSendConfirmationPreferences.shared.set(!enabled, for: .sticker)
             })
         case let .confirmGifSends(_, enabled):
-            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ConfirmGifSends"), type: .switchable(enabled), viewType: .lastItem, action: {
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ConfirmGifSends"), type: .switchable(enabled), viewType: .innerItem, action: {
                 ChatMediaSendConfirmationPreferences.shared.set(!enabled, for: .gif)
+            })
+        case let .confirmVoiceSends(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ConfirmVoiceSends"), type: .switchable(enabled), viewType: .innerItem, action: {
+                ChatMediaSendConfirmationPreferences.shared.set(!enabled, for: .voiceMessage)
+            })
+        case let .confirmRoundVideoSends(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ConfirmRoundVideoSends"), type: .switchable(enabled), viewType: .lastItem, action: {
+                ChatMediaSendConfirmationPreferences.shared.set(!enabled, for: .roundVideo)
             })
         case let .forceTouchReply(sectionId: _, enabled, viewType):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsForceTouchReply, type: .selectable(enabled), viewType: viewType, action: {
@@ -546,6 +561,8 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.sendWithoutSound(sectionId: sectionId, enabled: sendWithoutSound))
     entries.append(.confirmStickerSends(sectionId: sectionId, enabled: mediaSendConfirmation.stickers))
     entries.append(.confirmGifSends(sectionId: sectionId, enabled: mediaSendConfirmation.gifs))
+    entries.append(.confirmVoiceSends(sectionId: sectionId, enabled: mediaSendConfirmation.voiceMessages))
+    entries.append(.confirmRoundVideoSends(sectionId: sectionId, enabled: mediaSendConfirmation.roundVideos))
     
     entries.append(.section(sectionId: sectionId))
     sectionId += 1

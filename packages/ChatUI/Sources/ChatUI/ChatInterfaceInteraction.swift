@@ -16,6 +16,7 @@ import ChatHistoryModel
 import TelegramMediaUtils
 import MessageUtils
 import AlertsUI
+import MediaRecorderUI
 import LocalAnimations
 import TelegramCallsCore
 import StarsUI
@@ -545,6 +546,14 @@ public final class ChatInteraction : InterfaceObserver  {
     public var sendMedia:([MediaSenderContainer]) -> Void = {_ in}
     public var sendMediaWithJourney: (([MediaSenderContainer], AnalyticsMediaJourney?, AnalyticsContext?) -> Void)?
     public var sendRecordingMediaWithAnalytics: (([MediaSenderContainer], AnalyticsContext, AnalyticsRecordingRequest?) -> Void)?
+    let recordingSendConfirmationPresented = ValuePromise(false, ignoreRepeated: true)
+    var requestRecordingSendConfirmation: ((ChatRecordingState, AnalyticsRecordingJourney.Spec.SubmitVia) -> Bool)?
+
+    func submitRecording(_ recording: ChatRecordingState, via: AnalyticsRecordingJourney.Spec.SubmitVia) {
+        if requestRecordingSendConfirmation?(recording, via) != true {
+            recording.send(from: self, via: via, closingOtherModals: true)
+        }
+    }
     public func sendRecordingMediaObserved(_ media: [MediaSenderContainer], analyticsContext: AnalyticsContext, request: AnalyticsRecordingRequest?) {
         let origin = captureAnalyticsContext(inherited: analyticsContext)
         request?.restrict(to: origin)
@@ -1763,6 +1772,8 @@ public final class ChatInteraction : InterfaceObserver  {
         self.sendMedia = { _ in }
         self.sendMediaWithJourney = nil
         self.sendRecordingMediaWithAnalytics = nil
+        self.requestRecordingSendConfirmation = nil
+        self.recordingSendConfirmationPresented.set(false)
         self.sendCreatedStickerWithAnalytics = nil
         self.fileSendConfirmationKind = nil
         self.sendAppFileWithContext = nil

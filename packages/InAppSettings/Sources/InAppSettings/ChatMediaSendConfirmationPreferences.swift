@@ -4,10 +4,14 @@ import SwiftSignalKit
 public struct ChatMediaSendConfirmationOptions: Equatable {
     public let stickers: Bool
     public let gifs: Bool
+    public let voiceMessages: Bool
+    public let roundVideos: Bool
 
     fileprivate init(defaults: UserDefaults) {
         stickers = defaults.bool(forKey: ChatMediaSendConfirmationPreferences.Kind.sticker.key)
         gifs = defaults.bool(forKey: ChatMediaSendConfirmationPreferences.Kind.gif.key)
+        voiceMessages = defaults.bool(forKey: ChatMediaSendConfirmationPreferences.Kind.voiceMessage.key)
+        roundVideos = defaults.bool(forKey: ChatMediaSendConfirmationPreferences.Kind.roundVideo.key)
     }
 }
 
@@ -15,11 +19,15 @@ public final class ChatMediaSendConfirmationPreferences {
     public enum Kind {
         case sticker
         case gif
+        case voiceMessage
+        case roundVideo
 
         fileprivate var key: String {
             switch self {
             case .sticker: return "Gergram.Chat.ConfirmStickerSends"
             case .gif: return "Gergram.Chat.ConfirmGifSends"
+            case .voiceMessage: return "Gergram.Chat.ConfirmVoiceSends"
+            case .roundVideo: return "Gergram.Chat.ConfirmRoundVideoSends"
             }
         }
     }

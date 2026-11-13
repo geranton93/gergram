@@ -4691,6 +4691,9 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         chatInteraction.startRecording = { [weak self] hold, view in
             self?.chatInteraction.startRecordingWithAnalytics?(hold, view, nil)
         }
+        chatInteraction.requestRecordingSendConfirmation = { [weak self] recording, via in
+            self?.confirmRecordingSendIfEnabled(recording, via: via) ?? false
+        }
         chatInteraction.startDictation = { [weak self] in
             self?.pendingDictation = true
             self?.chatInteraction.startRecordingWithAnalytics?(true, nil, nil)
@@ -4778,6 +4781,10 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                                 return
                             }
                             chatInteraction.sendRecordingMediaObserved(medias, analyticsContext: analyticsContext, request: request)
+                        }
+                        recorder.requestSendAtDurationLimit = { [weak self, weak state] in
+                            guard let self, let state else { return true }
+                            return self.confirmRecordingSendIfEnabled(state, via: .durationLimit)
                         }
                         self?.videoRecorderModal = recorder
                         showModal(with: recorder, for: context.window)
@@ -11755,6 +11762,117 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         return true
     }
     
+    private func confirmRecordingSendIfEnabled(_ recording: ChatRecordingState, via: AnalyticsRecordingJourney.Spec.SubmitVia) -> Bool {
+        let isVoice = recording is ChatRecordingAudioState
+        let video = recording as? ChatRecordingVideoState
+        guard isVoice || video != nil else { return false }
+        switch mode {
+        case .history, .thread, .scheduled:
+            break
+        default:
+            return false
+        }
+        let kind: ChatMediaSendConfirmationPreferences.Kind = isVoice ? .voiceMessage : .roundVideo
+        let requiresConfirmation = ChatMediaSendConfirmationPreferences.shared.isEnabled(for: kind)
+        guard requiresConfirmation || mediaSendConfirmation.isPending else { return false }
+
+        let interaction = chatInteraction
+        guard interaction.presentation.recordingState === recording, !recording.isCancelled,
+              !recording.isPreparingSubmission else { return true }
+
+        if via == .durationLimit {
+            video?.pauseAtDurationLimit()
+        }
+        guard !mediaSendConfirmation.isPending else { return true }
+
+        let payment = interaction.presentation.sendPaidMessageStars
+        let confirmationAction = interaction.captureDeferredSendAction()
+        let canSend: () -> Bool = { [weak self, weak recording] in
+            guard let self, let recording, (self.context.isCurrent || self.context.isExternal),
+                  self.context.window.isVisible, !self.context.isFrozen else { return false }
+            let interaction = self.chatInteraction
+            let presentation = interaction.presentation
+            guard presentation.recordingState === recording, !recording.isCancelled,
+                  !recording.isPreparingSubmission, !presentation.isNotAccessible,
+                  presentation.sendPaidMessageStars == payment, interaction.canAnimateUpdates(),
+                  let peer = interaction.peer, presentation.isBlocked != true else { return false }
+            if self.mode != .scheduled && (presentation.slowMode?.hasLocked == true || presentation.slowModeMultipleLocked) {
+                return false
+            }
+            if let thread = presentation.threadInfo, thread.isClosed, !peer.isAdmin, !thread.isOwnedByMe {
+                return false
+            }
+            if let cachedData = presentation.cachedData as? CachedUserData, !cachedData.voiceMessagesAvailable {
+                return false
+            }
+            return permissionText(from: peer, for: isVoice ? .banSendVoice : .banSendInstantVideos,
+                                  cachedData: presentation.cachedData) == nil
+        }
+        guard canSend() else { return true }
+
+        let title = localizedString(isVoice ? "Gergram.Chat.ConfirmVoiceSend" : "Gergram.Chat.ConfirmRoundVideoSend")
+        let data = ModalAlertData(title: title, info: "", ok: strings().modalSend, mode: .confirm(text: strings().modalCancel, isThird: false))
+        let window = context.window
+        let lifetime: Signal<Bool, NoError>
+        if context.isExternal {
+            lifetime = window.visibility
+        } else {
+            let accountId = context.account.id
+            let activeAccount = context.sharedContext.activeAccounts |> map { $0.primary?.id == accountId } |> distinctUntilChanged
+            lifetime = combineLatest(window.visibility, activeAccount) |> map { $0 && $1 }
+        }
+        let closeConfirmation: () -> Void = { [weak interaction] in
+            interaction?.recordingSendConfirmationPresented.set(false)
+        }
+        let readyToConfirm: Signal<Bool, NoError>
+        if let video {
+            readyToConfirm = video.pipeline.statePromise.get() |> map { status -> Bool? in
+                switch status {
+                case .paused:
+                    return true
+                case .failed, .stopped, .stoppingRecording, .finishRecording:
+                    return false
+                default:
+                    return nil
+                }
+            } |> filter { $0 != nil } |> map { $0 == true } |> take(1)
+                |> timeout(10, queue: .mainQueue(), alternate: .single(false))
+        } else {
+            readyToConfirm = .single(true)
+        }
+        if via != .durationLimit {
+            recording.pause()
+        }
+        interaction.recordingSendConfirmationPresented.set(true)
+        mediaSendConfirmation.start(lifetime: lifetime, present: { [weak recording] accept, cancel, dismiss in
+            let modal = MetaDisposable()
+            let readiness = (readyToConfirm |> deliverOnMainQueue).start(next: { ready in
+                guard ready, let recording, canSend(), confirmationAction.isAvailable else {
+                    dismiss()
+                    return
+                }
+                recording.analyticsRecordingJourney?.step(.openConfirmation)
+                modal.set(ActionDisposable(action: showDismissableModalAlert(for: window, data: data,
+                    completion: { _ in accept() }, cancel: cancel, onDeinit: dismiss)))
+            })
+            return {
+                readiness.dispose()
+                modal.dispose()
+            }
+        }, accepted: { [weak interaction, weak recording] in
+            guard let interaction, let recording, canSend(), confirmationAction.takeIfCurrent() else {
+                closeConfirmation()
+                return
+            }
+            interaction.recordingSendConfirmationPresented.set(false)
+            recording.send(from: interaction, via: via, closingOtherModals: true)
+        }, cancelled: { [weak recording] in
+            recording?.analyticsRecordingJourney?.step(.cancelConfirmation)
+            closeConfirmation()
+        }, dismissed: closeConfirmation)
+        return true
+    }
+
     private var isConfirmingDiscardRecording: Bool = false
 
     public func confirmDiscardRecordingIfNeeded(confirmed: @escaping () -> Void) -> Bool {
@@ -11803,7 +11921,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             return .invoked
         }
         if let recordingState = chatInteraction.presentation.recordingState {
-            recordingState.send(from: chatInteraction, via: .keyboard, closingOtherModals: true)
+            chatInteraction.submitRecording(recordingState, via: .keyboard)
             return .invoked
         }
         return super.returnKeyAction()

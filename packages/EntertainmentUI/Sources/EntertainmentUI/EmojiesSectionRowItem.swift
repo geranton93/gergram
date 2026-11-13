@@ -316,6 +316,11 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
     
     public override func menuItems(in location: NSPoint) -> Signal<[ContextMenuItem], NoError> {
         var items: [ContextMenuItem] = []
+        if let preview = (self.view as? EmojiesSectionRowView)?.previewAction(at: location) {
+            items.append(ContextMenuItem(preview.name, handler: {
+                _ = preview.perform()
+            }, itemImage: MenuAnimation.menu_show.value))
+        }
         
         let info = self.info
         let context = self.context
@@ -527,23 +532,47 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
 
     
     func fileAtPoint(_ point: NSPoint) -> (QuickPreviewMedia, NSView?)? {
-        if let item = itemUnderMouse?.1, let file = item.item?.file {
-            let emojiReference = file._parse().emojiReference ?? file._parse().stickerReference
-            if let emojiReference = emojiReference {
-                let reference = FileMediaReference.stickerPack(stickerPack: emojiReference, media: file._parse())
-                if file.isVideoSticker && !file._parse().isWebm {
-                    return (.file(reference, EntertainmentUIHooks.shared.previewViewType(.gif)), nil)
-                } else if file.isAnimatedSticker || file._parse().isWebm || file.isCustomEmoji {
-                    return (.file(reference, EntertainmentUIHooks.shared.previewViewType(.animatedSticker)), nil)
-                } else if file.isStaticSticker  {
-                    return (.file(reference, EntertainmentUIHooks.shared.previewViewType(.sticker)), nil)
-                }
-            }
+        guard let file = entry(at: point)?.item?.file._parse() else { return nil }
+        return previewMedia(for: file).map { ($0, nil) }
+    }
+
+    private func previewMedia(for file: TelegramMediaFile) -> QuickPreviewMedia? {
+        let reference: FileMediaReference
+        if let pack = file.emojiReference ?? file.stickerReference {
+            reference = .stickerPack(stickerPack: pack, media: file)
+        } else if file.isCustomEmoji {
+            reference = .standalone(media: file)
+        } else {
+            return nil
+        }
+        if file.isVideoSticker && !file.isWebm {
+            return .file(reference, EntertainmentUIHooks.shared.previewViewType(.gif))
+        } else if file.isAnimatedSticker || file.isWebm || file.isCustomEmoji {
+            return .file(reference, EntertainmentUIHooks.shared.previewViewType(.animatedSticker))
+        } else if file.isStaticSticker {
+            return .file(reference, EntertainmentUIHooks.shared.previewViewType(.sticker))
         }
         return nil
     }
-    
-    
+
+    fileprivate func previewAction(at point: NSPoint) -> EntertainmentAccessibilityAction? {
+        guard let item = self.item as? EmojiesSectionRowItem, let entry = entry(at: point) else { return nil }
+        return previewAction(for: entry, in: item)
+    }
+
+    private func previewAction(for entry: EmojiesSectionRowItem.Item, in item: EmojiesSectionRowItem) -> EntertainmentAccessibilityAction? {
+        guard entry.item?.file.isCustomEmoji == true else { return nil }
+        return EntertainmentAccessibilityAction(name: localizedString("Gergram.Emoji.Preview"), perform: { [weak self, weak item] in
+            guard let self, let item, self.item === item, let window = self.window as? Window,
+                  let current = item.items.first(where: { isSameEmojiEntry($0, entry) }),
+                  self.contentView.visibleRect.intersects(current.rect),
+                  let file = current.item?.file._parse(), let media = self.previewMedia(for: file) else { return false }
+            self.previewHandle?.dispose()
+            self.previewHandle = showModalPreview(media, window: window, context: item.context, dismissTitle: strings().modalOK)
+            return self.previewHandle != nil
+        })
+    }
+
     fileprivate final class UnlockView : Control {
         private let gradient: PremiumGradientView = PremiumGradientView(frame: .zero)
         private let textView = TextView()
@@ -633,15 +662,7 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
         }, for: .Up)
         
         contentView.set(handler: { [weak self] _ in
-            if self?.largeHoldTimer != nil || self?.largeInvoked == true {
-                return
-            }
-            let item = self?.item as? EmojiesSectionRowItem
-            let table = item?.table
-            let window = self?.window as? Window
-            if let item = item, let table = table, let window = window {
-                startModalPreviewHandle(table, window: window, context: item.context)
-            }
+            self?.showPressedEmojiPreview()
         }, for: .LongMouseDown)
         
     }
@@ -651,6 +672,8 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
     }
     
     private var currentDownItem: (InlineStickerItemLayer, EmojiesSectionRowItem.Item, Bool)?
+    private var pressedEntryInWindow: NSRect?
+    private var previewHandle: Disposable?
     private var largeHoldTimer: SwiftSignalKit.Timer?
     private var largeInvoked: Bool = false
 
@@ -686,10 +709,36 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
     }
 
     private let dragTracker = EntertainmentDragTracker()
-    private func updateDown() {
+
+    private func showPressedEmojiPreview() {
+        guard largeHoldTimer == nil, !largeInvoked, !dragTracker.isDragging,
+              let pressed = currentDownItem, let pressedEntryInWindow,
+              pressedEntryInWindow == contentView.convert(pressed.1.rect, to: nil),
+              isSameEmojiEntry(itemUnderMouse?.1, pressed.1),
+              let item = self.item as? EmojiesSectionRowItem, let table = item.table, let window = self.window as? Window else { return }
+        guard let handle = startModalPreviewHandle(table, window: window, context: item.context) else { return }
+        cancelLargeHold()
+        currentDownItem = nil
+        self.pressedEntryInWindow = nil
+        dragTracker.down(in: nil)
+        previewHandle = handle
+    }
+
+    private func resetPreviewInteraction() {
+        pressedEntryInWindow = nil
+        previewHandle?.dispose()
+        previewHandle = nil
+        guard !dragTracker.isDragging else { return }
+        cancelLargeHold()
+        currentDownItem = nil
         largeInvoked = false
+    }
+
+    private func updateDown() {
+        resetPreviewInteraction()
         if let item = itemUnderMouse {
             self.currentDownItem = (item.0, item.1, true)
+            self.pressedEntryInWindow = contentView.convert(item.1.rect, to: nil)
             self.dragTracker.down(in: window)
         }
         if let current = self.currentDownItem, current.1.item != nil, let send = (self.item as? EmojiesSectionRowItem)?.largeCallback?() {
@@ -699,6 +748,11 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
         }
     }
     private func updateDragging() {
+        if let pressed = currentDownItem, let pressedEntryInWindow,
+           let point = window?.mouseLocationOutsideOfEventStream,
+           !pressedEntryInWindow.contains(point) || !isSameEmojiEntry(itemUnderMouse?.1, pressed.1) {
+            pressedEntryInWindow = nil
+        }
         if largeHoldTimer != nil {
             if !isSameEmojiEntry(self.itemUnderMouse?.1, self.currentDownItem?.1) {
                 cancelLargeHold()
@@ -732,6 +786,7 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
             
     }
     private func updateUp() {
+        defer { pressedEntryInWindow = nil }
         if largeInvoked {
             self.currentDownItem = nil
             return
@@ -803,6 +858,17 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
         }
     }
     
+    private func entry(at point: NSPoint) -> EmojiesSectionRowItem.Item? {
+        return entry(atContentPoint: contentView.convert(point, from: self))
+    }
+
+    private func entry(atContentPoint point: NSPoint) -> EmojiesSectionRowItem.Item? {
+        guard contentView.visibleRect.contains(point), let item = self.item as? EmojiesSectionRowItem else {
+            return nil
+        }
+        return item.items.first(where: { $0.rect.contains(point) })
+    }
+
     fileprivate func item(at point: NSPoint) -> StickerPackItem? {
         let point = contentView.convert(point, from: self)
         guard contentView.bounds.contains(point), let item = self.item as? EmojiesSectionRowItem else {
@@ -812,25 +878,15 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
     }
 
     fileprivate var itemUnderMouse: (InlineStickerItemLayer, EmojiesSectionRowItem.Item)? {
-        guard let window = self.window, let item = self.item as? EmojiesSectionRowItem else {
+        guard let window = self.window else { return nil }
+        let point = contentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        guard let entry = entry(atContentPoint: point),
+              let layer = inlineStickerItemViews.first(where: { NSPointInRect(point, $0.value.frame) })?.value else {
             return nil
         }
-        let point = self.contentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        
-        let firstItem = item.items.first(where: {
-            return NSPointInRect(point, $0.rect)
-        })
-        let firstLayer = self.inlineStickerItemViews.first(where: { layer in
-            return NSPointInRect(point, layer.1.frame)
-        })?.value
-        
-        if let firstItem = firstItem, let firstLayer = firstLayer {
-            return (firstLayer, firstItem)
-        }
-        
-        return nil
+        return (layer, entry)
     }
-    
+
     private func accessibilityCells() -> [EntertainmentAccessibilityCell] {
         guard let item = self.item as? EmojiesSectionRowItem else {
             return []
@@ -842,8 +898,8 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
             }
             let file = current.file._parse()
             let label = file.customEmojiText ?? file.stickerText ?? strings().voiceOverCommonEmoji
-            cells.append(EntertainmentAccessibilityCell(id: AnyHashable(index), label: label, frame: entry.rect, isSelected: entry.selection != nil, press: { [weak self, weak item] in
-                guard let self = self, let item = item, let window = self.window else {
+            cells.append(EntertainmentAccessibilityCell(id: AnyHashable(index), label: label, frame: entry.rect, isSelected: entry.selection != nil, alternateAction: previewAction(for: entry, in: item), press: { [weak self, weak item] in
+                guard let self = self, let item = item, self.item === item, let window = self.window else {
                     return
                 }
                 let wrect = self.contentView.convert(entry.rect, to: nil)
@@ -903,7 +959,17 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
     }
 
     
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if window !== newWindow {
+            resetPreviewInteraction()
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
     override func set(item: TableRowItem, animated: Bool = false) {
+        if self.item !== item {
+            resetPreviewInteraction()
+        }
         super.set(item: item, animated: animated)
         
         guard let item = item as? EmojiesSectionRowItem else {
@@ -1100,6 +1166,10 @@ private final class EmojiesSectionRowView : TableRowView, ModalPreviewRowViewPro
    
     
     override func updateAnimatableContent() -> Void {
+        if let pressed = currentDownItem, let pressedEntryInWindow,
+           (pressedEntryInWindow != contentView.convert(pressed.1.rect, to: nil) || window?.isKeyWindow != true) {
+            self.pressedEntryInWindow = nil
+        }
         for (_, value) in self.inlineStickerItemViews {
             if let superview = value.superview {
                 var isKeyWindow: Bool = false

@@ -4,6 +4,7 @@ set -eu
 scripts_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 ios="$scripts_dir/../submodules/telegram-ios"
 patch="$scripts_dir/telegram-ios-macos.patch"
+capture_patch="$scripts_dir/telegram-ios-local-archive-capture.patch"
 
 if [ ! -f "$ios/submodules/TelegramVoip/Package.swift" ]; then
     printf 'Initialize the telegram-ios submodule before preparing the macOS build.\n' >&2
@@ -29,15 +30,15 @@ apply_group() {
     if [ "$direction" = reverse ]; then
         set -- --reverse "$@"
     fi
-    if [ "$group" = archive ]; then
-        git -C "$ios" apply --include="$archive" --include="$postbox" "$@" "$patch"
-    else
-        git -C "$ios" apply --exclude="$archive" --exclude="$postbox" "$@" "$patch"
-    fi
+    case "$group" in
+        base) git -C "$ios" apply --exclude="$archive" --exclude="$postbox" "$@" "$patch" ;;
+        archive) git -C "$ios" apply --include="$archive" --include="$postbox" "$@" "$patch" ;;
+        capture) git -C "$ios" apply "$@" "$capture_patch" ;;
+    esac
 }
 
 groups_to_apply=""
-for patch_group in base archive; do
+for patch_group in base archive capture; do
     if ! apply_group "$patch_group" "$current_direction" --check 2>/dev/null; then
         apply_group "$patch_group" "$target_direction" --check
         groups_to_apply="$groups_to_apply $patch_group"

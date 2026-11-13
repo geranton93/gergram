@@ -1,0 +1,453 @@
+diff --git a/submodules/Postbox/Sources/LocalArchiveCaptureSettings.swift b/submodules/Postbox/Sources/LocalArchiveCaptureSettings.swift
+new file mode 100644
+index 0000000..7fcbea2
+--- /dev/null
++++ b/submodules/Postbox/Sources/LocalArchiveCaptureSettings.swift
+@@ -0,0 +1,27 @@
++import Foundation
++
++public struct LocalArchiveCaptureSettings: Codable, Equatable {
++    public static let key = ValueBoxKey("gergram.local-archive.capture")
++    public static let defaultSettings = LocalArchiveCaptureSettings()
++
++    public let captureDeletions: Bool
++    public let captureEdits: Bool
++    public let captureBots: Bool
++
++    public init(captureDeletions: Bool = false, captureEdits: Bool = false, captureBots: Bool = false) {
++        self.captureDeletions = captureDeletions
++        self.captureEdits = captureEdits
++        self.captureBots = captureBots
++    }
++}
++
++public extension Transaction {
++    func localArchiveCaptureSettings() -> LocalArchiveCaptureSettings {
++        return self.getPreferencesEntry(key: LocalArchiveCaptureSettings.key)?.get(LocalArchiveCaptureSettings.self) ?? .defaultSettings
++    }
++
++    func updateLocalArchiveCaptureSettings(_ settings: LocalArchiveCaptureSettings) {
++        guard let entry = PreferencesEntry(settings) else { return }
++        self.updatePreferencesEntry(key: LocalArchiveCaptureSettings.key) { _ in entry }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/Account/AccountIntermediateState.swift b/submodules/TelegramCore/Sources/Account/AccountIntermediateState.swift
+index b305242..bc65f60 100644
+--- a/submodules/TelegramCore/Sources/Account/AccountIntermediateState.swift
++++ b/submodules/TelegramCore/Sources/Account/AccountIntermediateState.swift
+@@ -90,9 +90,9 @@ enum AccountStateMutationOperation {
+     case AddMessages([StoreMessage], AddMessagesLocation)
+     case AddScheduledMessages([StoreMessage])
+     case AddQuickReplyMessages([StoreMessage])
+-    case DeleteMessagesWithGlobalIds([Int32])
+-    case DeleteMessages([MessageId])
+-    case EditMessage(MessageId, StoreMessage)
++    case DeleteMessagesWithGlobalIds([Int32], archiveRevision: Int32? = nil)
++    case DeleteMessages([MessageId], archiveRevision: Int32? = nil)
++    case EditMessage(MessageId, StoreMessage, archiveRevision: Int32? = nil)
+     case UpsertEphemeralReplacement(MessageId, StoreMessage)
+     case DeleteEphemeralMessages(PeerId, [Int32])
+     case UpdateMessagePoll(MediaId, Api.Poll?, Api.PollResults)
+@@ -383,20 +383,20 @@ struct AccountMutableState {
+         self.joinChatWebViewDecisions.append(decision)
+     }
+ 
+-    mutating func deleteMessagesWithGlobalIds(_ globalIds: [Int32]) {
+-        self.addOperation(.DeleteMessagesWithGlobalIds(globalIds))
++    mutating func deleteMessagesWithGlobalIds(_ globalIds: [Int32], archiveRevision: Int32? = nil) {
++        self.addOperation(.DeleteMessagesWithGlobalIds(globalIds, archiveRevision: archiveRevision))
+     }
+     
+-    mutating func deleteMessages(_ messageIds: [MessageId]) {
+-        self.addOperation(.DeleteMessages(messageIds))
++    mutating func deleteMessages(_ messageIds: [MessageId], archiveRevision: Int32? = nil) {
++        self.addOperation(.DeleteMessages(messageIds, archiveRevision: archiveRevision))
+     }
+     
+     mutating func addSentScheduledMessageIds(_ messageIds: [MessageId]) {
+         self.sentScheduledMessageIds.formUnion(messageIds)
+     }
+     
+-    mutating func editMessage(_ id: MessageId, message: StoreMessage) {
+-        self.addOperation(.EditMessage(id, message))
++    mutating func editMessage(_ id: MessageId, message: StoreMessage, archiveRevision: Int32? = nil) {
++        self.addOperation(.EditMessage(id, message, archiveRevision: archiveRevision))
+     }
+ 
+     mutating func upsertEphemeralReplacement(anchorId: MessageId, message: StoreMessage) {
+diff --git a/submodules/TelegramCore/Sources/State/Sync/LocalArchiveCapture.swift b/submodules/TelegramCore/Sources/State/Sync/LocalArchiveCapture.swift
+new file mode 100644
+index 0000000..7eb22fd
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/State/Sync/LocalArchiveCapture.swift
+@@ -0,0 +1,239 @@
++import Foundation
++import Postbox
++
++public struct LocalArchiveSnapshot {
++    public let text: String
++    public let timestamp: Int32
++    public let authorId: PeerId?
++    public let entities: [MessageTextEntity]
++
++    private static let maximumPayloadSize = 32 * 1024
++    private static let maximumTextSize = 16 * 1024
++    private static let maximumEntityCount = 128
++
++    private struct Payload: Codable {
++        let version: Int
++        let text: String
++        let timestamp: Int32
++        let author: Int64?
++        let entities: [Entity]
++    }
++
++    private struct Entity: Codable {
++        private enum CodingKeys: String, CodingKey {
++            case rawType = "_rawValue"
++            case peerId
++            case stickerPack = "s"
++        }
++
++        let value: MessageTextEntity
++
++        init(_ value: MessageTextEntity) {
++            if case let .CustomEmoji(_, fileId) = value.type {
++                self.value = MessageTextEntity(range: value.range, type: .CustomEmoji(stickerPack: nil, fileId: fileId))
++            } else {
++                self.value = value
++            }
++        }
++
++        init(from decoder: Decoder) throws {
++            let container = try decoder.container(keyedBy: CodingKeys.self)
++            let rawType = try container.decode(Int32.self, forKey: .rawType)
++            switch rawType {
++            case 11:
++                let peerId = try container.decode(Int64.self, forKey: .peerId)
++                guard LocalArchiveSnapshot.decodeCloudPeerId(peerId) != nil else {
++                    throw DecodingError.dataCorruptedError(forKey: .peerId, in: container, debugDescription: "Invalid archived mention peer")
++                }
++            case 18:
++                guard !container.contains(.stickerPack) else {
++                    throw DecodingError.dataCorruptedError(forKey: .stickerPack, in: container, debugDescription: "Unexpected archived sticker pack reference")
++                }
++            default:
++                break
++            }
++            self.value = try MessageTextEntity(from: decoder)
++        }
++
++        func encode(to encoder: Encoder) throws {
++            try self.value.encode(to: encoder)
++        }
++    }
++
++    public static func decode(_ data: Data) -> LocalArchiveSnapshot? {
++        guard data.count <= Self.maximumPayloadSize,
++              let payload = try? JSONDecoder().decode(Payload.self, from: data),
++              payload.version == 1, payload.timestamp > 0 else {
++            return nil
++        }
++        let authorId = payload.author.flatMap(Self.decodeCloudPeerId)
++        let entities = payload.entities.map(\.value)
++        guard payload.author == nil || authorId != nil,
++              Self.isValidText(payload.text, entities: entities) else {
++            return nil
++        }
++        return LocalArchiveSnapshot(text: payload.text, timestamp: payload.timestamp, authorId: authorId, entities: entities)
++    }
++
++    fileprivate static func encode(text: String, timestamp: Int32, authorId: PeerId?, entities: [MessageTextEntity]) -> Data? {
++        guard timestamp > 0, Self.isValidText(text, entities: entities) else { return nil }
++        let payload = Payload(version: 1, text: text, timestamp: timestamp, author: authorId?.toInt64(), entities: entities.map(Entity.init))
++        guard let data = try? JSONEncoder().encode(payload), data.count <= Self.maximumPayloadSize else { return nil }
++        return data
++    }
++
++    private static func decodeCloudPeerId(_ value: Int64) -> PeerId? {
++        let bits = UInt64(bitPattern: value)
++        let namespace = (bits >> 32) & 0x7
++        guard bits >> 59 == 0, namespace <= 2, (bits & ~(UInt64(0x7) << 32)) != 0 else { return nil }
++        return PeerId(value)
++    }
++
++    fileprivate static func isValidText(_ text: String, entities: [MessageTextEntity], allowEmpty: Bool = false) -> Bool {
++        guard allowEmpty || !text.isEmpty,
++              text.utf8.count <= Self.maximumTextSize,
++              entities.count <= Self.maximumEntityCount else {
++            return false
++        }
++        let textLength = text.utf16.count
++        return entities.allSatisfy { entity in
++            guard entity.range.lowerBound >= 0, !entity.range.isEmpty, entity.range.upperBound <= textLength else { return false }
++            switch entity.type {
++            case .Spoiler, .Unknown, .Custom:
++                return false
++            case let .TextMention(peerId):
++                return Self.decodeCloudPeerId(peerId.toInt64()) != nil
++            case let .TextUrl(url):
++                return url.utf8.count <= 2048
++            case let .Pre(language):
++                return (language?.utf8.count ?? 0) <= 128
++            default:
++                return true
++            }
++        }
++    }
++}
++
++extension ReplayContext {
++    func archiveDeletedMessages(_ ids: [MessageId], revision: Int32?) {
++        self.archiveDeletedMessages(in: ids, revision: revision) { Array($0) }
++    }
++
++    func archiveDeletedGlobalMessages(_ ids: [Int32], revision: Int32?) {
++        self.archiveDeletedMessages(in: ids, revision: revision) { self.transaction.messageIdsForGlobalIds(Array($0)) }
++    }
++
++    private func archiveDeletedMessages<ID>(in ids: [ID], revision: Int32?, resolve: (ArraySlice<ID>) -> [MessageId]) {
++        guard let revision, revision > 0, !ids.isEmpty else { return }
++        let settings = self.transaction.localArchiveCaptureSettings()
++        guard settings.captureDeletions else { return }
++        let now = Int64(Date().timeIntervalSince1970)
++        let batchSize = 128
++        for offset in stride(from: 0, to: ids.count, by: batchSize) {
++            let end = min(offset + batchSize, ids.count)
++            var messages: [LocalArchiveMessage] = []
++            for id in resolve(ids[offset ..< end]) {
++                guard let message = self.eligibleArchiveMessage(id, captureBots: settings.captureBots),
++                      let archived = Self.archiveEntry(message, kind: .deletion, revision: revision, now: now) else { continue }
++                messages.append(archived)
++            }
++            self.storeArchiveEntries(messages, now: now)
++        }
++    }
++
++    func archiveEditedMessage(_ id: MessageId, updated: StoreMessage, revision: Int32?) {
++        guard let revision, revision > 0, case let .Id(updatedId) = updated.id, updatedId == id else { return }
++        let settings = self.transaction.localArchiveCaptureSettings()
++        guard settings.captureEdits,
++              updated.flags.contains(.Incoming), !updated.flags.contains(.CopyProtected),
++              updated.authorId != self.accountPeerId, updated.forwardInfo == nil,
++              Self.isArchiveContentAllowed(attributes: updated.attributes, media: updated.media, captureBots: settings.captureBots),
++              !updated.attributes.contains(where: { ($0 as? EditedMessageAttribute)?.isHidden == true }),
++              let previous = self.eligibleArchiveMessage(id, captureBots: settings.captureBots),
++              previous.author?.id == updated.authorId,
++              !previous.attributes.contains(where: { ($0 as? ChannelMessageStateVersionAttribute).map { $0.pts >= revision } == true }) else {
++            return
++        }
++        let previousEntities = previous.textEntitiesAttribute?.entities ?? []
++        let updatedEntities = updated.attributes.lazy.compactMap { $0 as? TextEntitiesMessageAttribute }.first?.entities ?? []
++        guard !previous.text.utf16.elementsEqual(updated.text.utf16) || previousEntities != updatedEntities,
++              LocalArchiveSnapshot.isValidText(updated.text, entities: updatedEntities, allowEmpty: true) else {
++            return
++        }
++        let now = Int64(Date().timeIntervalSince1970)
++        if let archived = Self.archiveEntry(previous, kind: .edit, revision: revision, now: now) {
++            self.storeArchiveEntries([archived], now: now)
++        }
++    }
++
++    private func eligibleArchiveMessage(_ id: MessageId, captureBots: Bool) -> Message? {
++        guard id.namespace == Namespaces.Message.Cloud, id.id > 0,
++              id.peerId != self.accountPeerId, id.peerId.id._internalGetInt64Value() > 0,
++              let message = self.transaction.getMessage(id), !message.text.isEmpty,
++              message.flags.contains(.Incoming), message.forwardInfo == nil,
++              !message.isCopyProtected(), message.threadId.map({ $0 > 0 }) != false,
++              let author = message.author, author.id != self.accountPeerId,
++              Self.isArchivePeerAllowed(author, captureBots: captureBots),
++              let peer = self.transaction.getPeer(id.peerId),
++              Self.isArchivePeerAllowed(peer, captureBots: captureBots),
++              self.finalState.state.peers[id.peerId].map({ Self.isArchivePeerAllowed($0, captureBots: captureBots) }) != false,
++              Self.isArchiveContentAllowed(attributes: message.attributes, media: message.media, captureBots: captureBots) else {
++            return nil
++        }
++        if id.peerId.namespace == Namespaces.Peer.CloudUser {
++            guard let cached = self.transaction.getPeerCachedData(peerId: id.peerId) as? CachedUserData,
++                  cached.flags.intersection([.copyProtectionEnabled, .myCopyProtectionEnabled]).isEmpty else {
++                return nil
++            }
++        }
++        return message
++    }
++
++    private static func isArchivePeerAllowed(_ peer: Peer, captureBots: Bool) -> Bool {
++        guard !peer.isCopyProtectionEnabled else { return false }
++        switch peer {
++        case let user as TelegramUser:
++            return user.restrictionInfo?.rules.isEmpty != false && (captureBots || user.botInfo == nil)
++        case let channel as TelegramChannel:
++            return channel.restrictionInfo?.rules.isEmpty != false
++        case is TelegramGroup:
++            return true
++        default:
++            return false
++        }
++    }
++
++    private static func isArchiveContentAllowed(attributes: [MessageAttribute], media: [Media], captureBots: Bool) -> Bool {
++        guard media.allSatisfy({ $0 is TelegramMediaImage || $0 is TelegramMediaFile || $0 is TelegramMediaWebpage }) else {
++            return false
++        }
++        for attribute in attributes {
++            switch attribute {
++            case is AutoclearTimeoutMessageAttribute, is AutoremoveTimeoutMessageAttribute,
++                 is EphemeralMessageAttribute, is EphemeralOutgoingMessageAttribute, is EphemeralReplacementMessageAttribute,
++                 is RestrictedContentMessageAttribute, is PaidStarsMessageAttribute, is RichTextMessageAttribute,
++                 is MediaSpoilerMessageAttribute, is PendingProcessingMessageAttribute, is ContentRequiresValidationMessageAttribute:
++                return false
++            case is InlineBotMessageAttribute, is InlineBusinessBotMessageAttribute:
++                if !captureBots { return false }
++            default:
++                break
++            }
++        }
++        return true
++    }
++
++    private static func archiveEntry(_ message: Message, kind: LocalArchiveMessage.Kind, revision: Int32, now: Int64) -> LocalArchiveMessage? {
++        let entities = message.textEntitiesAttribute?.entities ?? []
++        guard let snapshot = LocalArchiveSnapshot.encode(text: message.text, timestamp: message.timestamp, authorId: message.author?.id, entities: entities) else {
++            return nil
++        }
++        let id = LocalArchiveMessage.ID(message: message.id, threadId: message.threadId, kind: kind, revision: Int64(revision))
++        return LocalArchiveMessage(id: id, capturedAt: now, snapshot: snapshot)
++    }
++
++    private func storeArchiveEntries(_ entries: [LocalArchiveMessage], now: Int64) {
++        guard !entries.isEmpty else { return }
++        try? self.transaction.appendLocalArchiveMessages(accountId: self.accountPeerId.toInt64(), messages: entries, now: now)
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift b/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
+index cf1ab15..2af1b2c 100644
+--- a/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
++++ b/submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
+@@ -273,7 +273,8 @@ extension ReplayContext {
+         deleteEphemeralMessages(transaction: transaction, peerId: peerId, ids: ids)
+     }
+     
+-    func applyDeleteMessagesWithGlobalIds(_ ids: [Int32]) {
++    func applyDeleteMessagesWithGlobalIds(_ ids: [Int32], archiveRevision: Int32? = nil) {
++        self.archiveDeletedGlobalMessages(ids, revision: archiveRevision)
+         var resourceIds: [MediaResourceId] = []
+         transaction.deleteMessagesWithGlobalIds(ids, forEachMedia: { media in
+             addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
+@@ -284,7 +285,8 @@ extension ReplayContext {
+         deletedMessageIds.append(contentsOf: ids.map { .global($0) })
+     }
+     
+-    func applyDeleteMessages(_ ids: [MessageId]) {
++    func applyDeleteMessages(_ ids: [MessageId], archiveRevision: Int32? = nil) {
++        self.archiveDeletedMessages(ids, revision: archiveRevision)
+         _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids, manualAddMessageThreadStatsDifference: { id, add, remove in
+             self.addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)
+         })
+@@ -304,7 +306,8 @@ extension ReplayContext {
+         }
+     }
+     
+-    func applyEditMessage(_ id: MessageId, _ message: StoreMessage) {
++    func applyEditMessage(_ id: MessageId, _ message: StoreMessage, archiveRevision: Int32? = nil) {
++        self.archiveEditedMessage(id, updated: message, revision: archiveRevision)
+         var generatedEvent: (reactionAuthor: Peer, reaction: MessageReaction.Reaction, message: Message, timestamp: Int32)?
+         transaction.updateMessage(id, update: { previousMessage in
+             let peers: [PeerId:Peer] = previousMessage.peers.reduce([:], { current, value in
+diff --git a/submodules/TelegramCore/Sources/State/Sync/StateReplay.swift b/submodules/TelegramCore/Sources/State/Sync/StateReplay.swift
+index 4ca0760..04ce433 100644
+--- a/submodules/TelegramCore/Sources/State/Sync/StateReplay.swift
++++ b/submodules/TelegramCore/Sources/State/Sync/StateReplay.swift
+@@ -407,16 +407,16 @@ final class ReplayContext {
+                     self.applyUpsertEphemeralReplacement(anchorMessageId, message)
+                 case let .DeleteEphemeralMessages(peerId, ids):
+                     self.applyDeleteEphemeralMessages(peerId, ids)
+-                case let .DeleteMessagesWithGlobalIds(ids):
+-                    self.applyDeleteMessagesWithGlobalIds(ids)
+-                case let .DeleteMessages(ids):
+-                    self.applyDeleteMessages(ids)
++                case let .DeleteMessagesWithGlobalIds(ids, archiveRevision):
++                    self.applyDeleteMessagesWithGlobalIds(ids, archiveRevision: archiveRevision)
++                case let .DeleteMessages(ids, archiveRevision):
++                    self.applyDeleteMessages(ids, archiveRevision: archiveRevision)
+                 case let .UpdateMinAvailableMessage(id):
+                     self.applyUpdateMinAvailableMessage(id)
+                 case let .UpdatePeerChatInclusion(peerId, groupId, changedGroup):
+                     self.applyUpdatePeerChatInclusion(peerId, groupId, changedGroup)
+-                case let .EditMessage(id, message):
+-                    self.applyEditMessage(id, message)
++                case let .EditMessage(id, message, archiveRevision):
++                    self.applyEditMessage(id, message, archiveRevision: archiveRevision)
+                 case let .UpdateMessagePoll(pollId, apiPoll, results):
+                     self.applyUpdateMessagePoll(pollId, apiPoll, results)
+                 case let .UpdateMedia(id, media):
+diff --git a/submodules/TelegramCore/Sources/State/Sync/SyncResolve.swift b/submodules/TelegramCore/Sources/State/Sync/SyncResolve.swift
+index 63af85b..63763ac 100644
+--- a/submodules/TelegramCore/Sources/State/Sync/SyncResolve.swift
++++ b/submodules/TelegramCore/Sources/State/Sync/SyncResolve.swift
+@@ -718,7 +718,7 @@ private func messagesFromOperations(state: AccountMutableState) -> [StoreMessage
+         switch operation {
+         case let .AddMessages(messagesValue, _):
+             messages.append(contentsOf: messagesValue)
+-        case let .EditMessage(_, message):
++        case let .EditMessage(_, message, _):
+             messages.append(message)
+         case let .UpsertEphemeralReplacement(_, message):
+             messages.append(message)
+diff --git a/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Channels.swift b/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Channels.swift
+index bc1b7b5..cb506c0 100644
+--- a/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Channels.swift
++++ b/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Channels.swift
+@@ -50,7 +50,7 @@ extension UpdateInterpreter {
+             if previousState.pts >= pts {
+                 Logger.shared.log("State", "channel \(peerId) (\((updatedState.peers[peerId] as? TelegramChannel)?.title ?? "nil")) skip old delete update")
+             } else if previousState.pts + ptsCount == pts {
+-                updatedState.deleteMessages(messages.map({ MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: $0) }))
++                updatedState.deleteMessages(messages.map({ MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: $0) }), archiveRevision: pts)
+                 updatedState.updateChannelState(peerId, pts: pts)
+             } else {
+                 if channelRecovery.markGap(peerId) {
+@@ -86,7 +86,7 @@ extension UpdateInterpreter {
+                     }
+                     var attributes = message.attributes
+                     attributes.append(ChannelMessageStateVersionAttribute(pts: pts))
+-                    updatedState.editMessage(messageId, message: message.withUpdatedAttributes(attributes))
++                    updatedState.editMessage(messageId, message: message.withUpdatedAttributes(attributes), archiveRevision: pts)
+                     updatedState.updateChannelState(peerId, pts: pts)
+                 } else {
+                     if channelRecovery.markGap(peerId) {
+diff --git a/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Messages.swift b/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Messages.swift
+index 24f8b81..81fc0a3 100644
+--- a/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Messages.swift
++++ b/submodules/TelegramCore/Sources/State/Sync/UpdateInterpreter+Messages.swift
+@@ -17,7 +17,7 @@ extension UpdateInterpreter {
+     }
+     
+     mutating func applyDeleteMessages(_ updateDeleteMessagesData: Api.Update.Cons_updateDeleteMessages) {
+-        updatedState.deleteMessagesWithGlobalIds(updateDeleteMessagesData.messages)
++        updatedState.deleteMessagesWithGlobalIds(updateDeleteMessagesData.messages, archiveRevision: updateDeleteMessagesData.ptsCount > 0 ? updateDeleteMessagesData.pts : nil)
+     }
+     
+     mutating func applyPinnedMessages(_ updatePinnedMessagesData: Api.Update.Cons_updatePinnedMessages) {
+@@ -45,7 +45,7 @@ extension UpdateInterpreter {
+                     updatedState.addPreCachedStory(id: id, story: story)
+                 }
+             }
+-            updatedState.editMessage(messageId, message: message)
++            updatedState.editMessage(messageId, message: message, archiveRevision: updateEditMessageData.ptsCount > 0 ? updateEditMessageData.pts : nil)
+             for media in message.media {
+                 if let media = media as? TelegramMediaAction {
+                     if case .historyCleared = media.action {
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Wallet/WalletTonConnect.swift b/submodules/TelegramCore/Sources/TelegramEngine/Wallet/WalletTonConnect.swift
+index f07a739..dcdfc8b 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Wallet/WalletTonConnect.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Wallet/WalletTonConnect.swift
+@@ -388,7 +388,7 @@ func walletTonConnectEvents(operation: AccountStateMutationOperation) -> [Wallet
+         return [event]
+     case let .AddMessages(updatedMessages, _):
+         messages = updatedMessages
+-    case let .EditMessage(_, message):
++    case let .EditMessage(_, message, _):
+         messages = [message]
+     default:
+         return []

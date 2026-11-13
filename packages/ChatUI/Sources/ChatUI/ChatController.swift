@@ -135,11 +135,12 @@ public final class ChatWrappedEntry : Comparable, Identifiable {
     fileprivate let revealsMediaSpoilers: Bool
     fileprivate let monospaceFont: ChatMonospaceFont
     fileprivate let messageBubbleRadius: Int
+    fileprivate let hidesFastShare: Bool
     public init(
         appearance: AppearanceWrapperEntry<ChatHistoryEntry>, tag: HistoryViewInputTag?, showsTimestampSeconds: Bool = false,
         filtersZalgoText: Bool = false, hidesPremiumStatuses: Bool = false, simplifiesQuotesAndReplies: Bool = false,
         hidesMessageReactions: Bool = false, hidesMessageBubbleTail: Bool = false, messageWidth: ChatMessageWidth = .standard, revealsMediaSpoilers: Bool = false,
-        monospaceFont: ChatMonospaceFont = .system, messageBubbleRadius: Int = MessageBubbleRadiusPreferences.defaultRadius
+        monospaceFont: ChatMonospaceFont = .system, messageBubbleRadius: Int = MessageBubbleRadiusPreferences.defaultRadius, hidesFastShare: Bool = false
     ) {
         self.appearance = appearance
         self.tag = tag
@@ -153,6 +154,7 @@ public final class ChatWrappedEntry : Comparable, Identifiable {
         self.revealsMediaSpoilers = revealsMediaSpoilers
         self.monospaceFont = monospaceFont
         self.messageBubbleRadius = messageBubbleRadius
+        self.hidesFastShare = hidesFastShare
     }
     public var stableId: ChatHistoryEntryId {
         return appearance.entry.stableId
@@ -173,6 +175,7 @@ public func ==(lhs:ChatWrappedEntry, rhs: ChatWrappedEntry) -> Bool {
         && lhs.revealsMediaSpoilers == rhs.revealsMediaSpoilers
         && lhs.monospaceFont == rhs.monospaceFont
         && lhs.messageBubbleRadius == rhs.messageBubbleRadius
+        && lhs.hidesFastShare == rhs.hidesFastShare
 }
 public func <(lhs:ChatWrappedEntry, rhs: ChatWrappedEntry) -> Bool {
     return lhs.appearance.entry < rhs.appearance.entry
@@ -2084,6 +2087,7 @@ fileprivate func prepareEntries(from fromView:ChatHistoryView?, to toView:ChatHi
                 row.hidesMessageReactions = entry.hidesMessageReactions
                 row.hidesMessageBubbleTail = entry.hidesMessageBubbleTail
                 row.messageBubbleRadius = entry.messageBubbleRadius
+                row.hidesFastShare = entry.hidesFastShare
             }
             if let messageRow = item as? ChatMessageItem {
                 messageRow.messageWidth = entry.messageWidth
@@ -4327,7 +4331,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         let localVisibility = supportsLocalMessageVisibility
             ? localMessageVisibility.observe(peerId: peerId)
             : .single([])
-        let historyPresentation = combineLatest(historyUiState, localVisibility, locallyRevealedMessageId.get(), FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, ChatEditedIndicatorPreferences.shared.signal, PremiumStatusVisibilityPreferences.shared.signal, ChatReplyAppearancePreferences.shared.signal, ChatReactionVisibilityPreferences.shared.signal, MessageBubbleTailPreferences.shared.signal, ChatMessageWidthPreferences.shared.signal, ChatMediaSpoilerPreferences.shared.signal, ChatMonospaceFontPreferences.shared.signal, MessageBubbleRadiusPreferences.shared.signal)
+        let historyPresentation = combineLatest(historyUiState, localVisibility, locallyRevealedMessageId.get(), FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, ChatEditedIndicatorPreferences.shared.signal, PremiumStatusVisibilityPreferences.shared.signal, ChatReplyAppearancePreferences.shared.signal, ChatReactionVisibilityPreferences.shared.signal, MessageBubbleTailPreferences.shared.signal, ChatMessageWidthPreferences.shared.signal, ChatMediaSpoilerPreferences.shared.signal, ChatMonospaceFontPreferences.shared.signal, MessageBubbleRadiusPreferences.shared.signal, ChatAffordancePreferences.shared.hidesFastShareSignal)
         typealias HistoryUpdate = (ChatHistoryViewUpdate, TableSavingSide?, ChatHistoryLocationInput, ChatLocation, Int)
         let historyWithFilteredSenders: Signal<(HistoryUpdate, Set<PeerId>), NoError>
         if supportsLocalMessageVisibility {
@@ -4410,7 +4414,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     ) |> mapToQueue { historyUpdate, appearance, maxReadIndex, searchState, animatedEmojiStickers, messageEffects, savedMessageTags, customChannelDiscussionReadState, customThreadOutgoingReadState, updatingMedia, adMessages, reactions, historyPresentation, peerView, recommendedChannels -> Signal<(TableUpdateTransition, ChatHistoryCombinedInitialData, Bool, ChatHistoryView, Bool), NoError> in
 
             let (update, hiddenSenderIds, regexHiddenItems) = historyUpdate
-            let (uiState, localVisibility, revealedMessageId, showsTimestampSeconds, filtersZalgoText, editedIndicatorStyle, hidesPremiumStatuses, simplifiesQuotesAndReplies, hiddenReactionKinds, hidesMessageBubbleTail, messageWidth, revealMediaSpoilers, monospaceFont, messageBubbleRadius) = historyPresentation
+            let (uiState, localVisibility, revealedMessageId, showsTimestampSeconds, filtersZalgoText, editedIndicatorStyle, hidesPremiumStatuses, simplifiesQuotesAndReplies, hiddenReactionKinds, hidesMessageBubbleTail, messageWidth, revealMediaSpoilers, monospaceFont, messageBubbleRadius, hidesFastShare) = historyPresentation
             let pollAnswersLoading = uiState.pollAnswers
             let threadLoading = uiState.threadLoading
             let chatLocation = update.3
@@ -4570,7 +4574,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     default:
                         revealsMediaSpoilers = false
                     }
-                    let entries = messageEntries(msgEntries, location: chatLocation, maxReadIndex: view.isAnchorOnlyWhileLoading ? nil : maxReadIndex, dayGrouping: customChatContents == nil, renderType: chatTheme.bubbled ? .bubble : .list, includeBottom: true, timeDifference: timeDifference, ranks: ranks, pollAnswersLoading: pollAnswersLoading, threadLoading: threadLoading, groupingPhotos: true, autoplayMedia: initialData.autoplayMedia, searchState: searchState, animatedEmojiStickers: bigEmojiEnabled ? animatedEmojiStickers : [:], topFixedMessages: topMessages, customChannelDiscussionReadState: customChannelDiscussionReadState, customThreadOutgoingReadState: customThreadOutgoingReadState, addRepliesHeader: peerId == repliesPeerId && view.earlierId == nil, addWelcomeMessagesHeader: customChatContents?.kind == .welcomeMessages, updatingMedia: updatingMedia, adMessage: ads.fixed, dynamicAdMessages: ads.opportunistic, chatTheme: chatTheme, reactions: reactions, transribeState: uiState.transribe, topicCreatorId: uiState.topicCreatorId, mediaRevealed: uiState.mediaRevealed, translate: uiState.translate, storyState: uiState.storyState, peerStoryStats: view.peerStoryStats, cachedData: peerView?.cachedData, peer: peer, holeLater: view.holeLater, holeEarlier: view.holeEarlier, recommendedChannels: recommendedChannels, includeJoin: includeJoin, earlierId: view.earlierId, laterId: view.laterId, automaticDownload: initialData.autodownloadSettings, savedMessageTags: savedMessageTags, contentSettings: context.contentSettings, codeSyntaxData: uiState.codeSyntaxes, messageEffects: messageEffects, factCheckRevealed: uiState.factCheck, solutionRevealed: uiState.solutionRevealed, quoteRevealed: uiState.quoteRevealed, detailsExpanded: uiState.detailsExpanded, peerStatus: uiState.peerStatus, commonGroups: uiState.commonGroups, monoforumState: uiState.monoforumState, accountPeerId: context.peerId, contentConfig: context.contentConfig, walletFiatRate: uiState.walletFiatRate, editedIndicatorStyle: editedIndicatorStyle).map { ChatWrappedEntry(appearance: AppearanceWrapperEntry(entry: $0, appearance: appearance), tag: view.tag, showsTimestampSeconds: showsTimestampSeconds, filtersZalgoText: filtersZalgoText, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hidesMessageReactions: hidesMessageReactions, hidesMessageBubbleTail: hidesMessageBubbleTail, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius) }
+                    let entries = messageEntries(msgEntries, location: chatLocation, maxReadIndex: view.isAnchorOnlyWhileLoading ? nil : maxReadIndex, dayGrouping: customChatContents == nil, renderType: chatTheme.bubbled ? .bubble : .list, includeBottom: true, timeDifference: timeDifference, ranks: ranks, pollAnswersLoading: pollAnswersLoading, threadLoading: threadLoading, groupingPhotos: true, autoplayMedia: initialData.autoplayMedia, searchState: searchState, animatedEmojiStickers: bigEmojiEnabled ? animatedEmojiStickers : [:], topFixedMessages: topMessages, customChannelDiscussionReadState: customChannelDiscussionReadState, customThreadOutgoingReadState: customThreadOutgoingReadState, addRepliesHeader: peerId == repliesPeerId && view.earlierId == nil, addWelcomeMessagesHeader: customChatContents?.kind == .welcomeMessages, updatingMedia: updatingMedia, adMessage: ads.fixed, dynamicAdMessages: ads.opportunistic, chatTheme: chatTheme, reactions: reactions, transribeState: uiState.transribe, topicCreatorId: uiState.topicCreatorId, mediaRevealed: uiState.mediaRevealed, translate: uiState.translate, storyState: uiState.storyState, peerStoryStats: view.peerStoryStats, cachedData: peerView?.cachedData, peer: peer, holeLater: view.holeLater, holeEarlier: view.holeEarlier, recommendedChannels: recommendedChannels, includeJoin: includeJoin, earlierId: view.earlierId, laterId: view.laterId, automaticDownload: initialData.autodownloadSettings, savedMessageTags: savedMessageTags, contentSettings: context.contentSettings, codeSyntaxData: uiState.codeSyntaxes, messageEffects: messageEffects, factCheckRevealed: uiState.factCheck, solutionRevealed: uiState.solutionRevealed, quoteRevealed: uiState.quoteRevealed, detailsExpanded: uiState.detailsExpanded, peerStatus: uiState.peerStatus, commonGroups: uiState.commonGroups, monoforumState: uiState.monoforumState, accountPeerId: context.peerId, contentConfig: context.contentConfig, walletFiatRate: uiState.walletFiatRate, editedIndicatorStyle: editedIndicatorStyle).map { ChatWrappedEntry(appearance: AppearanceWrapperEntry(entry: $0, appearance: appearance), tag: view.tag, showsTimestampSeconds: showsTimestampSeconds, filtersZalgoText: filtersZalgoText, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hidesMessageReactions: hidesMessageReactions, hidesMessageBubbleTail: hidesMessageBubbleTail, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius, hidesFastShare: hidesFastShare) }
                     proccesedView = ChatHistoryView(
                         originalView: view,
                         filteredEntries: entries,
@@ -4602,7 +4606,8 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             let mediaSpoilersChanged = previous?.filteredEntries.first?.revealsMediaSpoilers != proccesedView.filteredEntries.first?.revealsMediaSpoilers
             let monospaceFontChanged = previous?.filteredEntries.first?.monospaceFont != proccesedView.filteredEntries.first?.monospaceFont
             let bubbleRadiusChanged = previous?.filteredEntries.first?.messageBubbleRadius != proccesedView.filteredEntries.first?.messageBubbleRadius
-            let chatAppearanceChanged = timestampFormatChanged || editedIndicatorChanged || premiumStatusChanged || replyAppearanceChanged || reactionVisibilityChanged || bubbleTailChanged || messageWidthChanged || mediaSpoilersChanged || monospaceFontChanged || bubbleRadiusChanged
+            let fastShareChanged = previous?.filteredEntries.first?.hidesFastShare != proccesedView.filteredEntries.first?.hidesFastShare
+            let chatAppearanceChanged = timestampFormatChanged || editedIndicatorChanged || premiumStatusChanged || replyAppearanceChanged || reactionVisibilityChanged || bubbleTailChanged || messageWidthChanged || mediaSpoilersChanged || monospaceFontChanged || bubbleRadiusChanged || fastShareChanged
             let keepScrollPosition = localVisibilityOnly || (!isNewHistoryViewUpdate && chatAppearanceChanged)
             let effectiveScrollPosition = keepScrollPosition ? ChatHistoryViewScrollPosition.scroll(.saveVisible(.upper, false)) : scrollPosition
             return prepareEntries(from: previous, to: proccesedView, timeDifference: timeDifference, initialSize: atomicSize.with { $0 }, interaction: chatInteraction, animated: false, scrollPosition: effectiveScrollPosition, reason: updateType, animationInterface: animationInterface, side: update.1, messagesViewQueue: queue) |> map { transition in
@@ -7179,6 +7184,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                                             updatedRow.hidesMessageReactions = item.hidesMessageReactions
                                             updatedRow.hidesMessageBubbleTail = item.hidesMessageBubbleTail
                                             updatedRow.messageBubbleRadius = item.messageBubbleRadius
+                                            updatedRow.hidesFastShare = item.hidesFastShare
                                         }
 
                                         _ = updatedItem.makeSize(size.width, oldWidth: 0)

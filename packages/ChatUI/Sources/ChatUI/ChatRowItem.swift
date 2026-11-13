@@ -353,7 +353,7 @@ public class ChatRowItem: TableRowItem {
             
             var tempWidth: CGFloat = width - self.contentOffset.x - bubbleDefaultInnerInset - (20 + 10 + additionBubbleInset) - 20
             
-            if isSharable || hasSource {
+            if (!hidesFastShare && isSharable) || hasSource {
                 tempWidth -= 35
             }
             if isLikable {
@@ -1050,9 +1050,11 @@ public class ChatRowItem: TableRowItem {
         }
     }
     
+    var hidesFastShare = ChatAffordancePreferences.shared.hidesFastShare
+
     public var shareVisible: Bool {
         
-        guard let message = message else {
+        guard !hidesFastShare, let message = message else {
             return false
         }
         if isSharable {

@@ -78,6 +78,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case filterZalgoText(sectionId: Int, enabled: Bool)
     case messageContextMenu(sectionId: Int)
     case miniAppWindowSize(sectionId: Int)
+    case transcriptionLanguage(sectionId: Int, selection: ReceivedAudioTranscriptionLanguagePreferences.Selection)
     public var stableId: Int {
         switch self {
         case let .header(_, uniqueId, _):
@@ -166,6 +167,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 33
         case .miniAppWindowSize:
             return 34
+        case .transcriptionLanguage:
+            return 43
         case let .section(id):
             return (id + 1) * 1000 - id
         }
@@ -229,7 +232,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return (sectionId * 1000) + stableId
         case let .profileIdFormat(sectionId, _):
             return (sectionId * 1000) + stableId
-        case let .channelBottomAction(sectionId, _), let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .hideChatListStories(sectionId, _), let .hideProfileStories(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId), let .miniAppWindowSize(sectionId):
+        case let .channelBottomAction(sectionId, _), let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .hideChatListStories(sectionId, _), let .hideProfileStories(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId), let .miniAppWindowSize(sectionId), let .transcriptionLanguage(sectionId, _):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -409,6 +412,11 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.MenuSettings"), type: .next, viewType: .lastItem, action: {
                 arguments.context.bindings.rootNavigation().push(messageContextMenuSettingsController())
             })
+        case let .transcriptionLanguage(_, selection):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Transcription.Language"),
+                                            type: .nextContext(receivedAudioTranscriptionLanguageTitle(selection)), viewType: .singleItem, action: {
+                arguments.context.bindings.rootNavigation().push(receivedAudioTranscriptionLanguageController())
+            })
         case .miniAppWindowSize:
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.MiniApp.WindowSize"), type: .next, viewType: .singleItem, action: {
                 arguments.context.bindings.rootNavigation().push(miniAppWindowSizeSettingsController())
@@ -478,7 +486,7 @@ private final class GeneralSettingsArguments {
    
 }
 
-private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool, filterZalgoText: Bool, sendWithoutSound: Bool, forceTouchAction: ForceTouchAction, mediaSendConfirmation: ChatMediaSendConfirmationOptions, channelBottomAction: ChannelBottomAction) -> [GeneralSettingsEntry] {
+private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool, filterZalgoText: Bool, sendWithoutSound: Bool, forceTouchAction: ForceTouchAction, mediaSendConfirmation: ChatMediaSendConfirmationOptions, channelBottomAction: ChannelBottomAction, transcriptionLanguage: ReceivedAudioTranscriptionLanguagePreferences.Selection) -> [GeneralSettingsEntry] {
     var sectionId:Int = 1
     var entries:[GeneralSettingsEntry] = []
     
@@ -616,6 +624,10 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.miniAppWindowSize(sectionId: sectionId))
 
     entries.append(.section(sectionId: sectionId))
+    sectionId += 1
+    entries.append(.transcriptionLanguage(sectionId: sectionId, selection: transcriptionLanguage))
+
+    entries.append(.section(sectionId: sectionId))
     return entries
 }
 
@@ -748,13 +760,13 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
         
         let baseSettingsSignal: Signal<BaseApplicationSettings, NoError> = .single(context.sharedContext.baseSettings) |> then(baseAppSettings(accountManager: context.sharedContext.accountManager))
         
-        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, sendWithoutSound.get(), ChatMediaSendConfirmationPreferences.shared.signal, ChannelBottomActionPreferences.shared.signal) |> map { settings, _, forceTouchAction, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds, filterZalgoText, sendWithoutSound, mediaSendConfirmation, channelBottomAction -> TableUpdateTransition in
+        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, sendWithoutSound.get(), ChatMediaSendConfirmationPreferences.shared.signal, ChannelBottomActionPreferences.shared.signal, ReceivedAudioTranscriptionLanguagePreferences.shared.signal) |> map { settings, _, forceTouchAction, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds, filterZalgoText, sendWithoutSound, mediaSendConfirmation, channelBottomAction, transcriptionLanguage -> TableUpdateTransition in
             
             let baseSettings: BaseApplicationSettings = settings
             
             let secretChatSettings = preferencesView.values[PreferencesKeys.secretChatSettings]?.get(SecretChatSettings.self) ?? SecretChatSettings.defaultSettings
             
-            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds, filterZalgoText: filterZalgoText, sendWithoutSound: sendWithoutSound, forceTouchAction: forceTouchAction, mediaSendConfirmation: mediaSendConfirmation, channelBottomAction: channelBottomAction).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
+            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds, filterZalgoText: filterZalgoText, sendWithoutSound: sendWithoutSound, forceTouchAction: forceTouchAction, mediaSendConfirmation: mediaSendConfirmation, channelBottomAction: channelBottomAction, transcriptionLanguage: transcriptionLanguage).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
             let previous = previos.swap(entries)
             return prepareEntries(left: previous, right: entries, arguments: arguments, initialSize: initialSize.modify({$0}))
             

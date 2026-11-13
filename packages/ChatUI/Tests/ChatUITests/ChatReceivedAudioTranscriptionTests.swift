@@ -2,6 +2,8 @@ import AppKit
 import AVFoundation
 import CoreMedia
 import Foundation
+import InAppSettings
+import Speech
 import SwiftSignalKit
 import TelegramMediaPlayer
 import TGUIKit
@@ -62,6 +64,76 @@ final class ChatReceivedAudioTranscriptionTests: XCTestCase {
         let request = try XCTUnwrap(ChatReceivedAudioTranscription.makeRequest(supportsOnDeviceRecognition: true))
         XCTAssertTrue(request.requiresOnDeviceRecognition)
         XCTAssertFalse(request.shouldReportPartialResults)
+    }
+
+    func testExplicitLocaleOverridesComposerAndRequiresExactSupportedRegion() {
+        let languages = ["en_US", "en_GB", "pt_PT", "pt_BR", "zh_TW", "zh_CN"]
+        func candidates(_ identifier: String) -> [String] {
+            ChatReceivedAudioTranscription.languageCandidates(selection: .locale(identifier),
+                composerLanguage: "en-US", preferredLanguages: ["en-US", "pt-PT"], supported: languages)
+        }
+        XCTAssertEqual(candidates("pt-br"), ["pt_BR"])
+        XCTAssertEqual(candidates("zh-tw"), ["zh_TW"])
+        XCTAssertEqual(candidates("en-GB"), ["en_GB"])
+        XCTAssertEqual(candidates("en-CA"), [])
+        XCTAssertEqual(candidates("en"), [])
+        XCTAssertEqual(candidates("qzz-ZZ"), [])
+    }
+
+    func testAutomaticPreservesComposerAndSystemLanguageResolution() {
+        let supported = ["en_US", "en_GB", "de_DE", "pt_BR", "fr_FR", "it_IT"]
+        let preferred = ["en-GB", "en-US", "de-AT", "pt-PT", "fr-CA", "it-IT"]
+        func automatic(composer: String?) -> [String] {
+            ChatReceivedAudioTranscription.languageCandidates(selection: .automatic, composerLanguage: composer,
+                preferredLanguages: preferred, supported: supported)
+        }
+        XCTAssertEqual(automatic(composer: "en"), ["en_GB"])
+        XCTAssertEqual(automatic(composer: "pt-PT"), ["pt_BR"])
+        XCTAssertEqual(automatic(composer: "qzz-ZZ"), [])
+        XCTAssertEqual(automatic(composer: nil), ["en_GB", "de_DE", "pt_BR", "fr_FR"])
+    }
+
+    func testLanguagePreferencePersistsUnsupportedChoiceAndResetsToAutomatic() throws {
+        let suite = "gergram-received-transcription-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = ReceivedAudioTranscriptionLanguagePreferences(defaults: defaults)
+        var selections: [ReceivedAudioTranscriptionLanguagePreferences.Selection] = []
+        let disposable = preferences.signal.start(next: { selections.append($0) })
+        defer { disposable.dispose() }
+
+        XCTAssertEqual(preferences.selection, .automatic)
+        let unavailable = "qzz_ZZ"
+        preferences.setSelection(.locale(unavailable))
+        preferences.setSelection(.locale(unavailable))
+        let stored = ReceivedAudioTranscriptionLanguagePreferences(defaults: defaults).selection
+        XCTAssertEqual(stored, .locale(unavailable))
+        preferences.setSelection(.automatic)
+        XCTAssertEqual(ReceivedAudioTranscriptionLanguagePreferences(defaults: defaults).selection, .automatic)
+        XCTAssertEqual(selections, [.automatic, stored, .automatic])
+    }
+
+    func testAppleLanguageDiscoveryChecksActualOnDeviceLocaleWithoutAuthorization() async {
+        guard #available(macOS 10.15, *) else { return }
+        let authorization = SFSpeechRecognizer.authorizationStatus()
+        let discovered: [Locale] = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: ReceivedAudioTranscriptionLanguagePreferences.availableLocales())
+            }
+        }
+        let supported = SFSpeechRecognizer.supportedLocales()
+        for locale in discovered {
+            XCTAssertTrue(supported.contains(locale))
+            guard let recognizer = SFSpeechRecognizer(locale: locale) else {
+                XCTFail("Recognizer no longer supports \(locale.identifier)")
+                continue
+            }
+            XCTAssertTrue(recognizer.supportsOnDeviceRecognition)
+            XCTAssertTrue(ReceivedAudioTranscriptionLanguagePreferences.localeIdentifierMatches(recognizer.locale.identifier, locale.identifier))
+        }
+        XCTAssertEqual(SFSpeechRecognizer.authorizationStatus(), authorization)
+        XCTAssertNil(ChatReceivedAudioTranscription.recognizer(selection: .locale("qzz_ZZ"),
+            composerLanguage: "en-US", preferredLanguages: ["en-US"]))
     }
 
     func testMetadataLimitsRejectUnknownAndOversizedFiles() throws {

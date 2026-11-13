@@ -1,5 +1,6 @@
 import AlertsUI
 import AppKit
+import InAppSettings
 import LocalAnimations
 import Localization
 import MessageUtils
@@ -116,6 +117,8 @@ final class ChatReceivedAudioTranscriptionAction {
         guard self.generation == generation else { return }
         let account = context.account
         let accountPeerId = context.peerId
+        let speechLanguage = ReceivedAudioTranscriptionLanguagePreferences.shared.selection
+        let composerLanguage = ChatInputDictationLanguage.selected
         let location = interaction.chatLocation
         let mode = interaction.mode
         let isCurrent: () -> Bool = { [weak self, weak interaction, weak window] in
@@ -143,7 +146,8 @@ final class ChatReceivedAudioTranscriptionAction {
         let signal = currentSource
         |> mapToSignal { _ -> Signal<String, Failure> in
             let preferences = Locale.preferredLanguages + [Locale.current.identifier]
-            guard let recognizer = ChatReceivedAudioTranscription.recognizer(selection: ChatInputDictationLanguage.selected, preferredLanguages: preferences) else {
+            guard let recognizer = ChatReceivedAudioTranscription.recognizer(selection: speechLanguage,
+                composerLanguage: composerLanguage, preferredLanguages: preferences) else {
                 return .fail(.unavailable)
             }
             return requestSpeechRecognitionPermission()

@@ -741,6 +741,10 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
                 present(.push, controller)
             }))
 
+            allItems.append(SettingsSearchableItem(id: .general(7), title: localizedString("Gergram.Transcription.Language"), alternate: [], icon: .language, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
+                present(.push, receivedAudioTranscriptionLanguageController())
+            }))
+
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)
             

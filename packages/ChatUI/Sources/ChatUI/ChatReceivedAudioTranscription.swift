@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import InAppSettings
 import Speech
 import SwiftSignalKit
 import TelegramMediaPlayer
@@ -51,18 +52,37 @@ enum ChatReceivedAudioTranscription {
         }
     }
 
-    @available(macOS 10.15, *)
-    static func recognizer(selection: String?, preferredLanguages: [String]) -> SFSpeechRecognizer? {
-        let supported = SFSpeechRecognizer.supportedLocales().map(\.identifier)
-        let candidates: [String]
-        if let selection {
-            candidates = ChatInputDictationText.resolveLanguage([selection], preferred: preferredLanguages, supported: supported).map { [$0] } ?? []
-        } else {
-            candidates = ChatInputDictationText.automaticLocales(preferred: preferredLanguages, supported: supported, limit: 4)
+    static func languageCandidates(
+        selection: ReceivedAudioTranscriptionLanguagePreferences.Selection,
+        composerLanguage: String?, preferredLanguages: [String], supported: [String]
+    ) -> [String] {
+        switch selection {
+        case let .locale(identifier):
+            return supported.first {
+                ReceivedAudioTranscriptionLanguagePreferences.localeIdentifierMatches($0, identifier)
+            }.map { [$0] } ?? []
+        case .automatic:
+            if let composerLanguage {
+                return ChatInputDictationText.resolveLanguage([composerLanguage], preferred: preferredLanguages, supported: supported).map { [$0] } ?? []
+            }
+            return ChatInputDictationText.automaticLocales(preferred: preferredLanguages, supported: supported, limit: 4)
         }
+    }
+
+    @available(macOS 10.15, *)
+    static func recognizer(
+        selection: ReceivedAudioTranscriptionLanguagePreferences.Selection,
+        composerLanguage: String?, preferredLanguages: [String]
+    ) -> SFSpeechRecognizer? {
+        let candidates = languageCandidates(selection: selection, composerLanguage: composerLanguage,
+            preferredLanguages: preferredLanguages, supported: SFSpeechRecognizer.supportedLocales().map(\.identifier))
         for identifier in candidates {
             if let recognizer = SFSpeechRecognizer(locale: Locale(identifier: identifier)),
                recognizer.supportsOnDeviceRecognition, recognizer.isAvailable {
+                if case .locale = selection,
+                   !ReceivedAudioTranscriptionLanguagePreferences.localeIdentifierMatches(recognizer.locale.identifier, identifier) {
+                    continue
+                }
                 return recognizer
             }
         }

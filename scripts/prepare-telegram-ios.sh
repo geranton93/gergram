@@ -6,6 +6,7 @@ ios="$scripts_dir/../submodules/telegram-ios"
 patch="$scripts_dir/telegram-ios-macos.patch"
 capture_patch="$scripts_dir/telegram-ios-local-archive-capture.patch"
 maintenance_patch="$scripts_dir/telegram-ios-local-archive-maintenance.patch"
+notification_patch="$scripts_dir/telegram-ios-notification-timing.patch"
 
 if [ ! -f "$ios/submodules/TelegramVoip/Package.swift" ]; then
     printf 'Initialize the telegram-ios submodule before preparing the macOS build.\n' >&2
@@ -36,11 +37,12 @@ apply_group() {
         archive) git -C "$ios" apply --include="$archive" --include="$postbox" "$@" "$patch" ;;
         capture) git -C "$ios" apply "$@" "$capture_patch" ;;
         maintenance) git -C "$ios" apply "$@" "$maintenance_patch" ;;
+        notification) git -C "$ios" apply "$@" "$notification_patch" ;;
     esac
 }
 
 groups_to_apply=""
-for patch_group in base archive capture maintenance; do
+for patch_group in base archive capture maintenance notification; do
     if ! apply_group "$patch_group" "$current_direction" --check 2>/dev/null; then
         apply_group "$patch_group" "$target_direction" --check
         groups_to_apply="$groups_to_apply $patch_group"

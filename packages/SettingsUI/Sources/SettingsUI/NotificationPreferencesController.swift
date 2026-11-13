@@ -89,6 +89,7 @@ private final class NotificationArguments {
     public let toggleMessagesPreview:() -> Void
     public let toggleNotifications:() -> Void
     public let notificationTone:() -> Void
+    let setNotificationTiming: (AppNotificationTiming) -> Void
     public let toggleIncludeUnreadChats:(Bool) -> Void
     public let toggleCountUnreadMessages:(Bool) -> Void
     public let toggleIncludeGroups:(Bool) -> Void
@@ -103,11 +104,12 @@ private final class NotificationArguments {
     public let toggleIncomingCalls:()->Void
     public let openCategory:(NotificationSettingsCategory)->Void
     public let openReactions:()->Void
-    public init(resetAllNotifications: @escaping() -> Void, toggleMessagesPreview:@escaping() -> Void, toggleNotifications:@escaping() -> Void, notificationTone:@escaping() -> Void, toggleIncludeUnreadChats:@escaping(Bool) -> Void, toggleCountUnreadMessages:@escaping(Bool) -> Void, toggleIncludeGroups:@escaping(Bool) -> Void, toggleIncludeChannels:@escaping(Bool) -> Void, allAcounts: @escaping()-> Void, snoof: @escaping()-> Void, updateJoinedNotifications: @escaping(Bool) -> Void, toggleBadge: @escaping(Bool)->Void, toggleRequestUserAttention: @escaping ()->Void, toggleInAppSounds: @escaping(Bool)->Void, toggleChats: @escaping()->Void, toggleIncomingCalls:@escaping()->Void, openCategory:@escaping(NotificationSettingsCategory)->Void, openReactions:@escaping()->Void) {
+    public init(resetAllNotifications: @escaping() -> Void, toggleMessagesPreview:@escaping() -> Void, toggleNotifications:@escaping() -> Void, notificationTone:@escaping() -> Void, setNotificationTiming: @escaping (AppNotificationTiming) -> Void, toggleIncludeUnreadChats:@escaping(Bool) -> Void, toggleCountUnreadMessages:@escaping(Bool) -> Void, toggleIncludeGroups:@escaping(Bool) -> Void, toggleIncludeChannels:@escaping(Bool) -> Void, allAcounts: @escaping()-> Void, snoof: @escaping()-> Void, updateJoinedNotifications: @escaping(Bool) -> Void, toggleBadge: @escaping(Bool)->Void, toggleRequestUserAttention: @escaping ()->Void, toggleInAppSounds: @escaping(Bool)->Void, toggleChats: @escaping()->Void, toggleIncomingCalls:@escaping()->Void, openCategory:@escaping(NotificationSettingsCategory)->Void, openReactions:@escaping()->Void) {
         self.resetAllNotifications = resetAllNotifications
         self.toggleMessagesPreview = toggleMessagesPreview
         self.toggleNotifications = toggleNotifications
         self.notificationTone = notificationTone
+        self.setNotificationTiming = setNotificationTiming
         self.toggleIncludeUnreadChats = toggleIncludeUnreadChats
         self.toggleCountUnreadMessages = toggleCountUnreadMessages
         self.toggleIncludeGroups = toggleIncludeGroups
@@ -139,6 +141,19 @@ private let _id_new_contacts = InputDataIdentifier("_id_new_contacts")
 private let _id_snoof = InputDataIdentifier("_id_snoof")
 private let _id_tone = InputDataIdentifier("_id_tone")
 private let _id_bounce = InputDataIdentifier("_id_bounce")
+
+private extension AppNotificationTiming {
+    var settingsTitle: String {
+        switch self {
+        case .native:
+            return localizedString("Gergram.Notifications.Timing.Native")
+        case .otherDevices:
+            return localizedString("Gergram.Notifications.Timing.OtherDevices")
+        case .minimum:
+            return localizedString("Gergram.Notifications.Timing.Minimum")
+        }
+    }
+}
 
 private let _id_turnon_notifications = InputDataIdentifier("_id_turnon_notifications")
 private let _id_turnon_notifications_title = InputDataIdentifier("_id_turnon_notifications_title")
@@ -281,6 +296,21 @@ private func notificationEntries(state: State, settings:InAppNotificationSetting
     entries.append(.sectionId(sectionId, type: .normal))
     sectionId += 1
     
+    entries.append(.desc(sectionId: sectionId, index: index, text: .plain(localizedString("Gergram.Notifications.Timing")), data: InputDataGeneralTextData(viewType: .textTopItem)))
+    index += 1
+
+    let timings = AppNotificationTiming.allCases
+    for (position, timing) in timings.enumerated() {
+        let identifier = InputDataIdentifier("_notification_timing_\(timing.rawValue)")
+        entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: identifier, data: InputDataGeneralData(name: timing.settingsTitle, color: theme.colors.text, type: .selectable(settings.notificationTiming == timing), viewType: bestGeneralViewType(timings, for: position), action: {
+            arguments.setNotificationTiming(timing)
+        })))
+        index += 1
+    }
+
+    entries.append(.sectionId(sectionId, type: .normal))
+    sectionId += 1
+
     entries.append(InputDataEntry.desc(sectionId: sectionId, index: index, text: .plain(strings().notificationSettingsSnoofHeader), data: InputDataGeneralTextData(viewType: .textTopItem)))
     index += 1
     
@@ -402,6 +432,8 @@ public func NotificationPreferencesController(_ context: any AccountContextProto
         _ = updateInAppNotificationSettingsInteractively(accountManager: context.sharedContext.accountManager, {$0.withUpdatedEnables(!$0.enabled)}).start()
     }, notificationTone: {
         context.bindings.rootNavigation().push(NotificationSoundController(context: context))
+    }, setNotificationTiming: { timing in
+        _ = updateInAppNotificationSettingsInteractively(accountManager: context.sharedContext.accountManager, { $0.withUpdatedNotificationTiming(timing) }).start()
     }, toggleIncludeUnreadChats: { enable in
         _ = updateInAppNotificationSettingsInteractively(accountManager: context.sharedContext.accountManager, {$0.withUpdatedTotalUnreadCountDisplayStyle(enable ? .raw : .filtered)}).start()
     }, toggleCountUnreadMessages: { enable in

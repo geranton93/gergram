@@ -247,6 +247,39 @@ final class VideoPlaybackTests: XCTestCase {
         withExtendedLifetime(lookahead) {}
     }
 
+    @objc func testCompletedRangeReadsCacheWithoutRegisteringFallback() throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: fixture("av1")))
+        let state = Atomic<FFMpegLookahead.State?>(value: nil)
+        let packetReads = Atomic(value: 0)
+        let cacheReads = Atomic<[Bool]>(value: [])
+        let lookahead = FFMpegLookahead(
+            seekToTimestamp: 0.4, lookaheadDuration: 10.0,
+            updateState: { value in let _ = state.swap(value) },
+            fetchInRange: { _, completed in
+                completed()
+                return EmptyDisposable
+            },
+            getDataInRange: { range, fetchCompletion, waiter in
+                let _ = packetReads.modify { $0 + 1 }
+                return subscribeDirectMediaRead(fetchCompletion: fetchCompletion, waiter: waiter) { notifyAboutIncomplete in
+                    let _ = cacheReads.modify { $0 + [notifyAboutIncomplete] }
+                    let bytes = data.subdata(in: Int(range.lowerBound) ..< Int(range.upperBound))
+                    return .single((bytes, true))
+                }
+            },
+            isDataCachedInRange: { _ in false }, size: Int64(data.count)
+        )
+        lookahead.updateCurrentTimestamp(timestamp: 0.4)
+        spin(timeout: 5.0, until: { state.with { $0?.isEnded == true } })
+        XCTAssertTrue(state.with { $0?.isEnded == true })
+        XCTAssertNotNil(state.with { $0?.video })
+        let reads = cacheReads.with { $0 }
+        XCTAssertFalse(reads.isEmpty)
+        XCTAssertEqual(reads.count, packetReads.with { $0 })
+        XCTAssertTrue(reads.allSatisfy { $0 })
+        withExtendedLifetime(lookahead) {}
+    }
+
     @objc func testLookaheadCancellationReleasesTheBlockedWorker() {
         let readStarted = Atomic(value: false)
         let rangeReleased = Atomic(value: false)

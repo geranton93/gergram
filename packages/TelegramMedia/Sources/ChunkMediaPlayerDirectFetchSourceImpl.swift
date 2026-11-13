@@ -104,6 +104,7 @@ private func FFMpegLookaheadReader_seekCallback(userData: UnsafeMutableRawPointe
 private final class FFMpegLookaheadReader {
     private struct ActiveFetch {
         let range: Range<Int64>
+        let hasCompleted: Atomic<Bool>
         let completion: Signal<Void, NoError>
         let disposable: Disposable
     }
@@ -248,15 +249,19 @@ private final class FFMpegLookaheadReader {
     }
 
     private func startFetch(in range: Range<Int64>) -> ActiveFetch {
+        let hasCompleted = Atomic(value: false)
         let completion = Promise<Void>()
         let disposable = self.params.fetchInRange(range, {
-            completion.set(.single(()))
+            if !hasCompleted.swap(true) {
+                completion.set(.single(()))
+            }
         })
-        return ActiveFetch(range: range, completion: completion.get(), disposable: disposable)
+        return ActiveFetch(range: range, hasCompleted: hasCompleted, completion: completion.get(), disposable: disposable)
     }
 
     func fetchCompletion(for range: Range<Int64>) -> Signal<Void, NoError>? {
-        guard let fetch = self.currentFetch, fetch.range.lowerBound <= range.lowerBound, fetch.range.upperBound >= range.upperBound else {
+        guard let fetch = self.currentFetch, fetch.range.lowerBound <= range.lowerBound,
+              fetch.range.upperBound >= range.upperBound, !fetch.hasCompleted.with({ $0 }) else {
             return nil
         }
         return fetch.completion

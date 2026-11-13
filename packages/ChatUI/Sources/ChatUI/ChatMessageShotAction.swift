@@ -1,12 +1,15 @@
 import AppKit
 import ChatModeTypes
+import ColorPalette
 import DateUtils
 import LocalAnimations
 import Localization
 import MessageUtils
 import Postbox
+import Strings
 import SwiftSignalKit
 import TelegramCore
+import TelegramMediaUtils
 import TelegramTheme
 import TelegramUtils
 import TGUIKit
@@ -34,7 +37,7 @@ enum ChatMessageShotAction {
 
     private static let previewQueue = Queue(name: "MessageShotPreviews")
 
-    static func menuItem(for message: Message, selection: Set<MessageId>, selectedMessages: [Message], cachedData: CachedPeerData?, interaction: ChatInteraction) -> ContextMenuItem? {
+    static func menuItem(for message: Message, selection: Set<MessageId>, selectedMessages: [Message], cachedData: CachedPeerData?, chatTheme: TelegramPresentationTheme?, interaction: ChatInteraction) -> ContextMenuItem? {
         guard let peer = message.peers[message.id.peerId], !peerIsRestricted(peer, cachedData: cachedData),
               supportsChat(interaction), selection.isEmpty || selection.contains(message.id) else {
             return nil
@@ -51,11 +54,11 @@ enum ChatMessageShotAction {
         let menu = ContextMenu()
         menu.addItem(ContextMenuItem(strings().contextCopy, handler: { [weak interaction] in
             guard let interaction else { return }
-            export(ids: ids, selection: selection, interaction: interaction, destination: .clipboard)
+            export(ids: ids, selection: selection, chatTheme: chatTheme, interaction: interaction, destination: .clipboard)
         }, itemImage: MenuAnimation.menu_copy_media.value))
         menu.addItem(ContextMenuItem(localizedString("Gergram.Chat.MessageShotSave"), handler: { [weak interaction] in
             guard let interaction else { return }
-            export(ids: ids, selection: selection, interaction: interaction, destination: .file)
+            export(ids: ids, selection: selection, chatTheme: chatTheme, interaction: interaction, destination: .file)
         }, itemImage: MenuAnimation.menu_save_as.value))
         menu.addItem(ContextSeparatorItem())
         let options = MessageShotOptions()
@@ -69,9 +72,58 @@ enum ChatMessageShotAction {
             options.showsBackground.toggle()
             options.save()
         }, state: options.showsBackground ? .on : .off))
+        if messages.contains(where: { reactions(for: $0, accountPeerId: interaction.interactionContext.peerId).contains(where: { $0.count > 0 }) }) {
+            menu.addItem(ContextMenuItem(localizedString("Gergram.Chat.MessageShotShowReactions"), handler: {
+                var options = MessageShotOptions()
+                options.showsReactions.toggle()
+                options.save()
+            }, state: options.showsReactions ? .on : .off))
+        }
+        let themeItem = ContextMenuItem(localizedString("Gergram.Chat.MessageShotTheme"), handler: {})
+        let themes = ContextMenu()
+        for choice in MessageShotOptions.Theme.allCases {
+            themes.addItem(ContextMenuItem(themeTitle(choice), handler: {
+                var options = MessageShotOptions()
+                options.theme = choice
+                options.save()
+            }, state: options.theme == choice ? .on : .off))
+        }
+        themeItem.submenu = themes
+        menu.addItem(themeItem)
         let item = ContextMenuItem(localizedString("Gergram.Chat.MessageShot"), handler: {}, itemImage: MenuAnimation.menu_copy_media.value)
         item.submenu = menu
         return item
+    }
+
+    private static func themeTitle(_ theme: MessageShotOptions.Theme) -> String {
+        switch theme {
+        case .current: return localizedString("Gergram.Chat.MessageShotThemeCurrent")
+        case .dayClassic: return strings().appearanceSettingsColorThemeDayClassic
+        case .day: return strings().appearanceSettingsColorThemeDay
+        case .dark: return strings().appearanceSettingsColorThemeDark
+        case .nightAccent: return strings().appearanceSettingsColorThemeNightAccent
+        }
+    }
+
+    private static func reactions(for message: Message, accountPeerId: PeerId) -> [MessageReaction] {
+        guard message.id.peerId != accountPeerId else { return [] }
+        return message.effectiveReactions(accountPeerId, isTags: false)?.reactions ?? []
+    }
+
+    private static func reactionLabel(_ reaction: MessageReaction.Reaction, message: Message) -> String {
+        switch reaction {
+        case let .builtin(emoji):
+            return emoji
+        case let .custom(fileId):
+            let mediaId = MediaId(namespace: Namespaces.Media.CloudFile, id: fileId)
+            let file = message.associatedMedia[mediaId] as? TelegramMediaFile
+            if let text = file?.customEmojiText, text.utf16.count <= 32, text.isSingleEmoji {
+                return text
+            }
+            return localizedString("Gergram.Chat.MessageShotCustomReactions")
+        case .stars:
+            return "⭐"
+        }
     }
 
     private static func supportsChat(_ interaction: ChatInteraction) -> Bool {
@@ -162,10 +214,12 @@ enum ChatMessageShotAction {
         }
     }
 
-    private static func export(ids: Set<MessageId>, selection: Set<MessageId>, interaction: ChatInteraction, destination: Destination) {
+    private static func export(ids: Set<MessageId>, selection: Set<MessageId>, chatTheme: TelegramPresentationTheme?, interaction: ChatInteraction, destination: Destination) {
         guard supportsChat(interaction), (interaction.presentation.selectionState?.selectedIds ?? []) == selection else { return }
 
         let options = MessageShotOptions()
+        let presentationTheme = chatTheme ?? theme
+        let palette = options.theme.palette(current: presentationTheme.colors)
         let context = interaction.interactionContext
         let location = interaction.chatLocation
         let mode = interaction.mode
@@ -226,9 +280,9 @@ enum ChatMessageShotAction {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotUnavailable"))
                 return
             }
-            let canvasBackground = options.showsBackground ? theme.colors.background : nil
+            let canvasBackground = options.showsBackground ? palette.background : nil
             guard snapshot.messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
-                  let png = MessageShotRenderer.png(rows: rows(for: snapshot.messages, previews: previews, interaction: interaction, options: options), background: canvasBackground) else {
+                  let png = MessageShotRenderer.png(rows: rows(for: snapshot.messages, previews: previews, interaction: interaction, options: options, palette: palette, fontSize: presentationTheme.fontSize), background: canvasBackground) else {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotRenderFailed"))
                 return
             }
@@ -281,9 +335,9 @@ enum ChatMessageShotAction {
         }
     }
 
-    private static func rows(for messages: [Message], previews: [MessageId: Preview], interaction: ChatInteraction, options: MessageShotOptions) -> [MessageShotRenderer.Row] {
+    private static func rows(for messages: [Message], previews: [MessageId: Preview], interaction: ChatInteraction, options: MessageShotOptions, palette: ColorPalette, fontSize: CGFloat) -> [MessageShotRenderer.Row] {
         let context = interaction.interactionContext
-        let palette = theme
+        let colors = TelegramChatColors(palette, true)
         return messages.sorted { $0.index < $1.index }.map { message in
             let incoming = message.isIncoming(context.account, true)
             let title = options.headerTitle(
@@ -292,9 +346,10 @@ enum ChatMessageShotAction {
                     from: Date(timeIntervalSince1970: TimeInterval(message.timestamp) - context.timeDifference)
                 )
             )
-            let header = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: palette.chat.grayText(incoming, true)])
+            let secondary = colors.grayText(incoming, true)
+            let header = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: secondary])
 
-            let text = ChatMessageItem.applyMessageEntities(with: message.attributes, for: message.text, message: message, context: context, fontSize: palette.fontSize, openInfo: { _, _, _, _ in }, textColor: palette.chat.textColor(incoming, true), linkColor: palette.chat.linkColor(incoming, true), monospacedPre: palette.chat.monospacedPreColor(incoming, true), monospacedCode: palette.chat.monospacedCodeColor(incoming, true), isDark: palette.colors.isDark, bubbled: true, ignoreLinks: true)
+            let text = ChatMessageItem.applyMessageEntities(with: message.attributes, for: message.text, message: message, context: context, fontSize: fontSize, openInfo: { _, _, _, _ in }, textColor: colors.textColor(incoming, true), linkColor: colors.linkColor(incoming, true), monospacedPre: colors.monospacedPreColor(incoming, true), monospacedCode: colors.monospacedCodeColor(incoming, true), blockColor: .init(main: palette.accent), isDark: palette.isDark, bubbled: true, ignoreLinks: true)
             let preview = supportsPreview(message, interaction: interaction) ? previews[message.id] : nil
             let attachments = message.media.enumerated().compactMap { index, media -> MessageShotRenderer.Attachment? in
                 let label: String
@@ -305,10 +360,19 @@ enum ChatMessageShotAction {
                 } else {
                     return nil
                 }
-                let placeholder = NSAttributedString(string: "[\(label)]", attributes: [.font: NSFont.systemFont(ofSize: palette.fontSize), .foregroundColor: palette.chat.grayText(incoming, true)])
+                let placeholder = NSAttributedString(string: "[\(label)]", attributes: [.font: NSFont.systemFont(ofSize: fontSize), .foregroundColor: secondary])
                 return MessageShotRenderer.Attachment(label: placeholder, thumbnail: preview.flatMap { $0.mediaIndex == index ? $0.image : nil })
             }
-            return MessageShotRenderer.Row(header: header, body: text, background: palette.chat.backgroundColor(incoming, true), attachments: attachments)
+            let footer: NSAttributedString?
+            if options.showsReactions {
+                let summary = options.reactionSummary(reactions(for: message, accountPeerId: context.peerId).sorted(by: <).lazy.map {
+                    (label: reactionLabel($0.value, message: message), count: Int($0.count))
+                })
+                footer = NSAttributedString(string: summary, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: secondary])
+            } else {
+                footer = nil
+            }
+            return MessageShotRenderer.Row(header: header, body: text, background: colors.bubbleBackgroundColor(incoming, true), attachments: attachments, footer: footer)
         }
     }
 }

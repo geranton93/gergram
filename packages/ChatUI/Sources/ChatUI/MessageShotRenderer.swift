@@ -12,12 +12,14 @@ enum MessageShotRenderer {
         let body: NSAttributedString
         let background: NSColor
         let attachments: [Attachment]
+        let footer: NSAttributedString?
 
-        init(header: NSAttributedString, body: NSAttributedString, background: NSColor, attachments: [Attachment] = []) {
+        init(header: NSAttributedString, body: NSAttributedString, background: NSColor, attachments: [Attachment] = [], footer: NSAttributedString? = nil) {
             self.header = header
             self.body = body
             self.background = background
             self.attachments = attachments
+            self.footer = footer
         }
     }
 
@@ -89,7 +91,7 @@ enum MessageShotRenderer {
         let textLength = rows.reduce(0) { length, row in
             let labels = row.attachments.reduce(0) { $0 + $1.label.length }
             let separators = max(0, row.attachments.count - (row.body.length == 0 ? 1 : 0))
-            return length + row.header.length + row.body.length + labels + separators
+            return length + row.header.length + row.body.length + labels + separators + (row.footer?.length ?? 0)
         }
         guard textLength <= 16_000 else { return nil }
 
@@ -109,7 +111,11 @@ enum MessageShotRenderer {
         func measure(withThumbnails: Bool) -> [RowLayout] {
             rows.map { row in
                 let header = row.header.length == 0 ? 0 : height(of: row.header)
-                let parts = parts(for: row, withThumbnails: withThumbnails).map { part -> (Part, CGSize) in
+                var content = parts(for: row, withThumbnails: withThumbnails)
+                if let footer = row.footer, footer.length > 0 {
+                    content.append(.text(footer))
+                }
+                let parts = content.map { part -> (Part, CGSize) in
                     switch part {
                     case let .text(text):
                         return (part, CGSize(width: textWidth, height: height(of: text)))

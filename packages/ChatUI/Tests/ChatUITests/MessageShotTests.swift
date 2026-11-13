@@ -1,4 +1,5 @@
 import AppKit
+import ColorPalette
 import XCTest
 @testable import ChatUI
 
@@ -87,6 +88,112 @@ final class MessageShotTests: XCTestCase {
         XCTAssertNotEqual(filledCard, filledCanvas)
         XCTAssertEqual(transparentCard, filledCard)
         XCTAssertEqual(transparentCard.alphaComponent, 1)
+    }
+
+    func testThemePreferenceKeepsCurrentForMissingOrUnknownValues() throws {
+        let suiteName = "MessageShotTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var options = MessageShotOptions(defaults: defaults)
+        XCTAssertEqual(options.theme, .current)
+        XCTAssertFalse(options.showsReactions)
+        options.theme = .nightAccent
+        options.showsReactions = true
+        options.showsBackground = false
+        options.save(to: defaults)
+
+        let reader = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        var saved = MessageShotOptions(defaults: reader)
+        XCTAssertEqual(saved.theme, .nightAccent)
+        XCTAssertTrue(saved.showsReactions)
+        XCTAssertFalse(saved.showsBackground)
+        XCTAssertTrue(saved.showsTimestamps)
+
+        defaults.set("future-theme", forKey: "gergram.messageShot.theme")
+        saved = MessageShotOptions(defaults: reader)
+        XCTAssertEqual(saved.theme, .current)
+        XCTAssertTrue(saved.showsReactions)
+        XCTAssertFalse(saved.showsBackground)
+    }
+
+    func testNativeThemeChoicesResolveIndependentlyOfTheCurrentPalette() {
+        let custom = dayClassicPalette.withUpdatedName("Custom chat palette")
+        XCTAssertTrue(MessageShotOptions.Theme.current.palette(current: custom) === custom)
+        XCTAssertTrue(MessageShotOptions.Theme.dayClassic.palette(current: custom) === dayClassicPalette)
+        XCTAssertTrue(MessageShotOptions.Theme.day.palette(current: custom) === whitePalette)
+        XCTAssertTrue(MessageShotOptions.Theme.dark.palette(current: custom) === darkPalette)
+        XCTAssertTrue(MessageShotOptions.Theme.nightAccent.palette(current: custom) === nightAccentPalette)
+        XCTAssertEqual(MessageShotOptions.Theme.allCases.count, 5)
+    }
+
+    func testSelectedPalettesProduceDifferentCanvasAndCardPixels() throws {
+        func render(_ choice: MessageShotOptions.Theme) throws -> NSBitmapImageRep {
+            let palette = choice.palette(current: whitePalette)
+            let row = MessageShotRenderer.Row(header: text(""), body: text("Message"), background: palette.bubbleBackground_incoming)
+            let png = try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: palette.background))
+            return try XCTUnwrap(NSBitmapImageRep(data: png))
+        }
+
+        let light = try render(.current)
+        let dark = try render(.dark)
+        XCTAssertEqual(light.pixelsWide, dark.pixelsWide)
+        XCTAssertEqual(light.pixelsHigh, dark.pixelsHigh)
+        let lightCanvas = try XCTUnwrap(light.colorAt(x: 0, y: 0)?.usingColorSpace(.deviceRGB))
+        let darkCanvas = try XCTUnwrap(dark.colorAt(x: 0, y: 0)?.usingColorSpace(.deviceRGB))
+        let lightCard = try XCTUnwrap(light.colorAt(x: 300, y: 54)?.usingColorSpace(.deviceRGB))
+        let darkCard = try XCTUnwrap(dark.colorAt(x: 300, y: 54)?.usingColorSpace(.deviceRGB))
+        XCTAssertGreaterThan(lightCanvas.redComponent, darkCanvas.redComponent)
+        XCTAssertGreaterThan(lightCard.redComponent, darkCard.redComponent)
+        XCTAssertNotEqual(lightCanvas, lightCard)
+        XCTAssertNotEqual(darkCanvas, darkCard)
+    }
+
+    func testReactionSummaryIsOptInAndBoundsVisibleCounts() throws {
+        let suiteName = "MessageShotTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var options = MessageShotOptions(defaults: defaults)
+        let invalid = [(label: "", count: 4), (label: "❤️", count: 0), (label: String(repeating: "a", count: 65), count: 9)]
+        let reactions = invalid + [(label: "👍", count: 42), (label: "⭐", count: 3)]
+        XCTAssertEqual(options.reactionSummary(reactions), "")
+        options.showsReactions = true
+        XCTAssertEqual(options.reactionSummary(reactions), "👍 42   ⭐ 3")
+        XCTAssertEqual(options.reactionSummary(invalid), "")
+        let many = (1...17).map { (label: "👍", count: $0) }
+        let parts = options.reactionSummary(many).components(separatedBy: "   ")
+        XCTAssertEqual(parts, (1...16).map { "👍 \($0)" } + ["…"])
+    }
+
+    func testReactionFooterAddsItsOwnSpaceAndEmptyFooterDoesNot() throws {
+        let footer = text("👍 42   ⭐ 3")
+        let body = text("Caption")
+        let attachment = MessageShotRenderer.Attachment(label: text("[Photo]"), thumbnail: try testImage(width: 40, height: 80))
+        func render(_ footer: NSAttributedString?) throws -> NSBitmapImageRep {
+            let row = MessageShotRenderer.Row(header: text("Author"), body: body, background: .white, attachments: [attachment], footer: footer)
+            let png = try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: nil))
+            return try XCTUnwrap(NSBitmapImageRep(data: png))
+        }
+        let none = try render(nil)
+        let empty = try render(text(""))
+        let withFooter = try render(footer)
+        let footerHeight = ceil(footer.boundingRect(
+            with: NSSize(width: 504, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height)
+
+        XCTAssertEqual(none.pixelsWide, withFooter.pixelsWide)
+        XCTAssertEqual(none.pixelsHigh, empty.pixelsHigh)
+        XCTAssertEqual(withFooter.pixelsHigh - none.pixelsHigh, Int((footerHeight + 4) * 2))
+    }
+
+    func testOversizedFooterCountsTowardExportTextBudget() {
+        let row = MessageShotRenderer.Row(
+            header: text(""), body: text("A message"), background: .white,
+            footer: text(String(repeating: "a", count: 16_000))
+        )
+        XCTAssertNil(MessageShotRenderer.png(rows: [row], background: nil))
     }
 
     func testEmptyHeaderUsesNoVerticalSpace() throws {

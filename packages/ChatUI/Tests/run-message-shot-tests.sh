@@ -6,6 +6,9 @@ fixture=$(mktemp -d "${TMPDIR:-/tmp}/gergram-message-shot.XXXXXX")
 trap 'rm -rf "$fixture"' EXIT
 
 mkdir -p "$fixture/Sources/ChatUI" "$fixture/Tests/ChatUITests"
+for package in ColorPalette Colors Strings; do
+    ln -s "$package_dir/../$package" "$fixture/$package"
+done
 for source in MessageShotOptions.swift MessageShotRenderer.swift; do
     ln -s "$package_dir/Sources/ChatUI/$source" "$fixture/Sources/ChatUI/$source"
 done
@@ -17,9 +20,11 @@ import PackageDescription
 
 let package = Package(
     name: "MessageShotFixture",
+    platforms: [.macOS(.v10_13)],
+    dependencies: [.package(path: "ColorPalette")],
     targets: [
-        .target(name: "ChatUI"),
-        .testTarget(name: "ChatUITests", dependencies: ["ChatUI"])
+        .target(name: "ChatUI", dependencies: ["ColorPalette"]),
+        .testTarget(name: "ChatUITests", dependencies: ["ChatUI", "ColorPalette"])
     ]
 )
 SWIFT

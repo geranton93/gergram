@@ -1458,7 +1458,7 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         
      
         
-        if let messageShot = ChatMessageShotAction.menuItem(for: data.message, selection: selectedIds, selectedMessages: selectedMessages, cachedData: data.cachedData, interaction: chatInteraction) {
+        if let messageShot = ChatMessageShotAction.menuItem(for: data.message, selection: selectedIds, selectedMessages: selectedMessages, cachedData: data.cachedData, chatTheme: entry?.additionalData.chatTheme, interaction: chatInteraction) {
             thirdBlock.append(messageShot)
         }
 

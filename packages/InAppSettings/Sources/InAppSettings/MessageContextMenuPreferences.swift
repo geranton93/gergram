@@ -46,6 +46,12 @@ public struct MessageContextMenuPreferences {
         defaults.set(visibility.rawValue, forKey: action.storageKey)
     }
 
+    public func resetVisibility() {
+        for action in Action.allCases {
+            defaults.removeObject(forKey: action.storageKey)
+        }
+    }
+
     public func isVisible(_ action: Action, extendedMenu: Bool) -> Bool {
         switch visibility(for: action) {
         case .shown:

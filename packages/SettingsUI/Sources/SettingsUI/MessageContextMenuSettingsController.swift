@@ -1,3 +1,4 @@
+import AlertsUI
 import GeneralRows
 import InAppSettings
 import InputDataUI
@@ -19,6 +20,8 @@ private func visibilityTitle(_ visibility: MessageContextMenuPreferences.Visibil
 }
 
 public func messageContextMenuSettingsController() -> InputDataController {
+    let requestReset = MetaDisposable()
+    let resetRequests = ValuePipe<Void>()
     let signal = visibilityChoices.get() |> deliverOnPrepareQueue |> map { choices in
         let sectionId: Int32 = 1
         var entries: [InputDataEntry] = [.sectionId(0, type: .normal)]
@@ -42,8 +45,24 @@ public func messageContextMenuSettingsController() -> InputDataController {
         entries.append(.desc(sectionId: sectionId, index: Int32(actions.count),
                              text: .plain(localizedString("Gergram.Chat.MenuSettings.Hint")),
                              data: .init(color: theme.colors.listGrayText, viewType: .textBottomItem)))
+        entries.append(.sectionId(sectionId, type: .normal))
+        entries.append(.general(sectionId: sectionId + 1, index: 0, value: .none, error: nil,
+                                identifier: InputDataIdentifier("reset-visibility"),
+                                data: .init(name: localizedString("Gergram.Chat.MenuSettings.Reset"), color: theme.colors.redUI,
+                                            viewType: .singleItem, action: { resetRequests.putNext(()) })))
         return InputDataSignalValue(entries: entries)
     }
 
-    return InputDataController(dataSignal: signal, title: localizedString("Gergram.Chat.MenuSettings"), hasDone: false)
+    let controller = InputDataController(dataSignal: signal, title: localizedString("Gergram.Chat.MenuSettings"), hasDone: false)
+    requestReset.set((resetRequests.signal() |> deliverOnMainQueue).start(next: { [weak controller] _ in
+        guard let controller, let window = controller.window else { return }
+        let title = localizedString("Gergram.Chat.MenuSettings.Reset")
+        verifyAlert_button(for: window, header: title, information: localizedString("Gergram.Chat.MenuSettings.ResetDescription"), ok: title, successHandler: { [weak controller] _ in
+            guard controller != nil else { return }
+            preferences.resetVisibility()
+            visibilityChoices.set(currentChoices())
+        })
+    }))
+    controller.onDeinit = { requestReset.dispose() }
+    return controller
 }

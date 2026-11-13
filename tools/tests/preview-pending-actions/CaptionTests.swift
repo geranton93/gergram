@@ -38,6 +38,8 @@ struct CaptionStrings {
     let mediaSenderDiscardChangesHeader = "Discard changes?"
     let mediaSenderDiscardChangesText = "The caption will be discarded."
     let mediaSenderDiscardChangesOK = "Discard"
+    let modalSend = "Send"
+    let modalCancel = "Cancel"
 }
 
 func strings() -> CaptionStrings { CaptionStrings() }

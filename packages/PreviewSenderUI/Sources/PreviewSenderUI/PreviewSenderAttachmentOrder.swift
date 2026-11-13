@@ -3,6 +3,7 @@ import Foundation
 struct PreviewSenderAttachmentOrder: Equatable {
     enum Layout: Equatable {
         case items
+        case sticker
         case albums
         case archive
     }
@@ -24,7 +25,7 @@ struct PreviewSenderAttachmentOrder: Equatable {
 
     var rowCount: Int {
         switch layout {
-        case .items: return urls.count
+        case .items, .sticker: return urls.count
         case .albums: return urls.isEmpty ? 0 : (urls.count - 1) / Self.albumSize + 1
         case .archive: return urls.isEmpty ? 0 : 1
         }
@@ -33,7 +34,7 @@ struct PreviewSenderAttachmentOrder: Equatable {
     func range(forRow row: Int) -> Range<Int>? {
         guard row >= 0, row < rowCount else { return nil }
         switch layout {
-        case .items:
+        case .items, .sticker:
             return row..<(row + 1)
         case .albums:
             let start = row * Self.albumSize

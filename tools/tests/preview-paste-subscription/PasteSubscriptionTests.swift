@@ -46,6 +46,7 @@ __DROP__
     let pendingActions = PreviewSenderPendingActions()
     let pasteActions = PreviewSenderPendingActions()
     let attachmentEdits = PreviewSenderAttachmentEdits()
+    func discardStickerPreparation() {}
     let editorDisposable = MetaDisposable()
     let pasteDisposable = MetaDisposable()
     let chatInteraction = ChatInteraction()

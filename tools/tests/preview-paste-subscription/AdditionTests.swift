@@ -22,6 +22,7 @@ final class AdditionController {
     var sent = false
     var attachmentOrder = PreviewSenderAttachmentOrder(urls: [URL(fileURLWithPath: "/existing")], layout: .items)
     var pendingRenderSend: (() -> Void)?
+    func invalidateStickerForAttachmentChange() {}
     var urls: [URL] {
         get { attachmentOrder.urls }
         set { updateAttachmentURLs(newValue) }

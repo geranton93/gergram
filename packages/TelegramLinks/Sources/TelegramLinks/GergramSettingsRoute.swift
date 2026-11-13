@@ -1,6 +1,8 @@
 public enum GergramSettingsRoute: String {
     case messageContextMenu = "general/message-context-menu"
     case locallyHiddenSenders = "privacy/locally-hidden-senders"
+    case messageFilters = "privacy/message-filters"
+    case localMessageArchive = "privacy/local-message-archive"
 
     public static func recognizesScheme(_ url: String) -> Bool {
         let scheme = "gergram:"

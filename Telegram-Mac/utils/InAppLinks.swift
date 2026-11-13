@@ -2146,16 +2146,11 @@ func execute(inapp:inAppLink, window: Window? = nil, isExternal: Bool = false, a
             let listContext = PeerStoryListContext(account: context.account, peerId: context.peerId, isArchived: false, folderId: nil)
             controller = StoryMediaController(context: context, peerId: context.peerId, listContext: listContext, standalone: true)
         case let .gergram(route):
-            switch route {
-            case .messageContextMenu:
-                controller = messageContextMenuSettingsController()
-            case .locallyHiddenSenders:
-                guard !context.isFrozen else {
-                    afterComplete(false)
-                    return
-                }
-                controller = localShadowBannedSendersController(context: context)
+            guard let destination = gergramSettingsController(route, context: context) else {
+                afterComplete(false)
+                return
             }
+            controller = destination
         case .general:
             context.bindings.mainViewController.showPreferences()
             afterComplete(true)

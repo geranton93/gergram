@@ -5,6 +5,8 @@ final class GergramSettingsRouteTests: XCTestCase {
     func testAllowlistedScreens() {
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/general/message-context-menu"), .messageContextMenu)
         XCTAssertEqual(GergramSettingsRoute(url: "GERGRAM://SETTINGS/privacy/locally-hidden-senders"), .locallyHiddenSenders)
+        XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/privacy/message-filters"), .messageFilters)
+        XCTAssertEqual(GergramSettingsRoute(url: "GERGRAM://SETTINGS/privacy/local-message-archive"), .localMessageArchive)
     }
 
     func testOnlyTheForkSchemeIsRecognized() {
@@ -32,6 +34,11 @@ final class GergramSettingsRouteTests: XCTestCase {
             "gergram://settings/privacy/locally-hidden-senders?account=123",
             "gergram://settings/privacy/locally-hidden-senders?",
             "gergram://settings/privacy/locally-hidden-senders#reset",
+            "gergram://settings/privacy/message-filters?account=123",
+            "gergram://settings/privacy/message-filters?import=https://example.test/rules",
+            "gergram://settings/privacy/local-message-archive#clear",
+            "gergram://settings/privacy/local-message-archive/clear",
+            "gergram://settings/privacy/local-message-%61rchive",
             "gergram://settings/privacy/reset",
             "gergram://settings/devices/terminate-sessions"
         ]

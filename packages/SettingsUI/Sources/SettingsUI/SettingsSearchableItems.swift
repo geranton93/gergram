@@ -431,8 +431,16 @@ private func privacySearchableItems<Context: AccountContextProtocol>(context: Co
             presentPrivacySettings(context, present, .cloudDraft)
         }),
         SettingsSearchableItem(id: .privacy(16), title: localizedString("Gergram.Archive.Title"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
-            guard !context.isFrozen else { return }
-            present(.push, localMessageArchiveController(context: context))
+            guard let controller = gergramSettingsController(.localMessageArchive, context: context) else { return }
+            present(.push, controller)
+        }),
+        SettingsSearchableItem(id: .privacy(17), title: localizedString("Gergram.Chat.MessageFilters"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
+            guard let controller = gergramSettingsController(.messageFilters, context: context) else { return }
+            present(.push, controller)
+        }),
+        SettingsSearchableItem(id: .privacy(18), title: localizedString("Gergram.Chat.ShadowBannedSenders"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
+            guard let controller = gergramSettingsController(.locallyHiddenSenders, context: context) else { return }
+            present(.push, controller)
         })
     ]
 }

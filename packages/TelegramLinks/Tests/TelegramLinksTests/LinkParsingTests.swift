@@ -268,17 +268,26 @@ final class LinkParsingTests: XCTestCase {
     func testGergramSettingsLinksStayLocalAndRequireAccountContext() {
         let cases: [(String, GergramSettingsRoute)] = [
             ("gergram://settings/general/message-context-menu", .messageContextMenu),
-            ("gergram://settings/privacy/locally-hidden-senders", .locallyHiddenSenders)
+            ("gergram://settings/privacy/locally-hidden-senders", .locallyHiddenSenders),
+            ("gergram://settings/privacy/message-filters", .messageFilters),
+            ("gergram://settings/privacy/local-message-archive", .localMessageArchive)
         ]
         for (url, route) in cases {
-            guard case let .settings(_, section) = parse(url) else { return XCTFail("Expected settings: \(url)") }
+            guard case let .settings(link, section) = parse(url) else { return XCTFail("Expected settings: \(url)") }
+            XCTAssertEqual(link, url)
             XCTAssertEqual(section, .gergram(route))
             guard case .nothing = parse(url, options: InAppLinkParsingOptions()) else {
                 return XCTFail("Expected no navigation without an account")
             }
         }
 
-        for url in ["gergram://settings/privacy/reset", "GERGRAM://example.t.me/settings/privacy/locally-hidden-senders", "gergram://settings/privacy/locally-hidden-senders?account=123"] {
+        for url in [
+            "gergram://settings/privacy/reset",
+            "GERGRAM://example.t.me/settings/privacy/locally-hidden-senders",
+            "gergram://settings/privacy/locally-hidden-senders?account=123",
+            "gergram://settings/privacy/message-filters?import=https://example.test/rules",
+            "gergram://settings/privacy/local-message-archive/clear"
+        ] {
             guard case .nothing = parse(url) else { return XCTFail("Expected no fallback for \(url)") }
         }
 

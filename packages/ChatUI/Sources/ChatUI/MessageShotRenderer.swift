@@ -23,6 +23,46 @@ enum MessageShotRenderer {
         }
     }
 
+    struct SpoilerRedaction {
+        let text: String
+        private let hiddenRanges: [Range<Int>]
+
+        init(text: String, spoilerRanges: [Range<Int>]) {
+            let source = text as NSString
+            var expandedRanges: [Range<Int>] = []
+            for range in spoilerRanges {
+                guard range.lowerBound >= 0, range.upperBound <= source.length, !range.isEmpty else {
+                    self.text = String(repeating: "•", count: source.length)
+                    self.hiddenRanges = [0..<source.length]
+                    return
+                }
+                let composedRange = source.rangeOfComposedCharacterSequences(for: NSRange(location: range.lowerBound, length: range.count))
+                expandedRanges.append(composedRange.location..<NSMaxRange(composedRange))
+            }
+
+            var mergedRanges: [Range<Int>] = []
+            for range in expandedRanges.sorted(by: { $0.lowerBound < $1.lowerBound }) {
+                if let last = mergedRanges.last, last.upperBound >= range.lowerBound {
+                    mergedRanges[mergedRanges.count - 1] = last.lowerBound..<max(last.upperBound, range.upperBound)
+                } else {
+                    mergedRanges.append(range)
+                }
+            }
+
+            let masked = NSMutableString(string: text)
+            for range in mergedRanges {
+                masked.replaceCharacters(in: NSRange(location: range.lowerBound, length: range.count), with: String(repeating: "•", count: range.count))
+            }
+            self.text = masked as String
+            self.hiddenRanges = mergedRanges
+        }
+
+        func permitsEntity(in range: Range<Int>) -> Bool {
+            range.lowerBound >= 0 && range.upperBound <= text.utf16.count && !range.isEmpty
+                && !hiddenRanges.contains(where: { $0.overlaps(range) })
+        }
+    }
+
     static let maximumMessageCount = 20
     private static let maximumThumbnailBytes = 8 * 1024 * 1024
     private static let maximumThumbnailPixels = 32_000_000.0

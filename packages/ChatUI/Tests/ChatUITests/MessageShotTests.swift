@@ -4,6 +4,50 @@ import XCTest
 @testable import ChatUI
 
 final class MessageShotTests: XCTestCase {
+    func testSpoilerRedactionMergesOverlappingAndAdjacentRanges() {
+        let source = "left secret right"
+        let redaction = MessageShotRenderer.SpoilerRedaction(text: source, spoilerRanges: [9..<11, 5..<9, 5..<7, 8..<9])
+
+        XCTAssertEqual(redaction.text, "left •••••• right")
+        XCTAssertEqual(redaction.text.utf16.count, source.utf16.count)
+        XCTAssertTrue(redaction.permitsEntity(in: 0..<4))
+        XCTAssertTrue(redaction.permitsEntity(in: 12..<17))
+        XCTAssertFalse(redaction.permitsEntity(in: 4..<6))
+        XCTAssertFalse(redaction.permitsEntity(in: 10..<12))
+        XCTAssertFalse(redaction.permitsEntity(in: 5..<11))
+    }
+
+    func testSpoilerRedactionMasksCompleteComposedCharacters() {
+        let source = "a💡e\u{0301}b"
+        let redaction = MessageShotRenderer.SpoilerRedaction(text: source, spoilerRanges: [2..<3, 4..<5])
+
+        XCTAssertEqual(redaction.text, "a••••b")
+        XCTAssertEqual(redaction.text.utf16.count, source.utf16.count)
+        XCTAssertFalse(redaction.permitsEntity(in: 1..<2))
+        XCTAssertFalse(redaction.permitsEntity(in: 3..<4))
+        XCTAssertTrue(redaction.permitsEntity(in: 5..<6))
+    }
+
+    func testSpoilerRedactionMasksAllTextWhenAnOffsetIsInvalid() {
+        let source = "never display the original text"
+        for invalidRange in [-1..<4, 1..<100, 3..<3, Int.min..<Int.max] {
+            let redaction = MessageShotRenderer.SpoilerRedaction(text: source, spoilerRanges: [0..<2, invalidRange])
+            XCTAssertEqual(redaction.text, String(repeating: "•", count: source.utf16.count))
+            XCTAssertFalse(redaction.permitsEntity(in: 4..<8))
+            XCTAssertFalse(redaction.permitsEntity(in: invalidRange))
+        }
+    }
+
+    func testDifferentSpoilerContentsWithTheSameLengthRenderIdentically() throws {
+        func png(_ source: String) throws -> Data {
+            let redaction = MessageShotRenderer.SpoilerRedaction(text: source, spoilerRanges: [7..<13])
+            let row = MessageShotRenderer.Row(header: text("Author"), body: text(redaction.text), background: .white)
+            return try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: nil))
+        }
+
+        XCTAssertEqual(try png("Public secret."), try png("Public hidden."))
+    }
+
     func testTimestampPreferenceDefaultsToVisibleAndPersistsBothValues() throws {
         let suiteName = "MessageShotTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

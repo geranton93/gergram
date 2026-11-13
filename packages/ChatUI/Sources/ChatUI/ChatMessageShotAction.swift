@@ -156,11 +156,7 @@ enum ChatMessageShotAction {
               message.adAttribute == nil, message.paidContent == nil,
               message.activeEphemeralReplacementMessage == nil, !message.flags.contains(.Sending),
               canForwardMessage(message, chatInteraction: interaction),
-              !message.attributes.contains(where: { $0 is EphemeralMessageAttribute || $0 is RestrictedContentMessageAttribute || $0 is RichTextMessageAttribute }),
-              message.textEntities?.entities.contains(where: { entity in
-                  if case .Spoiler = entity.type { return true }
-                  return false
-              }) != true else {
+              !message.attributes.contains(where: { $0 is EphemeralMessageAttribute || $0 is RestrictedContentMessageAttribute || $0 is RichTextMessageAttribute }) else {
             return false
         }
 
@@ -349,7 +345,28 @@ enum ChatMessageShotAction {
             let secondary = colors.grayText(incoming, true)
             let header = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: secondary])
 
-            let text = ChatMessageItem.applyMessageEntities(with: message.attributes, for: message.text, message: message, context: context, fontSize: fontSize, openInfo: { _, _, _, _ in }, textColor: colors.textColor(incoming, true), linkColor: colors.linkColor(incoming, true), monospacedPre: colors.monospacedPreColor(incoming, true), monospacedCode: colors.monospacedCodeColor(incoming, true), blockColor: .init(main: palette.accent), isDark: palette.isDark, bubbled: true, ignoreLinks: true)
+            let entityAttributes = message.attributes.compactMap { $0 as? TextEntitiesMessageAttribute }
+            let spoilerRanges = entityAttributes.flatMap { attribute in
+                attribute.entities.compactMap { entity -> Range<Int>? in
+                    if case .Spoiler = entity.type { return entity.range }
+                    return nil
+                }
+            }
+            let sourceText: String
+            let sourceAttributes: [MessageAttribute]
+            let sourceMessage: Message?
+            if spoilerRanges.isEmpty {
+                sourceText = message.text
+                sourceAttributes = message.attributes
+                sourceMessage = message
+            } else {
+                let redaction = MessageShotRenderer.SpoilerRedaction(text: message.text, spoilerRanges: spoilerRanges)
+                let safeEntities = (entityAttributes.first?.entities ?? []).filter { redaction.permitsEntity(in: $0.range) }
+                sourceText = redaction.text
+                sourceAttributes = [TextEntitiesMessageAttribute(entities: safeEntities)]
+                sourceMessage = nil
+            }
+            let text = ChatMessageItem.applyMessageEntities(with: sourceAttributes, for: sourceText, message: sourceMessage, context: context, fontSize: fontSize, openInfo: { _, _, _, _ in }, textColor: colors.textColor(incoming, true), linkColor: colors.linkColor(incoming, true), monospacedPre: colors.monospacedPreColor(incoming, true), monospacedCode: colors.monospacedCodeColor(incoming, true), blockColor: .init(main: palette.accent), isDark: palette.isDark, bubbled: true, ignoreLinks: true)
             let preview = supportsPreview(message, interaction: interaction) ? previews[message.id] : nil
             let attachments = message.media.enumerated().compactMap { index, media -> MessageShotRenderer.Attachment? in
                 let label: String

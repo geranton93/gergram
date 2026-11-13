@@ -9,6 +9,49 @@ final class SpeechModelSupportTests: XCTestCase {
     private let revision = String(repeating: "ab", count: 20)
     private let digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
+    func testCatalogPinsPublisherRevisionAndExactArtifactMetadata() throws {
+        let publisherRevision = "80da2d8bfee42b0e836fc3a9890373e5defc00a6"
+        let published: [(SpeechModelArtifact.Model, String, Int64, String)] = [
+            (.whisperTiny, "ggml-tiny.bin", 77691713, "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"),
+            (.whisperBase, "ggml-base.bin", 147951465, "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
+            (.whisperSmall, "ggml-small.bin", 487601967, "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
+        ]
+        for (model, fileName, byteCount, sha256) in published {
+            let entry = try WhisperModelCatalog.artifact(for: model)
+            XCTAssertEqual(entry.sourceURL.absoluteString,
+                           "https://huggingface.co/ggerganov/whisper.cpp/resolve/\(publisherRevision)/\(fileName)")
+            XCTAssertEqual(entry.sourceRevision, publisherRevision)
+            XCTAssertEqual(entry.model, model)
+            XCTAssertEqual(entry.byteCount, byteCount)
+            XCTAssertEqual(entry.sha256, sha256)
+            XCTAssertEqual(entry.architecture, .universal)
+            XCTAssertEqual(entry.format, .whisperCppGGML)
+            XCTAssertEqual(entry.license, .mit)
+        }
+    }
+
+    func testCatalogRejectsPointerAndSameSizeSubstitute() throws {
+        let entry = try WhisperModelCatalog.artifact(for: .whisperTiny)
+        let pointer = Data(
+            ("version https://git-lfs.github.com/spec/v1\n"
+                + "oid sha256:\(entry.sha256)\n"
+                + "size \(entry.byteCount)\n").utf8
+        )
+        try withStagedFile(pointer) { file in
+            XCTAssertThrowsError(try SpeechModelStagedFileValidator.validateStagedBytes(at: file, against: entry)) {
+                XCTAssertEqual($0 as? SpeechModelStagedFileError, .unexpectedSize)
+            }
+        }
+        try withStagedFile(Data()) { file in
+            let handle = try FileHandle(forWritingTo: file)
+            defer { try? handle.close() }
+            try handle.truncate(atOffset: UInt64(entry.byteCount))
+            XCTAssertThrowsError(try SpeechModelStagedFileValidator.validateStagedBytes(at: file, against: entry)) {
+                XCTAssertEqual($0 as? SpeechModelStagedFileError, .checksumMismatch)
+            }
+        }
+    }
+
     func testManifestValidatesVersionRevisionAndArtifactBounds() throws {
         let pinned = try artifact(byteCount: SpeechModelArtifact.maximumByteCount)
         XCTAssertEqual(pinned.sourceRevision, revision)

@@ -5,6 +5,7 @@ import SwiftSignalKit
 import TGUIKit
 import Postbox
 import AppKit
+import InAppSettings
 import TelegramMedia
 import LocalAnimations
 import Localization
@@ -1020,6 +1021,12 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
         }
     }
     
+    fileprivate var timestampText: String? {
+        readTimestamp.map {
+            relativeTimestampText($0, relativeTo: context.timestamp, reactionShowsSeconds: reaction == nil ? nil : FastSettings.showMessageTimestampSeconds)
+        }
+    }
+
     override var accessibilityValue: String? {
         var parts: [String] = []
         if let reaction {
@@ -1032,8 +1039,8 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
                 parts.append(strings().voiceOverCommonStars)
             }
         }
-        if let readTimestamp {
-            parts.append(stringForRelativeTimestamp(relativeTimestamp: readTimestamp, relativeTo: context.timestamp))
+        if let timestampText {
+            parts.append(timestampText)
         }
         if let value = super.accessibilityValue {
             parts.append(value)
@@ -1042,9 +1049,8 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
     }
 
     override var textSize: CGFloat {
-        if let readTimestamp = self.readTimestamp {
-            let string = stringForRelativeTimestamp(relativeTimestamp: readTimestamp, relativeTo: context.timestamp)
-            let attr: NSAttributedString = .initialize(string: string, color: presentation.textColor, font: .medium(.text))
+        if let timestampText {
+            let attr: NSAttributedString = .initialize(string: timestampText, color: presentation.textColor, font: .medium(.text))
             let size = attr.sizeFittingWidth(.greatestFiniteMagnitude)
             return max(size.width + leftInset * 2 + innerInset * 2, super.textSize)
         } else {
@@ -1075,24 +1081,20 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
 
 
 public func stringForRelativeTimestamp(relativeTimestamp: Int32, relativeTo timestamp: Int32) -> String {
-    var t: time_t = time_t(relativeTimestamp)
-    var timeinfo: tm = tm()
-    localtime_r(&t, &timeinfo)
-    
-    var now: time_t = time_t(timestamp)
-    var timeinfoNow: tm = tm()
-    localtime_r(&now, &timeinfoNow)
-    
-    let dayDifference = timeinfo.tm_yday - timeinfoNow.tm_yday
-    
-    let hours = timeinfo.tm_hour
-    let minutes = timeinfo.tm_min
-    
-    if dayDifference == 0 {
-        return strings().timeTodayAt(stringForShortTimestamp(hours: hours, minutes: minutes))
-    } else {
-        return DateSelectorUtil.chatFullDateFormatter.string(from: Date.init(timeIntervalSince1970: TimeInterval(relativeTimestamp)))
+    relativeTimestampText(relativeTimestamp, relativeTo: timestamp, reactionShowsSeconds: nil)
+}
+
+private func relativeTimestampText(_ relativeTimestamp: Int32, relativeTo timestamp: Int32, reactionShowsSeconds: Bool?) -> String {
+    let date = Date(timeIntervalSince1970: TimeInterval(relativeTimestamp))
+    let reference = Date(timeIntervalSince1970: TimeInterval(timestamp))
+    guard Calendar.current.isDate(date, inSameDayAs: reference) else {
+        return ChatDisplayTimestamp.fullDate(for: date, showsSeconds: reactionShowsSeconds ?? true)
     }
+    if reactionShowsSeconds == true {
+        return strings().timeTodayAt(ChatDisplayTimestamp.time(for: date, showsSeconds: true))
+    }
+    let time = Calendar.current.dateComponents([.hour, .minute], from: date)
+    return strings().timeTodayAt(stringForShortTimestamp(hours: Int32(time.hour ?? 0), minutes: Int32(time.minute ?? 0)))
 }
 
 private final class ReadTimestampView : View {
@@ -1110,9 +1112,8 @@ private final class ReadTimestampView : View {
         fatalError("init(coder:) has not been implemented")
     }
     
-    func update(timestamp: Int32, relativeTo: Int32, maxSize: NSSize, context: any AccountContextProtocol, presentation: AppMenu.Presentation, isReaction: Bool) -> NSSize {
-        let string = stringForRelativeTimestamp(relativeTimestamp: timestamp, relativeTo: relativeTo)
-        let textLayout = TextViewLayout(.initialize(string: string, color: presentation.textColor, font: .medium(.text)), maximumNumberOfLines: 1)
+    func update(text: String, maxSize: NSSize, context: any AccountContextProtocol, presentation: AppMenu.Presentation, isReaction: Bool) -> NSSize {
+        let textLayout = TextViewLayout(.initialize(string: text, color: presentation.textColor, font: .medium(.text)), maximumNumberOfLines: 1)
         textLayout.measure(width: maxSize.width - 20)
         self.textView.update(textLayout)
         
@@ -1208,7 +1209,7 @@ private final class ReactionPeerMenuItemView : AppMenuRowView {
         guard let item = self.item as? ReactionPeerMenuItem else {
             return
         }
-        if state == .Hover, let timestamp = item.readTimestamp {
+        if state == .Hover, let timestampText = item.timestampText {
             contentView.change(pos: NSMakePoint(0, -contentView.frame.height), animated: true, duration: 0.35, timingFunction: .spring)
             contentView.change(opacity: 0, animated: true)
 
@@ -1220,7 +1221,7 @@ private final class ReactionPeerMenuItemView : AppMenuRowView {
                 self.timestamp = current
                 self.containerView.addSubview(current)
                 
-                let size = current.update(timestamp: timestamp, relativeTo: item.context.timestamp, maxSize: NSMakeSize(item.textMaxWidth, contentView.frame.height), context: item.context, presentation: item.presentation, isReaction: item.reaction != nil)
+                let size = current.update(text: timestampText, maxSize: NSMakeSize(item.textMaxWidth, contentView.frame.height), context: item.context, presentation: item.presentation, isReaction: item.reaction != nil)
                 current.frame = CGRect(origin: CGPoint(x: self.textX, y: focus(size).minY), size: size)
                 
                 current.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)

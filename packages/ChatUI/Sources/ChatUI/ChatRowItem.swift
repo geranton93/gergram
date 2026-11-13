@@ -31,14 +31,6 @@ private let forwardKeyString = ":##"
 
 private let chatEditedIndicatorImage = TelegramThemeHooks.shared.image(.iconChatActionEditMessage)
 
-private let chatDateFormatterWithSeconds: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .none
-    formatter.timeStyle = .medium
-    formatter.timeZone = NSTimeZone.local
-    return formatter
-}()
-
 public struct ChatFloatingPhoto {
     public var point: NSPoint
     public var items:[ChatRowItem]
@@ -2666,8 +2658,8 @@ public class ChatRowItem: TableRowItem {
                 time -= context.timeDifference
                 
                 
-                let dateFormatter = FastSettings.showMessageTimestampSeconds ? chatDateFormatterWithSeconds : DateSelectorUtil.chatDateFormatter
-                let attr: NSMutableAttributedString = NSAttributedString.initialize(string: dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time))), color: dateColor, font: dateFont).mutableCopy() as! NSMutableAttributedString
+                let dateText = ChatDisplayTimestamp.time(for: Date(timeIntervalSince1970: time), showsSeconds: FastSettings.showMessageTimestampSeconds)
+                let attr: NSMutableAttributedString = NSAttributedString.initialize(string: dateText, color: dateColor, font: dateFont).mutableCopy() as! NSMutableAttributedString
                 
                 if let attribute = message.inlineBotAttribute, let peerId = attribute.peerId, let peer = message.peers[peerId] {
                     attr.insert(.initialize(string: "\(attribute.title ?? peer.displayTitle), ", color: dateColor, font: dateFont), at: 0)
@@ -2783,14 +2775,13 @@ public class ChatRowItem: TableRowItem {
                     var relativeDate: String?
                     if message_primary_edited_date, self.date == nil {
                         let editedDate = Date(timeIntervalSince1970: TimeInterval(editedAttribute.date))
-                        let dateFormatter = FastSettings.showMessageTimestampSeconds ? chatDateFormatterWithSeconds : DateSelectorUtil.chatDateFormatter
                         let time: String
                         if Calendar.current.isDateInToday(editedDate) {
                             relativeDate = "\(strings().timeToday) \(strings().timeAt)"
-                            time = dateFormatter.string(from: editedDate)
+                            time = ChatDisplayTimestamp.time(for: editedDate, showsSeconds: FastSettings.showMessageTimestampSeconds)
                         } else if Calendar.current.isDateInYesterday(editedDate) {
                             relativeDate = "\(strings().timeYesterday) \(strings().timeAt)"
-                            time = dateFormatter.string(from: editedDate)
+                            time = ChatDisplayTimestamp.time(for: editedDate, showsSeconds: FastSettings.showMessageTimestampSeconds)
                         } else {
                             time = DateUtils.string(forLastSeen: editedAttribute.date)
                         }

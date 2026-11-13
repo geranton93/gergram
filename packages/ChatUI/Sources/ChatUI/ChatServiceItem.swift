@@ -3064,6 +3064,13 @@ public class ChatServiceItem: ChatRowItem {
         }
         
         
+        if let time = ChatDisplayTimestamp.serviceTime(
+            timestamp: message.timestamp, timeDifference: context.timeDifference,
+            showsSeconds: FastSettings.showMessageTimestampSeconds, isRealMessage: !entry.isFakeMessage,
+            hasText: attributedString.length > 0, isScheduledWhenOnline: message.timestamp == scheduleWhenOnlineTimestamp
+        ) {
+            attributedString.append(.initialize(string: " · \(time)", color: grayTextColor.withAlphaComponent(0.8), font: .normal(.small)))
+        }
         text = TextViewLayout(attributedString.detectBold(with: .medium(.text)), truncationType: .end, cutout: nil, alignment: .center)
         text.mayItems = false
         text.interactions = LinkHooks.shared.globalLinkExecutor()

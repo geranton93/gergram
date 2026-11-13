@@ -474,7 +474,7 @@ private func stickersEntries(view: ItemCollectionsView?, context: any AccountCon
                             }
                         }
                     }
-                    if files.count == 20 {
+                    if !settings.showsAllRecentStickers && files.count == 20 {
                         break
                     }
                 }
@@ -1582,8 +1582,8 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
                 case let .navigate(index):
                     let featuredView = context.account.viewTracker.featuredStickerPacks()
                     let packsView = context.account.postbox.itemCollectionsView(orderedItemListCollectionIds: [Namespaces.OrderedItemList.CloudRecentStickers, Namespaces.OrderedItemList.CloudSavedStickers], namespaces: [Namespaces.ItemCollection.CloudStickerPacks], aroundIndex: index.packIndex, count: count)
-                    return combineLatest(packsView, featuredView, statePromise.get())
-                        |> mapToSignal { view, featured, state in
+                    return combineLatest(packsView, featuredView, settings, statePromise.get())
+                        |> mapToSignal { view, featured, settings, state in
                             return specificPackData |> map { specificPack in
                                 let update: StickerPacksUpdate
                                 if firstTime {
@@ -1592,7 +1592,7 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
                                 } else {
                                     update = .generic(animated: true, scrollToTop: false)
                                 }
-                                return StickerPacksUpdateData(view: view, update: update, specificPack: specificPack, hasUnread: false, featured: featured, mode: mode, state: state)
+                                return StickerPacksUpdateData(view: view, update: update, specificPack: specificPack, hasUnread: false, featured: featured, settings: settings, mode: mode, state: state)
                             }
                     } 
                 case .loadFeaturedMore:

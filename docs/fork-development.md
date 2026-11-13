@@ -74,7 +74,7 @@ xcodebuild -workspace Telegram-Mac.xcworkspace -scheme Telegram -configuration D
 
 Open `Telegram-Mac.xcworkspace` in Xcode for interactive debugging. The `Telegram` scheme runs the main app, and `TelegramShare` targets the share extension. The workspace also links projects required by the app. Native framework preparation generates API and shared-core sources before Xcode resolves the local Swift packages.
 
-Xcode 27 compatibility edits are local. Run `bash scripts/xcode27.sh revert` before staging any affected files. The separate Telegram-iOS compatibility patch is applied by framework preparation. With native frameworks already available, `sh scripts/prepare-telegram-ios.sh` reapplies it as needed. Use its `--reverse` option before moving the Telegram-iOS checkout to a different revision. [Xcode 27 compatibility](../XCODE27.md) · [Upstream build details](../INSTALL.md)
+Xcode 27 compatibility edits are local. Run `bash scripts/xcode27.sh revert` before staging any affected files. Framework preparation applies the Telegram-iOS compatibility, archive storage, capture and maintenance patch groups. With native frameworks already available, `sh scripts/prepare-telegram-ios.sh` applies any pending group. Use its `--reverse` option before moving the Telegram-iOS checkout to a different revision. [Xcode 27 compatibility](../XCODE27.md) · [Upstream build details](../INSTALL.md)
 
 ## Where features belong
 

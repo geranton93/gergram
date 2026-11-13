@@ -35,7 +35,7 @@ final class ChatDisplayTimestampTests: XCTestCase {
         let timestamp: Int32 = 1_700_000_017
         for (value, isRealMessage, hasText, isScheduledWhenOnline) in [
             (timestamp, false, true, false), (timestamp, true, false, false),
-            (timestamp, true, true, true), (0, true, true, false)
+            (timestamp, true, true, true), (0, true, true, false), (1, false, true, false)
         ] {
             XCTAssertNil(ChatDisplayTimestamp.serviceTime(timestamp: value, timeDifference: 0, showsSeconds: false,
                                                           isRealMessage: isRealMessage, hasText: hasText, isScheduledWhenOnline: isScheduledWhenOnline))

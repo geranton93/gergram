@@ -33,7 +33,7 @@ import UniqueGiftBackground
 public class ChatServiceItem: ChatRowItem {
 
     public override var accessibilityKind: ChatMessageAccessibility.Kind {
-        return .text(text.attributedString.string)
+        return .text(accessibilityServiceText)
     }
 
     public override var accessibilityCustomActions: [NSAccessibilityCustomAction]? {
@@ -45,6 +45,7 @@ public class ChatServiceItem: ChatRowItem {
     public static var photoSize = NSMakeSize(200, 200)
 
     public let text:TextViewLayout
+    private let accessibilityServiceText: String
     public private(set) var imageArguments:TransformImageArguments?
     public private(set) var image:TelegramMediaImage?
     
@@ -3064,14 +3065,21 @@ public class ChatServiceItem: ChatRowItem {
         }
         
         
-        if let time = ChatDisplayTimestamp.serviceTime(
+        let displayText = attributedString.detectBold(with: .medium(.text))
+        accessibilityServiceText = displayText.string
+        let isRealMessage = !entry.isFakeMessage && chatInteraction.mode.customChatContents?.kind != .welcomeMessages
+        let timestamp = ChatDisplayTimestamp.serviceTime(
             timestamp: message.timestamp, timeDifference: context.timeDifference,
-            showsSeconds: FastSettings.showMessageTimestampSeconds, isRealMessage: !entry.isFakeMessage,
-            hasText: attributedString.length > 0, isScheduledWhenOnline: message.timestamp == scheduleWhenOnlineTimestamp
-        ) {
-            attributedString.append(.initialize(string: " · \(time)", color: grayTextColor.withAlphaComponent(0.8), font: .normal(.small)))
+            showsSeconds: FastSettings.showMessageTimestampSeconds, isRealMessage: isRealMessage,
+            hasText: displayText.length > 0, isScheduledWhenOnline: message.timestamp == scheduleWhenOnlineTimestamp
+        )
+        if let timestamp {
+            let timestampedText = NSMutableAttributedString(attributedString: displayText)
+            timestampedText.append(.initialize(string: " · \(timestamp)", color: grayTextColor.withAlphaComponent(0.8), font: .normal(.small)))
+            text = TextViewLayout(timestampedText, truncationType: .end, cutout: nil, alignment: .center)
+        } else {
+            text = TextViewLayout(displayText, truncationType: .end, cutout: nil, alignment: .center)
         }
-        text = TextViewLayout(attributedString.detectBold(with: .medium(.text)), truncationType: .end, cutout: nil, alignment: .center)
         text.mayItems = false
         text.interactions = LinkHooks.shared.globalLinkExecutor()
         super.init(initialSize, chatInteraction, entry, theme: theme)

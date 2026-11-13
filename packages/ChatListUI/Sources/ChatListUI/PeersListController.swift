@@ -297,6 +297,7 @@ public struct PeerListState : Equatable {
     public var hiddenItems: PeerListHiddenItems
     public var selectedForum: PeerId?
     public var stories: EngineStorySubscriptions?
+    var hidesStories = false
     public var isContacts: Bool
     public var filterData: FilterData
     public var presentation: TelegramPresentationTheme
@@ -2688,6 +2689,10 @@ open class PeersListController<Context: AccountContextProtocol>: TelegramGeneric
             storyState = .single(nil)
         }
         
+        let storyVisibility = combineLatest(storyState, additionalSettings(accountManager: context.sharedContext.accountManager)
+            |> map { $0.hideChatListStories }
+            |> distinctUntilChanged)
+
         let privacy: Promise<GlobalPrivacySettings?> = Promise(nil)
        
         
@@ -2696,7 +2701,7 @@ open class PeersListController<Context: AccountContextProtocol>: TelegramGeneric
         
         let hasDownloads = combineLatest(hasRecentDownload, hasDownloading) |> map { $0 || $1 }
         
-        actionsDisposable.add(combineLatest(queue: .mainQueue(), proxy, layoutSignal, peer, forumPeer, inputActivities, storyState, appearMode.get(), privacy.get(), appearanceSignal, BrowserStateContext.get(context).fullState(), hasDownloads).start(next: { pref, layout, peer, forumPeer, inputActivities, storyState, appearMode, privacy, appearance, webappsState, hasDownloads in
+        actionsDisposable.add(combineLatest(queue: .mainQueue(), proxy, layoutSignal, peer, forumPeer, inputActivities, storyVisibility, appearMode.get(), privacy.get(), appearanceSignal, BrowserStateContext.get(context).fullState(), hasDownloads).start(next: { pref, layout, peer, forumPeer, inputActivities, storyVisibility, appearMode, privacy, appearance, webappsState, hasDownloads in
             updateState { value in
                 var current: PeerListState = value
                 current.proxySettings = pref.0
@@ -2707,7 +2712,8 @@ open class PeersListController<Context: AccountContextProtocol>: TelegramGeneric
                 current.forumPeer = forumPeer
                 current.mode = mode
                 current.activities = inputActivities
-                current.stories = storyState
+                current.stories = storyVisibility.1 ? nil : storyVisibility.0
+                current.hidesStories = storyVisibility.1
                 current.appear = layout == .minimisize ? .normal : appearMode
                 current.isContacts = isContacts
                 current.presentation = appearance.presentation
@@ -2850,7 +2856,8 @@ open class PeersListController<Context: AccountContextProtocol>: TelegramGeneric
             if case let .forum(peerId, _, _) = mode {
                 FastSettings.dismissPendingRequests(peerIds, for: peerId)
             }
-        }, openStory: { initialId, singlePeer, isHidden in
+        }, openStory: { [weak self] initialId, singlePeer, isHidden in
+            guard let self, !self.stateValue.with({ $0.hidesStories }) else { return }
             ChatUIHooks.shared.showStories(context, isHidden, initialId, singlePeer)
         }, getStoryInterfaceState: { [weak self] in
             guard let `self` = self else {
@@ -3068,6 +3075,11 @@ open class PeersListController<Context: AccountContextProtocol>: TelegramGeneric
             genericView.updateLayout(frame.size, transition: .immediate)
         }
                       
+        if state.hidesStories && previous?.hidesStories != true {
+            self.storyRevealDriver.setEnabled(false)
+            self.setStoriesRevealed(false, animated: false)
+        }
+
         let animated = genericView.window != nil && state.splitState == previous?.splitState && !context.window.inLiveResize
         
         self.genericView.searchStateChanged(state, arguments: arguments, animated: animated, updateSearchTags: { [weak self] value in

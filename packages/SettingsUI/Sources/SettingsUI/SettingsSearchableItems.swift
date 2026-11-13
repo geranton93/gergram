@@ -662,7 +662,7 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
             allItems.append(contentsOf: appearanceItems)
             allItems.append(SettingsSearchableItem(id: .general(0), title: localizedString("Gergram.Chat.FilterZalgoText"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
                 let controller = GeneralSettingsViewController(context)
-                controller.focusOnZalgoFilter = true
+                controller.focusOnZalgoFilter()
                 present(.push, controller)
             }))
             allItems.append(SettingsSearchableItem(id: .general(1), title: localizedString("Gergram.Chat.MenuSettings"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
@@ -672,6 +672,12 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
                 present(.push, miniAppWindowSizeSettingsController())
             }))
             
+            allItems.append(SettingsSearchableItem(id: .general(3), title: localizedString("Gergram.Stories.HideInChatList"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
+                let controller = GeneralSettingsViewController(context)
+                controller.focusOnHideChatListStories()
+                present(.push, controller)
+            }))
+
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)
             

@@ -29,6 +29,7 @@ private func profilePeerIdFormatTitle(_ format: ProfilePeerIdFormat) -> String {
 
 private enum GeneralSettingsEntry : Comparable, Identifiable {
     static let zalgoFilterStableId = 32
+    static let hideChatListStoriesStableId = 35
 
     case section(sectionId:Int)
     case header(sectionId: Int, uniqueId:Int, text:String)
@@ -62,6 +63,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case collapseChannelRecommendations(sectionId: Int, enabled: Bool)
     case hideSimilarChannelsTab(sectionId: Int, enabled: Bool)
     case disableGlobalPeerSearch(sectionId: Int, enabled: Bool)
+    case hideChatListStories(sectionId: Int, enabled: Bool)
     case showMessageTimestampSeconds(sectionId: Int, enabled: Bool)
     case filterZalgoText(sectionId: Int, enabled: Bool)
     case messageContextMenu(sectionId: Int)
@@ -130,6 +132,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 29
         case .disableGlobalPeerSearch:
             return 30
+        case .hideChatListStories:
+            return Self.hideChatListStoriesStableId
         case .showMessageTimestampSeconds:
             return 31
         case .filterZalgoText:
@@ -199,7 +203,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return (sectionId * 1000) + stableId
         case let .profileIdFormat(sectionId, _):
             return (sectionId * 1000) + stableId
-        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId), let .miniAppWindowSize(sectionId):
+        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .hideChatListStories(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId), let .miniAppWindowSize(sectionId):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -322,9 +326,15 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
                 FastSettings.hideSimilarChannelsTab.toggle()
             })
         case let .disableGlobalPeerSearch(_, disabled):
-            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Search.DisableGlobalPeerSearch"), type: .switchable(disabled), viewType: .lastItem, action: {
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Search.DisableGlobalPeerSearch"), type: .switchable(disabled), viewType: .innerItem, action: {
                 _ = updateAdditionalSettingsInteractively(accountManager: arguments.context.sharedContext.accountManager) { settings in
                     settings.withUpdatedDisableGlobalPeerSearch(!settings.disableGlobalPeerSearch)
+                }.startStandalone()
+            }, autoswitch: false)
+        case let .hideChatListStories(_, hidden):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Stories.HideInChatList"), type: .switchable(hidden), viewType: .lastItem, action: {
+                _ = updateAdditionalSettingsInteractively(accountManager: arguments.context.sharedContext.accountManager) { settings in
+                    settings.withUpdatedHideChatListStories(!settings.hideChatListStories)
                 }.startStandalone()
             }, autoswitch: false)
         case let .showMessageTimestampSeconds(_, enabled):
@@ -520,6 +530,7 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.collapseChannelRecommendations(sectionId: sectionId, enabled: collapseChannelRecommendations))
     entries.append(.hideSimilarChannelsTab(sectionId: sectionId, enabled: hideSimilarChannelsTab))
     entries.append(.disableGlobalPeerSearch(sectionId: sectionId, enabled: additionalSettings.disableGlobalPeerSearch))
+    entries.append(.hideChatListStories(sectionId: sectionId, enabled: additionalSettings.hideChatListStories))
 
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
@@ -551,7 +562,14 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
 
     
     private let disposable = MetaDisposable()
-    var focusOnZalgoFilter = false
+    private var focusedSettingId: Int?
+    func focusOnZalgoFilter() {
+        focusedSettingId = GeneralSettingsEntry.zalgoFilterStableId
+    }
+
+    func focusOnHideChatListStories() {
+        focusedSettingId = GeneralSettingsEntry.hideChatListStoriesStableId
+    }
     open override var removeAfterDisapper:Bool {
         return false
     }
@@ -658,9 +676,9 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
             }
             self.genericView.merge(with: transition)
             self.readyOnce()
-            if self.focusOnZalgoFilter {
-                self.focusOnZalgoFilter = false
-                self.genericView.scroll(to: .center(id: GeneralSettingsEntry.zalgoFilterStableId, innerId: nil, animated: true, focus: .init(focus: true), inset: 0))
+            if let id = self.focusedSettingId {
+                self.focusedSettingId = nil
+                self.genericView.scroll(to: .center(id: id, innerId: nil, animated: true, focus: .init(focus: true), inset: 0))
             }
         }))
                 

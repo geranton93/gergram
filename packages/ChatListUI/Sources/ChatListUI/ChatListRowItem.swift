@@ -1479,6 +1479,7 @@ public class ChatListRowItem: TableRowItem {
     
     
     public func openPeerStory() {
+        guard avatarStoryIndicator != nil else { return }
         if let peerId = peerId {
             let table = self.table
             self.openStory(.init(peerId: peerId, id: nil, messageId: nil, takeControl: { [weak table] peerId, _, storyId in

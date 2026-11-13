@@ -723,6 +723,7 @@ public final class ChatInteraction : InterfaceObserver  {
     public var addPollOption:(MessageId, TelegramMediaPollOption) -> Void = { _, _ in }
     public var deletePollOption:(MessageId, Data) -> Void = { _, _ in }
     public var openDiscussion:()->Void = { }
+    var openChannelDiscussion: (PeerId, PeerId) -> Void = { _, _ in }
     public var addContact:()->Void = {}
     public var blockContact: ()->Void = {}
     public var openScheduledMessages: ()->Void = {}
@@ -1838,6 +1839,7 @@ public final class ChatInteraction : InterfaceObserver  {
         self.addPollOption = { _, _ in }
         self.deletePollOption = { _, _ in }
         self.openDiscussion = { }
+        self.openChannelDiscussion = { _, _ in }
         self.addContact = { }
         self.blockContact = { }
         self.openScheduledMessages = { }

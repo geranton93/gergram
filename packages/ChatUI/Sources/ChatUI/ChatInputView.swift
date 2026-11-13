@@ -635,6 +635,9 @@ public class ChatInputView: View, Notifable {
 
     
     private let sendActivityDisposable = MetaDisposable()
+    private let channelBottomActionDisposable = MetaDisposable()
+    private var channelBottomAction = ChannelBottomActionPreferences.shared.action
+    private(set) var isChannelBottomActionRowHidden = false
     public let ready = Promise<Bool>()
     public weak var delegate:ChatInputDelegate?
     public var chatInteraction:ChatInteraction
@@ -716,7 +719,7 @@ public class ChatInputView: View, Notifable {
             container.isTranscribing = true
         }
         finishGlassMorph()
-        needUpdateChatState(with: chatState, false)
+        needUpdateChatState(with: resolvedChatState, false)
         updateInput(chatInteraction.presentation, prevState: chatInteraction.presentation, animated: false)
         container.updateLayout(transition: .immediate)
         for ghost in [attachGhost, textGhost, voiceGhost, botMenuGhost, keyboardGhost].compactMap({ $0 }) {
@@ -909,6 +912,16 @@ public class ChatInputView: View, Notifable {
         }))
         chatInteraction.reloadRichTextDraft()
         self.bindIncomingTypingDraft(for: chatInteraction.chatLocation, animated: false)
+        channelBottomActionDisposable.set((ChannelBottomActionPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] action in
+            guard let self, self.channelBottomAction != action else { return }
+            let previous = self.resolvedChatState
+            self.channelBottomAction = action
+            let next = self.resolvedChatState
+            if previous != next {
+                self.needUpdateChatState(with: next, false)
+                self.updateLayout(size: self.frame.size, transition: .immediate)
+            }
+        }))
     }
 
     private func scheduleInlineRichDraftStore() {
@@ -1116,6 +1129,10 @@ public class ChatInputView: View, Notifable {
     public static let inputBottomInset: CGFloat = 12
 
     public func height(for width: CGFloat) -> CGFloat {
+        if isChannelBottomActionRowHidden {
+            bottomHeight = 0
+            return ChatInputView.inputBottomInset
+        }
         let contentHeight:CGFloat = contentHeight(for: width)
         var sumHeight:CGFloat = contentHeight + ChatInputView.inputBottomInset
         if let markup = replyMarkupModel  {
@@ -1147,7 +1164,7 @@ public class ChatInputView: View, Notifable {
     public func updateInterface(with interaction:ChatInteraction) -> Void {
         self.chatInteraction = interaction
         sendButton.prepare(with: chatInteraction)
-        needUpdateChatState(with: chatState, false)
+        needUpdateChatState(with: resolvedChatState, false)
         needUpdateReplyMarkup(with: interaction.presentation, false)
         
         updateMessageEffect(interaction.presentation.interfaceState.messageEffect, animated: false)
@@ -1353,9 +1370,11 @@ public class ChatInputView: View, Notifable {
         }
 
         if let value = value as? ChatPresentationInterfaceState, let oldValue = oldValue as? ChatPresentationInterfaceState {
+            let state = value.state(channelBottomAction: channelBottomAction)
+            let previousState = oldValue.state(channelBottomAction: channelBottomAction)
             let textPermissionChanged = permissionText(from: value.peer, for: .banSendText, cachedData: value.cachedData) != permissionText(from: oldValue.peer, for: .banSendText, cachedData: oldValue.cachedData)
 
-            if value.effectiveInput != oldValue.effectiveInput || oldValue.state != value.state || textPermissionChanged {
+            if value.effectiveInput != oldValue.effectiveInput || previousState != state || textPermissionChanged {
                 updateInput(value, prevState: oldValue, animated: animated)
             }
             if value.sendPaidMessageStars != oldValue.sendPaidMessageStars {
@@ -1383,7 +1402,6 @@ public class ChatInputView: View, Notifable {
                 updateAdditions(value,animated)
             }
             
-            let state = value.state
             let botStartBindingChanged: Bool
             if case .botStart = state {
                 botStartBindingChanged = value.initialAction != oldValue.initialAction
@@ -1391,7 +1409,7 @@ public class ChatInputView: View, Notifable {
             } else {
                 botStartBindingChanged = false
             }
-            if state != oldValue.state || textPermissionChanged || botStartBindingChanged {
+            if state != previousState || textPermissionChanged || botStartBindingChanged {
                 needUpdateChatState(with: state, animated)
             }
             
@@ -1562,6 +1580,10 @@ public class ChatInputView: View, Notifable {
     
     public var chatState: ChatState { container.chatState }
 
+    private var resolvedChatState: ChatState {
+        chatInteraction.presentation.state(channelBottomAction: channelBottomAction)
+    }
+
     public func contentHeight(for width: CGFloat) -> CGFloat {
         return container.contentHeight(for: width)
     }
@@ -1682,13 +1704,20 @@ public class ChatInputView: View, Notifable {
     public func needUpdateChatState(with state:ChatState, _ animated:Bool) -> Void {
         CATransaction.begin()
 
+        let channelBottomActionRowVisibilityChanged = isChannelBottomActionRowHidden != state.isChannelBottomActionRowHidden
+        isChannelBottomActionRowHidden = state.isChannelBottomActionRowHidden
+        if channelBottomActionRowVisibilityChanged {
+            isEventLess = isChannelBottomActionRowHidden
+            alphaValue = isChannelBottomActionRowHidden ? 0 : 1
+        }
+
         let startsDictation: Bool
         if case let .recording(recorder) = state {
             startsDictation = (recorder as? ChatRecordingAudioState)?.startsDictation == true
         } else {
             startsDictation = false
         }
-        let morphsGlass = animated && canMorphGlass && !isTranscribing && !startsDictation
+        let morphsGlass = animated && !isChannelBottomActionRowHidden && canMorphGlass && !isTranscribing && !startsDictation
         let isInputState = state == .normal || state == .editing
         var morphInSlots: ChatInputGlassSlots?
         if morphsGlass, isInputState {
@@ -1704,7 +1733,7 @@ public class ChatInputView: View, Notifable {
             morphGlassIn(from: morphInSlots)
         }
 
-        if animated {
+        if animated && !channelBottomActionRowVisibilityChanged {
             inputDidUpdateLayout(animated: animated)
         }
         if morphInSlots != nil {
@@ -1738,7 +1767,7 @@ public class ChatInputView: View, Notifable {
         } else {
             reusableActionView = nil
             if let view = stateView {
-                performSubviewRemoval(view, animated: animated)
+                performSubviewRemoval(view, animated: animated && !isChannelBottomActionRowHidden)
                 stateView = nil
             }
         }
@@ -1858,6 +1887,26 @@ public class ChatInputView: View, Notifable {
                 view.update(text: text, action: action, chatInteraction: chatInteraction, rightAdditionData: rightAddition, leftAdditionData: leftAddition, accent: accent)
                 installStateView(view)
             }
+        case let .channelBottomAction(control, right, left):
+            switch control {
+            case .hidden where isChannelBottomActionRowHidden:
+                contentView.isHidden = true
+                container.isHidden = true
+            case .hidden:
+                let view = ChatInputActionButtonView(frame: bounds)
+                view.updateLocalizationAndTheme(theme: currentChatTheme ?? theme)
+                view.updateAdditions(chatInteraction: chatInteraction, right: right, left: left)
+                installStateView(view)
+            case let .discussion(channelId, discussionId):
+                let view = ChatInputActionButtonView(frame: bounds)
+                view.updateLocalizationAndTheme(theme: currentChatTheme ?? theme)
+                view.update(text: strings().chatInputDiscuss, action: { [weak self] interaction in
+                    guard let self, self.chatInteraction === interaction,
+                          case let .channelBottomAction(current, _, _) = self.resolvedChatState, current == control else { return }
+                    interaction.openChannelDiscussion(channelId, discussionId)
+                }, chatInteraction: chatInteraction, rightAdditionData: right, leftAdditionData: left)
+                installStateView(view)
+            }
         case let .botStart(text, action):
             let presentation = chatInteraction.presentation
             let initialAction = presentation.initialAction
@@ -1945,6 +1994,9 @@ public class ChatInputView: View, Notifable {
         }
 
         CATransaction.commit()
+        if channelBottomActionRowVisibilityChanged {
+            inputDidUpdateLayout(animated: animated)
+        }
         dictationPanelToActivate?.startDictation()
     }
     
@@ -2336,6 +2388,7 @@ public class ChatInputView: View, Notifable {
         self.slowModeUntilDisposable.dispose()
         self.richDraftDisposable.dispose()
         self.incomingTypingDraftDisposable.dispose()
+        self.channelBottomActionDisposable.dispose()
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Return)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Delete)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Z, modifierFlags: [.command], forceCheckFlags: true)

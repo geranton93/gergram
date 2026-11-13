@@ -32,6 +32,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     static let hideChatListStoriesStableId = 35
     static let sendWithoutSoundStableId = 36
     static let hideProfileStoriesStableId = 37
+    static let channelBottomActionStableId = 42
 
     case section(sectionId:Int)
     case header(sectionId: Int, uniqueId:Int, text:String)
@@ -68,6 +69,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case showProfileId(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case profileIdFormat(sectionId: Int, format: ProfilePeerIdFormat)
     case collapseChannelRecommendations(sectionId: Int, enabled: Bool)
+    case channelBottomAction(sectionId: Int, action: ChannelBottomAction)
     case hideSimilarChannelsTab(sectionId: Int, enabled: Bool)
     case disableGlobalPeerSearch(sectionId: Int, enabled: Bool)
     case hideChatListStories(sectionId: Int, enabled: Bool)
@@ -146,6 +148,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 27
         case .collapseChannelRecommendations:
             return 28
+        case .channelBottomAction:
+            return Self.channelBottomActionStableId
         case .hideSimilarChannelsTab:
             return 29
         case .disableGlobalPeerSearch:
@@ -225,7 +229,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return (sectionId * 1000) + stableId
         case let .profileIdFormat(sectionId, _):
             return (sectionId * 1000) + stableId
-        case let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .hideChatListStories(sectionId, _), let .hideProfileStories(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId), let .miniAppWindowSize(sectionId):
+        case let .channelBottomAction(sectionId, _), let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .hideChatListStories(sectionId, _), let .hideProfileStories(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId), let .miniAppWindowSize(sectionId):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -359,6 +363,14 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
                 }, itemImage: option == format ? MenuAnimation.menu_check_selected.value : nil)
             }
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsShowProfileIdFormat, type: .contextSelector(profilePeerIdFormatTitle(format), options), viewType: .lastItem)
+        case let .channelBottomAction(_, action):
+            let title: (ChannelBottomAction) -> String = { localizedString("Gergram.Chat.ChannelBottomAction.\($0.rawValue)") }
+            let options = ChannelBottomAction.allCases.map { option in
+                ContextMenuItem(title(option), handler: {
+                    ChannelBottomActionPreferences.shared.setAction(option)
+                }, itemImage: option == action ? MenuAnimation.menu_check_selected.value : nil)
+            }
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ChannelBottomAction"), type: .contextSelector(title(action), options), viewType: .singleItem)
         case let .collapseChannelRecommendations(_, enabled):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().generalSettingsSimilarChannelsCollapse, type: .switchable(enabled), viewType: .firstItem, action: {
                 FastSettings.collapseChannelRecommendations.toggle()
@@ -466,7 +478,7 @@ private final class GeneralSettingsArguments {
    
 }
 
-private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool, filterZalgoText: Bool, sendWithoutSound: Bool, forceTouchAction: ForceTouchAction, mediaSendConfirmation: ChatMediaSendConfirmationOptions) -> [GeneralSettingsEntry] {
+private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSettings: BaseApplicationSettings, appearance: Appearance, launchSettings: LaunchSettings, secretChatSettings: SecretChatSettings, additionalSettings: AdditionalSettings, peerIdFormat: ProfilePeerIdFormat?, collapseChannelRecommendations: Bool, hideSimilarChannelsTab: Bool, showMessageTimestampSeconds: Bool, filterZalgoText: Bool, sendWithoutSound: Bool, forceTouchAction: ForceTouchAction, mediaSendConfirmation: ChatMediaSendConfirmationOptions, channelBottomAction: ChannelBottomAction) -> [GeneralSettingsEntry] {
     var sectionId:Int = 1
     var entries:[GeneralSettingsEntry] = []
     
@@ -591,6 +603,10 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
 
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
+    entries.append(.channelBottomAction(sectionId: sectionId, action: channelBottomAction))
+
+    entries.append(.section(sectionId: sectionId))
+    sectionId += 1
     entries.append(.showMessageTimestampSeconds(sectionId: sectionId, enabled: showMessageTimestampSeconds))
     entries.append(.filterZalgoText(sectionId: sectionId, enabled: filterZalgoText))
     entries.append(.messageContextMenu(sectionId: sectionId))
@@ -629,6 +645,10 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
     }
     func focusOnHideProfileStories() {
         focusedSettingId = GeneralSettingsEntry.hideProfileStoriesStableId
+    }
+
+    func focusOnChannelBottomAction() {
+        focusedSettingId = GeneralSettingsEntry.channelBottomActionStableId
     }
 
     func focusOnSendWithoutSound() {
@@ -728,13 +748,13 @@ open class GeneralSettingsViewController<Context: AccountContextProtocol>: Table
         
         let baseSettingsSignal: Signal<BaseApplicationSettings, NoError> = .single(context.sharedContext.baseSettings) |> then(baseAppSettings(accountManager: context.sharedContext.accountManager))
         
-        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, sendWithoutSound.get(), ChatMediaSendConfirmationPreferences.shared.signal) |> map { settings, _, forceTouchAction, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds, filterZalgoText, sendWithoutSound, mediaSendConfirmation -> TableUpdateTransition in
+        let signal = combineLatest(queue: prepareQueue, baseSettingsSignal, inputPromise.get(), forceTouchPromise.get(), appearanceSignal, appLaunchSettings(postbox: context.account.postbox), context.account.postbox.preferencesView(keys: [PreferencesKeys.secretChatSettings]), additionalSettings(accountManager: context.sharedContext.accountManager), FastSettings.profilePeerIdDisplay, FastSettings.collapseChannelRecommendationsSignal, FastSettings.hideSimilarChannelsTabSignal, FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, sendWithoutSound.get(), ChatMediaSendConfirmationPreferences.shared.signal, ChannelBottomActionPreferences.shared.signal) |> map { settings, _, forceTouchAction, appearance, launchSettings, preferencesView, additionalSettings, peerIdFormat, collapseChannelRecommendations, hideSimilarChannelsTab, showMessageTimestampSeconds, filterZalgoText, sendWithoutSound, mediaSendConfirmation, channelBottomAction -> TableUpdateTransition in
             
             let baseSettings: BaseApplicationSettings = settings
             
             let secretChatSettings = preferencesView.values[PreferencesKeys.secretChatSettings]?.get(SecretChatSettings.self) ?? SecretChatSettings.defaultSettings
             
-            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds, filterZalgoText: filterZalgoText, sendWithoutSound: sendWithoutSound, forceTouchAction: forceTouchAction, mediaSendConfirmation: mediaSendConfirmation).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
+            let entries = generalSettingsEntries(arguments: arguments, baseSettings: baseSettings, appearance: appearance, launchSettings: launchSettings, secretChatSettings: secretChatSettings, additionalSettings: additionalSettings, peerIdFormat: peerIdFormat, collapseChannelRecommendations: collapseChannelRecommendations, hideSimilarChannelsTab: hideSimilarChannelsTab, showMessageTimestampSeconds: showMessageTimestampSeconds, filterZalgoText: filterZalgoText, sendWithoutSound: sendWithoutSound, forceTouchAction: forceTouchAction, mediaSendConfirmation: mediaSendConfirmation, channelBottomAction: channelBottomAction).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
             let previous = previos.swap(entries)
             return prepareEntries(left: previous, right: entries, arguments: arguments, initialSize: initialSize.modify({$0}))
             

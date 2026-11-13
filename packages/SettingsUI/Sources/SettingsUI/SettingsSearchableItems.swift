@@ -729,6 +729,12 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
                 present(.push, controller)
             }))
 
+            allItems.append(SettingsSearchableItem(id: .general(6), title: localizedString("Gergram.Chat.ChannelBottomAction"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
+                let controller = GeneralSettingsViewController(context)
+                controller.focusOnChannelBottomAction()
+                present(.push, controller)
+            }))
+
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)
             

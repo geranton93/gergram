@@ -149,16 +149,29 @@ public enum ChatState : Equatable {
         }
     }
 
+    public enum ChannelBottomControl: Equatable {
+        case hidden
+        case discussion(channelId: PeerId, discussionId: PeerId)
+    }
+
     case normal
     case selecting
     case block(String)
     case action(String, (ChatInteraction)->Void, right: AdditionAction?, left: AdditionAction?, accent: Bool = false)
+    case channelBottomAction(ChannelBottomControl, right: AdditionAction?, left: AdditionAction?)
     case botStart(String, (ChatInteraction)->Void)
     case channelWithDiscussion(discussionGroupId: PeerId?, leftAction: String, rightAction: String)
     case editing
     case recording(ChatRecordingState)
     case restricted(String)
     case frozen((ChatInteraction)->Void)
+
+    var isChannelBottomActionRowHidden: Bool {
+        if case .channelBottomAction(.hidden, nil, nil) = self {
+            return true
+        }
+        return false
+    }
 }
 
 public func ==(lhs:ChatState, rhs:ChatState) -> Bool {
@@ -199,12 +212,17 @@ public func ==(lhs:ChatState, rhs:ChatState) -> Bool {
         } else {
             return false
         }
-    case let .action(lhsAction,_, _, _, lhsAccent):
-        if case let .action(rhsAction, _, _, _, rhsAccent) = rhs {
-            return lhsAction == rhsAction && lhsAccent == rhsAccent
+    case let .action(lhsAction, _, lhsRight, lhsLeft, lhsAccent):
+        if case let .action(rhsAction, _, rhsRight, rhsLeft, rhsAccent) = rhs {
+            return lhsAction == rhsAction && lhsAccent == rhsAccent && lhsRight?.icon == rhsRight?.icon && lhsLeft?.icon == rhsLeft?.icon
         } else {
             return false
         }
+    case let .channelBottomAction(lhsAction, lhsRight, lhsLeft):
+        if case let .channelBottomAction(rhsAction, rhsRight, rhsLeft) = rhs {
+            return lhsAction == rhsAction && lhsRight?.icon == rhsRight?.icon && lhsLeft?.icon == rhsLeft?.icon
+        }
+        return false
     case let .botStart(lhsAction,_):
         if case let .botStart(rhsAction, _) = rhs {
             return lhsAction == rhsAction
@@ -595,6 +613,10 @@ public class ChatPresentationInterfaceState: Equatable {
     }
     
     public var state:ChatState {
+        state(channelBottomAction: .native)
+    }
+
+    func state(channelBottomAction: ChannelBottomAction) -> ChatState {
         if self.selectionState == nil {
             if ChatBotForumControls.showsStart(
                 isBot: (peer as? TelegramUser)?.botInfo != nil,
@@ -842,6 +864,18 @@ public class ChatPresentationInterfaceState: Equatable {
                         chatInteraction.removeAndCloseChat()
                     }, right: nil, left: nil)
                 } else if !peer.canSendMessage(chatMode.isThreadMode), let notificationSettings = notificationSettings, peer.isChannel {
+                    if chatMode == .history, chatLocation == .peer(peer.id), !isNotAccessible {
+                        switch channelBottomAction {
+                        case .hidden:
+                            return .channelBottomAction(.hidden, right: gift, left: monoforum)
+                        case .discussion:
+                            if let discussionId = discussionGroupId.peerId {
+                                return .channelBottomAction(.discussion(channelId: peer.id, discussionId: discussionId), right: gift, left: monoforum)
+                            }
+                        case .native, .mute:
+                            break
+                        }
+                    }
                     return .action(notificationSettings.isMuted ? strings().chatInputUnmute : strings().chatInputMute, { chatInteraction in
                         chatInteraction.toggleNotifications(nil)
                     }, right: gift, left: monoforum)

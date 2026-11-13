@@ -329,12 +329,13 @@ public class ChatControllerView : View, ChatInputDelegate {
     }
 
     func bottomInset(forInputHeight inputHeight: CGFloat) -> CGFloat {
-        return ChatHistoryBottomRowItem.bottomInset(showsInput: showsInput, inputOverlayHeight: max(0, inputHeight - ChatInputView.inputBottomInset))
+        return ChatHistoryBottomRowItem.bottomInset(showsInput: showsInput && !inputView.isChannelBottomActionRowHidden, inputOverlayHeight: max(0, inputHeight - ChatInputView.inputBottomInset))
     }
 
     var floatingPhotosBottomGap: CGFloat {
-        var gap = ChatHistoryBottomRowItem.bottomInset(showsInput: showsInput, inputOverlayHeight: 0)
-        if showsInput, inputView.attachView.isAIVisible {
+        let hasInputOverlay = showsInput && !inputView.isChannelBottomActionRowHidden
+        var gap = ChatHistoryBottomRowItem.bottomInset(showsInput: hasInputOverlay, inputOverlayHeight: 0)
+        if hasInputOverlay, inputView.attachView.isAIVisible {
             gap += ChatInputAttachButton.expandedHeight - ChatInputAttachButton.collapsedHeight
         }
         return gap
@@ -1179,12 +1180,13 @@ public class ChatControllerView : View, ChatInputDelegate {
 
         let inputY: CGFloat = themeSelectorView != nil ? frame.height : tableView.frame.maxY - inputHeight
 
-        let inputRect = NSMakeRect(0, inputY, frame.width, max(50, inputHeight))
+        let channelActionRowHidden = inputView.isChannelBottomActionRowHidden
+        let inputRect = NSMakeRect(0, inputY, frame.width, channelActionRowHidden ? inputHeight : max(50, inputHeight))
         transition.updateFrame(view: inputView, frame: inputRect)
         inputView.updateLayout(size: NSMakeSize(frame.width, inputRect.height), transition: transition)
 
 
-        let scrollInset = inputHeight - 24
+        let scrollInset = channelActionRowHidden ? 0 : inputHeight - 24
         tableView.scrollerInsets = NSEdgeInsets(bottom: scrollInset)
 
         if let view = transcriptionView {
@@ -1206,7 +1208,7 @@ public class ChatControllerView : View, ChatInputDelegate {
         let inputBlurBottom = max(frame.height, inputPillTop)
         let inputBlurHeight = max(60, inputBlurBottom - (inputPillTop + 4))
         let inputBlur = EdgeEffectView.Blur(rect: NSMakeRect(shadowX, inputBlurBottom - inputBlurHeight, shadowWidth, inputBlurHeight), edgeSize: 60)
-        inputShadowView.update(color: edgeBg, blur: ChatControllerView.edgeBlur.contains(.bottom) ? inputBlur : nil, alpha: 0.6, edge: .top, edgeSize: 60, rect: inputShadowRect, transition: transition, horizontalFade: inputShadowHorizontalFade)
+        inputShadowView.update(color: edgeBg, blur: !channelActionRowHidden && ChatControllerView.edgeBlur.contains(.bottom) ? inputBlur : nil, alpha: 0.6, edge: .top, edgeSize: 60, rect: inputShadowRect, transition: transition, horizontalFade: inputShadowHorizontalFade)
         
 
         if let backgroundView = backgroundView {
@@ -2654,6 +2656,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
     private let hasScheduledMessagesDisposable = MetaDisposable()
     private let discussionDataLoadDisposable = MetaDisposable()
+    private let channelDiscussionNavigationDisposable = MetaDisposable()
     private let slowModeDisposable = MetaDisposable()
     private let slowModeInProgressDisposable = MetaDisposable()
     private let forwardMessagesDisposable = MetaDisposable()
@@ -8233,6 +8236,28 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             }))
         }
         
+        chatInteraction.openChannelDiscussion = { [weak self] channelId, discussionId in
+            let isCurrent: () -> Bool = { [weak self] in
+                guard let self, self.context.isCurrent || self.context.isExternal,
+                      !self.context.isFrozen, self.genericView.window === self.context.window,
+                      self.context.window.isVisible, self.navigationController?.controller === self,
+                      self.chatLocation.peerId == channelId,
+                      case let .channelBottomAction(.discussion(currentChannel, currentDiscussion), _, _) = self.chatInteraction.presentation.state(channelBottomAction: ChannelBottomActionPreferences.shared.action) else {
+                    return false
+                }
+                return currentChannel == channelId && currentDiscussion == discussionId
+            }
+            guard let self, isCurrent() else { return }
+            let currentDiscussion = context.account.viewTracker.peerView(channelId)
+                |> take(1)
+                |> map { ($0.cachedData as? CachedChannelData)?.linkedDiscussionPeerId.peerId }
+                |> deliverOnMainQueue
+            self.channelDiscussionNavigationDisposable.set(showModalProgress(signal: currentDiscussion, for: context.window).start(next: { [weak self] linkedPeer in
+                guard linkedPeer == discussionId, isCurrent() else { return }
+                self?.chatInteraction.openInfo(discussionId, true, nil, nil)
+            }))
+        }
+
         chatInteraction.removeAndCloseChat = { [weak self] in
             if let strongSelf = self, let window = strongSelf.window {
                 _ = showModalProgress(signal: context.engine.peers.removePeerChat(peerId: strongSelf.chatInteraction.peerId, reportChatSpam: false), for: window).start(next: { [weak strongSelf] in
@@ -12015,6 +12040,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         forumMemberSelectionDisposable.dispose()
         chatInteraction.presentation.recordingState?.cancel()
         discussionDataLoadDisposable.dispose()
+        channelDiscussionNavigationDisposable.dispose()
         slowModeDisposable.dispose()
         slowModeInProgressDisposable.dispose()
         forwardMessagesDisposable.dispose()
@@ -12071,6 +12097,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
     public override func viewWillDisappear(_ animated: Bool) {
         mediaSendConfirmation.cancel()
+        channelDiscussionNavigationDisposable.set(nil)
         cancelAlwaysUseAIRequest()
         chatInteraction.invalidateDeferredSendActions()
         super.viewWillDisappear(animated)

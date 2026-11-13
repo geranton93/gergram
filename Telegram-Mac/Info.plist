@@ -94,7 +94,7 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Speech recognition is used to turn what you dictate into message text. Recognition happens on your Mac whenever possible.</string>
+	<string>Speech recognition turns dictation into message text. When you choose Transcribe on This Mac, voice and video messages are processed on your Mac.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>GergramAPIID</key>

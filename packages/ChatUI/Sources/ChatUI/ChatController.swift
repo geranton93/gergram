@@ -11774,6 +11774,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     public override func readyToDetach() {
         cancelAlwaysUseAIRequest()
         chatInteraction.voiceTranscription?.stopForNavigation()
+        chatInteraction.receivedAudioTranscription.cancel()
         chatInteraction.invalidateDeferredSendActions()
         super.readyToDetach()
     }
@@ -11790,6 +11791,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         self.cancelMessageFocus()
         chatInteraction.dateHeaderActions.reset()
         chatInteraction.voiceTranscription?.stopForNavigation()
+        chatInteraction.receivedAudioTranscription.cancel()
 
         // Note: do NOT clear the global background here. The window-level
         // background is driven by `globalPeerHandler` in AuthorizedApplicationContext;

@@ -151,6 +151,7 @@ public final class ChatInteraction : InterfaceObserver  {
     private let forwardSelection = ChatForwardSelection()
     private let composerForwardPreparation = ChatForwardSendPreparation()
     private let quickForwardAction = ChatQuickForwardAction()
+    let receivedAudioTranscription = ChatReceivedAudioTranscriptionAction()
 
     func quickForward(_ object: ChatHistoryForwardMessagesObject, peerId: PeerId, threadId: Int64?, analyticsContext: AnalyticsContext, action: ChatDeferredSendAction) {
         quickForwardAction.start(context: context, peerId: peerId, threadId: threadId, analyticsContext: analyticsContext, isCurrent: { action.takeIfCurrent() }, request: {
@@ -421,6 +422,10 @@ public final class ChatInteraction : InterfaceObserver  {
         }
         if oldValue.selectionState?.selectedIds != presentation.selectionState?.selectedIds || oldValue.chatLocation != presentation.chatLocation || oldValue.chatMode != presentation.chatMode || (oldValue.reportMode != nil) != (presentation.reportMode != nil) {
             forwardSelection.reset()
+        }
+        if oldValue.chatLocation != presentation.chatLocation || oldValue.chatMode != presentation.chatMode
+            || presentation.state == .selecting || presentation.reportMode != nil || presentation.isNotAccessible {
+            receivedAudioTranscription.cancel()
         }
         if oldValue.interfaceState.editState?.message.id != presentation.interfaceState.editState?.message.id || oldValue.chatLocation != presentation.chatLocation || oldValue.chatMode != presentation.chatMode {
             mediaEditSessionId = UUID()
@@ -1737,6 +1742,7 @@ public final class ChatInteraction : InterfaceObserver  {
     public func nilAllHandlers() {
         forwardSelection.reset()
         quickForwardAction.reset()
+        receivedAudioTranscription.cancel()
         self.withToggledSelectedMessage = { _ in }
         self.setupReplyMessage = { _, _ in }
         self.beginMessageSelection = { _ in }

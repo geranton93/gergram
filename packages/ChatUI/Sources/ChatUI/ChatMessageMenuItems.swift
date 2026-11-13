@@ -1198,6 +1198,11 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
             }
         }
 
+        if case .general = source, isNotFailed, !isService, entry?.isFakeMessage == false,
+           let item = ChatReceivedAudioTranscriptionAction.menuItem(for: data.message, cachedData: data.cachedData, interaction: chatInteraction) {
+            thirdBlock.append(item)
+        }
+
         if let copyLinkKind = chatMessageCopyLinkKind(messageId: messageId, peer: peer, getPeer: { message.peers[$0] }, isService: isService), isNotFailed, !message.isScheduledMessage {
             thirdBlock.append(ContextMenuItem(strings().messageContextCopyMessageLink1, handler: {
                 let isThread = copyLinkKind != .directMessages && data.chatLocation.threadMsgId != nil

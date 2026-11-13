@@ -19,9 +19,15 @@ public enum SpeechModelStagedFileValidator {
         isCancelled: () -> Bool = { false }
     ) throws {
         if isCancelled() { throw CancellationError() }
+        let descriptor = try openStagedFile(at: url)
+        defer { close(descriptor) }
+        try validate(descriptor, against: trustedArtifact, isCancelled: isCancelled)
+    }
+
+    static func openStagedFile(at url: URL) throws -> Int32 {
         guard url.isFileURL else { throw SpeechModelStagedFileError.invalidStagedFile }
 
-        let descriptor = try url.withUnsafeFileSystemRepresentation { path -> Int32 in
+        return try url.withUnsafeFileSystemRepresentation { path -> Int32 in
             guard let path else { throw SpeechModelStagedFileError.invalidStagedFile }
             let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
             if descriptor < 0 {
@@ -30,8 +36,14 @@ public enum SpeechModelStagedFileValidator {
             }
             return descriptor
         }
-        defer { close(descriptor) }
+    }
 
+    static func validate(
+        _ descriptor: Int32,
+        against trustedArtifact: SpeechModelArtifact,
+        isCancelled: () -> Bool,
+        copyChunk: (UnsafeRawBufferPointer) throws -> Void = { _ in }
+    ) throws {
         var original = stat()
         guard fstat(descriptor, &original) == 0 else { throw fileError() }
         guard (original.st_mode & S_IFMT) == S_IFREG, original.st_nlink == 1 else {
@@ -51,7 +63,9 @@ public enum SpeechModelStagedFileValidator {
                 if count < 0, errno != EINTR { throw fileError() }
                 if count > remaining { throw SpeechModelStagedFileError.stagedFileChanged }
                 if count > 0 {
-                    hash.update(bufferPointer: UnsafeRawBufferPointer(rebasing: bytes.prefix(count)))
+                    let block = UnsafeRawBufferPointer(rebasing: bytes.prefix(count))
+                    hash.update(bufferPointer: block)
+                    try copyChunk(block)
                 }
                 return count
             }

@@ -272,7 +272,7 @@ fileprivate class PreviewSenderView : Control {
         }, for: .Hover)
 
         sendButton.set(handler: { [weak self] _ in
-            self?.controller?.send(false, via: .sendControl)
+            self?.controller?.send(.automatic, via: .sendControl)
         }, for: .SingleClick)
 
 
@@ -1526,7 +1526,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
         return .modal
     }
     
-    private var sendCurrentMedia:((Bool, ChatInteraction.Schedule?, Bool?, AnalyticsMediaJourney.Spec.SubmitVia)->Void)? = nil
+    private var sendCurrentMedia:((ChatSendSound, ChatInteraction.Schedule?, Bool?, AnalyticsMediaJourney.Spec.SubmitVia)->Void)? = nil
     private let placeholderSuccessorIds = Atomic<[MediaId: MediaId]>(value: [:])
     private let mediaPreparationQueue: OperationQueue = {
         let queue = OperationQueue()
@@ -1590,7 +1590,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
         if let currentEvent = NSApp.currentEvent {
             let hasMarkedText = genericView.textView.inputView.hasMarkedText()
             if FastSettings.checkSendingAbility(for: currentEvent), didSetReady, !hasMarkedText {
-                send(false, via: currentEvent.modifierFlags.contains(.command) ? .cmdEnter : .enter)
+                send(.automatic, via: currentEvent.modifierFlags.contains(.command) ? .cmdEnter : .enter)
                 return .invoked
             }
         }
@@ -1638,14 +1638,15 @@ public class PreviewSenderController: ModalViewController, Notifable {
         super.close(animationType: self.sent ? .noMorph : .common)
     }
     
-    func send(_ silent: Bool, atDate: ChatInteraction.Schedule? = nil, asSpoiler: Bool? = nil, via: AnalyticsMediaJourney.Spec.SubmitVia = .unknown) {
+    func send(_ requestedSound: ChatSendSound, atDate: ChatInteraction.Schedule? = nil, asSpoiler: Bool? = nil, via: AnalyticsMediaJourney.Spec.SubmitVia = .unknown) {
         guard !pendingActions.isClosed, !sent else { return }
         guard validateSendSource() else {
             self.genericView.sendButton.shake(beep: false)
             return
         }
+        let sound = chatInteraction.resolvedSendSound(requestedSound)
         guard canSendPreparedAttachments(getPreparedAttachmentOrder(), afterRendering: { [weak self] in
-            self?.send(silent, atDate: atDate, asSpoiler: asSpoiler, via: via)
+            self?.send(sound, atDate: atDate, asSpoiler: asSpoiler, via: via)
         }) else {
             return
         }
@@ -1701,7 +1702,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
                 let analyticsContext = self.analyticsContext ?? Analytics.shared.unresolvedContext()
                 FeatureNavigationHooks.shared.selectDateObserved(context, context.window, nil, nil, .schedule(peer.id), analyticsContext: analyticsContext, selectedAt: { [weak self] date, repeatPeriod in
                     guard scheduleAction() else { return }
-                    self?.sendCurrentMedia?(silent, .init(date: date, repeatPeriod: repeatPeriod), asSpoiler, via)
+                    self?.sendCurrentMedia?(sound, .init(date: date, repeatPeriod: repeatPeriod), asSpoiler, via)
                 }, cancelled: { [weak self] in
                     guard scheduleAction() else { return }
                     self?.analyticsMediaJourney?.step(.cancelSchedule)
@@ -1711,7 +1712,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
                 })
             }
         case .history, .thread, .customChatContents:
-            sendCurrentMedia?(silent, atDate, asSpoiler, via)
+            sendCurrentMedia?(sound, atDate, asSpoiler, via)
         case .pinned:
             break
         case .customLink:
@@ -1820,9 +1821,11 @@ public class PreviewSenderController: ModalViewController, Notifable {
             var items:[ContextMenuItem] = []
             
             if peer.id != context.account.peerId, !fromEffect {
-                items.append(ContextMenuItem(strings().chatSendWithoutSound, handler: { [weak self] in
-                    self?.send(true, via: .sendMenu)
-                }, itemImage: MenuAnimation.menu_mute.value))
+                let sendAction = self.capturePendingAction()
+                items.append(chatInteraction.sendSoundMenuItem { [weak self] sound in
+                    guard sendAction() else { return }
+                    self?.send(sound, via: .sendMenu)
+                })
             }
             switch chatInteraction.mode {
             case .history, .thread:
@@ -1844,7 +1847,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
                             let analyticsContext = self.analyticsContext ?? Analytics.shared.unresolvedContext()
                             FeatureNavigationHooks.shared.selectDateObserved(context, context.window, nil, nil, .schedule(peer.id), analyticsContext: analyticsContext, selectedAt: { [weak self] date, repeatPeriod in
                                 guard scheduleAction() else { return }
-                                self?.send(false, atDate: .init(date: date, repeatPeriod: repeatPeriod), via: .sendMenu)
+                                self?.send(.automatic, atDate: .init(date: date, repeatPeriod: repeatPeriod), via: .sendMenu)
                             }, cancelled: { [weak self] in
                                 guard scheduleAction() else { return }
                                 self?.analyticsMediaJourney?.step(.cancelSchedule)
@@ -1856,12 +1859,12 @@ public class PreviewSenderController: ModalViewController, Notifable {
                         
                         if peer.id != context.peerId, presentation.canScheduleWhenOnline {
                             items.append(ContextMenuItem(strings().chatSendSendWhenOnline, handler: { [weak self] in
-                                self?.send(false, atDate: .init(date: scheduleWhenOnlineDate, repeatPeriod: nil), via: .sendMenu)
+                                self?.send(.automatic, atDate: .init(date: scheduleWhenOnlineDate, repeatPeriod: nil), via: .sendMenu)
                             }, itemImage: MenuAnimation.menu_online.value))
                         }
                         
                         items.append(ContextMenuItem(strings().previewSenderSendAsSpoiler, handler: { [weak self] in
-                            self?.send(false, asSpoiler: true, via: .sendMenu)
+                            self?.send(.automatic, asSpoiler: true, via: .sendMenu)
                         }, itemImage: MenuAnimation.menu_send_spoiler.value))
                         
                         
@@ -2033,7 +2036,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
             genericView.applyOptions([], count: 1, canCollage: false, canSpoiler: false)
             genericView.actions.isHidden = true
 
-            self.sendCurrentMedia = { [weak self] silent, atDate, _, _ in
+            self.sendCurrentMedia = { [weak self] sound, atDate, _, _ in
                 guard let self, !self.pendingActions.isClosed, !self.sent, self.validateSendSource() else { return }
                 let inputState = self.genericView.textView.interactions.presentation
                 var input = inputState.textInputState().subInputState(from: NSMakeRange(0, inputState.inputText.length))
@@ -2046,7 +2049,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
                 if atDate == nil, let source = self.genericView.mediaSendFlightSource() {
                     self.chatInteraction.mediaSendFlight?.launch(source)
                 }
-                self.chatInteraction.sendAppFile(appFile, silent, nil, false, nil, caption, atDate)
+                self.chatInteraction.sendAppFileObserved(appFile, sound, nil, false, nil, caption, atDate)
                 self.emoji.popover?.hide()
                 self.closeModal()
             }
@@ -2372,12 +2375,12 @@ public class PreviewSenderController: ModalViewController, Notifable {
             self.publishAttachmentState(state)
         }
         
-        self.sendCurrentMedia = { [weak self] silent, atDate, asSpoiler, via in
+        self.sendCurrentMedia = { [weak self] sound, atDate, asSpoiler, via in
             guard let self, !self.pendingActions.isClosed, !self.sent, self.validateSendSource() else { return }
 
             let prepared = stateValue.with { $0 }
             guard self.canSendPreparedAttachments(prepared.attachmentOrder, afterRendering: { [weak self] in
-                self?.sendCurrentMedia?(silent, atDate, asSpoiler, via)
+                self?.sendCurrentMedia?(sound, atDate, asSpoiler, via)
             }) else {
                 return
             }
@@ -2506,8 +2509,8 @@ public class PreviewSenderController: ModalViewController, Notifable {
                     }
                     let batchCount = state.isCollage && medias.count > 1 ? medias.chunks(PreviewSenderAttachmentOrder.albumSize).count : 1
                     self.analyticsMediaJourney?.selected(count: self.urls.count, mode: state.analyticsMode)
-                    let submission = self.analyticsMediaJourney?.beginSubmission(parts: batchCount + 1, via: via, scheduled: atDate != nil, silent: silent)
-                    self.chatInteraction.sendMessageObserved(silent, atDate, effect, submission: submission, part: 0)
+                    let submission = self.analyticsMediaJourney?.beginSubmission(parts: batchCount + 1, via: via, scheduled: atDate != nil, silent: sound.notificationIsSilent ?? false)
+                    self.chatInteraction.sendMessageObserved(sound, atDate, effect, submission: submission, part: 0)
                     if atDate == nil, let source = self.genericView.mediaSendFlightSource() {
                         self.chatInteraction.mediaSendFlight?.launch(source)
                     }
@@ -2519,7 +2522,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
                                 self.closeModal()
                                 return
                             }
-                            self.chatInteraction.sendMediasObserved(makeMedia(collage, true), input, state.isCollage && state.payAmount == nil, additionalMessage, silent, atDate, asSpoiler ?? state.isSpoiler, effect, state.sortValue == .up, submission: submission, part: index + 1)
+                            self.chatInteraction.sendMediasObserved(makeMedia(collage, true), input, state.isCollage && state.payAmount == nil, additionalMessage, sound, atDate, asSpoiler ?? state.isSpoiler, effect, state.sortValue == .up, submission: submission, part: index + 1)
                             additionalMessage = nil
                         }
                     } else {
@@ -2528,7 +2531,7 @@ public class PreviewSenderController: ModalViewController, Notifable {
                             self.closeModal()
                             return
                         }
-                        self.chatInteraction.sendMediasObserved(makeMedia(medias, false), input, false, additionalMessage, silent, atDate, asSpoiler ?? state.isSpoiler, effect, state.sortValue == .up, submission: submission, part: 1)
+                        self.chatInteraction.sendMediasObserved(makeMedia(medias, false), input, false, additionalMessage, sound, atDate, asSpoiler ?? state.isSpoiler, effect, state.sortValue == .up, submission: submission, part: 1)
                     }
                     
                     self.emoji.popover?.hide()

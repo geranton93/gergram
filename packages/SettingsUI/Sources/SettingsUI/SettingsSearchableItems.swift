@@ -678,6 +678,12 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
                 present(.push, controller)
             }))
 
+            allItems.append(SettingsSearchableItem(id: .general(4), title: localizedString("Gergram.Settings.SendWithoutSoundByDefault"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
+                let controller = GeneralSettingsViewController(context)
+                controller.focusOnSendWithoutSound()
+                present(.push, controller)
+            }))
+
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)
             

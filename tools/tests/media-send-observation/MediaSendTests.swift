@@ -71,7 +71,10 @@ final class CustomContents: ChatCustomContentsProtocol {
     var result: Signal<[MessageId?], NoError> = .complete()
     func enqueueMessages(messages: [EnqueueMessage]) -> Signal<[MessageId?], NoError> { self.messages = messages; return result }
 }
-enum FastSettings { static func isChannelMessagesMuted(_ id: PeerId) -> Bool { false } }
+enum FastSettings {
+    static var channelIsMuted = false
+    static func isChannelMessagesMuted(_ id: PeerId) -> Bool { channelIsMuted }
+}
 func arc4random64() -> UInt64 { 19 }
 enum Backend {
     static var messages: [EnqueueMessage] = []
@@ -87,7 +90,7 @@ __MEDIA_SEND__
 final class MediaSendTests: XCTestCase {
     let context = AccountContext()
     let peer = PeerId(namespace: 1)
-    override func setUp() { Backend.messages = []; Backend.calls = 0; Backend.result = .complete() }
+    override func setUp() { Backend.messages = []; Backend.calls = 0; Backend.result = .complete(); FastSettings.channelIsMuted = false }
     func testAlbumCaptionAndSplitAdditionalTextDetermineExpectedCount() {
         Backend.result = .single([1, 2, 3, 4, 5])
         var count: Int?, ids: [MessageId?] = []
@@ -164,5 +167,31 @@ final class MediaSendTests: XCTestCase {
         Backend.result = .single([]); var expected: Int?
         let disposable = Sender.enqueue(media: [], caption: .init(), context: context, peerId: peer, replyId: nil, threadId: nil, observedResult: { count, _ in expected = count }).start()
         XCTAssertEqual(expected, 0); XCTAssertTrue(Backend.messages.isEmpty); disposable.dispose()
+    }
+}
+
+extension MediaSendTests {
+    func testExplicitSoundOverridesMutedChannelForCaptionAndEveryScheduledPart() {
+        FastSettings.channelIsMuted = true
+        Backend.result = .single([1, 2, 3])
+        let disposable = Sender.enqueue(media: [Media(), Media()], caption: .init(inputText: "caption"), context: context, peerId: peer, replyId: nil, threadId: nil, isCollage: true, additionText: .init(inputText: "extra"), sound: .audible, atDate: Date(timeIntervalSince1970: 100), repeatPeriod: 60).start()
+        defer { disposable.dispose() }
+        XCTAssertEqual(Backend.calls, 1)
+        XCTAssertEqual(Backend.messages.count, 3)
+        XCTAssertTrue(Backend.messages.allSatisfy { message in
+            !message.attributes.contains { $0 is NotificationInfoMessageAttribute }
+        })
+        XCTAssertTrue(Backend.messages.allSatisfy { message in
+            message.attributes.contains { ($0 as? OutgoingScheduleInfoMessageAttribute)?.repeatPeriod == 60 }
+        })
+    }
+
+    func testExplicitMuteAndLegacyChannelDefaultReachTheSameNotificationAttribute() {
+        for (sound, nativeMute) in [(ChatSendSound.silent, false), (.automatic, true)] {
+            FastSettings.channelIsMuted = nativeMute
+            let disposable = Sender.enqueue(media: Media(), context: context, peerId: peer, replyId: nil, threadId: nil, sound: sound).start()
+            disposable.dispose()
+            XCTAssertTrue(Backend.messages[0].attributes.contains { $0 is NotificationInfoMessageAttribute })
+        }
     }
 }

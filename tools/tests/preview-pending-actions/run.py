@@ -62,13 +62,13 @@ start = group_source.index('    fileprivate func attachmentIndex(at tile:')
 end = group_source.index('    override func makeSize(', start)
 order_fixture = order_fixture.replace('__GROUP_ATTACHMENT__', group_source[start:end])
 fixture += '\n' + order_fixture
-start = source.index('        guard !pendingActions.isClosed, !sent else { return }', source.index('    func send(_ silent:'))
-end = source.index('        guard canSendPreparedAttachments(', start)
+start = source.index('        guard !pendingActions.isClosed, !sent else { return }', source.index('    func send(_ requestedSound:'))
+end = source.index('        let sound = chatInteraction.resolvedSendSound(requestedSound)', start)
 fixture = fixture.replace('__SEND_ENTRY__', source[start:end])
-start = source.index('            guard let self, !self.pendingActions.isClosed', source.index('        self.sendCurrentMedia = { [weak self] silent, atDate, asSpoiler, via in'))
+start = source.index('            guard let self, !self.pendingActions.isClosed', source.index('        self.sendCurrentMedia = { [weak self] sound, atDate, asSpoiler, via in'))
 end = source.index('            let prepared = stateValue.with', start)
 fixture = fixture.replace('__CURRENT_ENTRY__', source[start:end])
-start = source.index('                guard let self, !self.pendingActions.isClosed', source.index('            self.sendCurrentMedia = { [weak self] silent, atDate, _, _ in'))
+start = source.index('                guard let self, !self.pendingActions.isClosed', source.index('            self.sendCurrentMedia = { [weak self] sound, atDate, _, _ in'))
 end = source.index('                let inputState =', start)
 fixture = fixture.replace('__APP_FILE_ENTRY__', source[start:end])
 
@@ -77,6 +77,7 @@ end = source.index('                            self.chatInteraction.sendMediasO
 fixture = fixture.replace('__BATCH_GUARD__', source[start:end])
 
 
+fixture += '\n' + (root / 'packages/InAppSettings/Sources/InAppSettings/ChatSendSound.swift').read_text()
 with tempfile.TemporaryDirectory(prefix='preview-pending-actions-') as directory:
     directory = Path(directory)
     (directory / 'Package.swift').write_text('''// swift-tools-version:5.9

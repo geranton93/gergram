@@ -118,6 +118,24 @@ public final class ChatInteraction : InterfaceObserver  {
         }
     }
 
+    public func resolvedSendSound(_ sound: ChatSendSound = .automatic) -> ChatSendSound {
+        guard sound == .automatic, peerId != context.peerId, peerId != PeerId(0), !isLogInteraction else { return sound }
+        switch mode {
+        case .history, .thread, .scheduled:
+            let defaultIsSilent = ChatSendSoundPreferences.sendWithoutSoundByDefault(accountId: context.account.id.int64) || FastSettings.isChannelMessagesMuted(peerId)
+            return sound.resolving(defaultIsSilent: defaultIsSilent)
+        default:
+            return sound
+        }
+    }
+
+    public func sendSoundMenuItem(_ handler: @escaping (ChatSendSound) -> Void) -> ContextMenuItem {
+        let override: ChatSendSound = resolvedSendSound() == .silent ? .audible : .silent
+        let title = override == .audible ? localizedString("Gergram.Chat.SendWithSound") : strings().chatSendWithoutSound
+        let image = override == .audible ? MenuAnimation.menu_unmuted.value : MenuAnimation.menu_mute.value
+        return ContextMenuItem(title, handler: { handler(override) }, itemImage: image)
+    }
+
     var canManageLocalMessageVisibility: Bool {
         supportsLocalMessageVisibility && !context.isFrozen && !presentation.searchMode.inSearch
     }
@@ -489,17 +507,21 @@ public final class ChatInteraction : InterfaceObserver  {
             return nil
         }
     }
-    public var sendMessageWithAnalytics: ((Bool, Schedule?, AvailableMessageEffects.MessageEffect?, AnalyticsMediaSubmission?, Int) -> Void)?
+    public var sendMessageWithAnalytics: ((ChatSendSound, Schedule?, AvailableMessageEffects.MessageEffect?, AnalyticsMediaSubmission?, Int) -> Void)?
     public func sendMessageObserved(_ silent: Bool, _ schedule: Schedule?, _ effect: AvailableMessageEffects.MessageEffect?, submission: AnalyticsMediaSubmission?, part: Int) {
+        sendMessageObserved(silent ? .silent : .automatic, schedule, effect, submission: submission, part: part)
+    }
+
+    public func sendMessageObserved(_ sound: ChatSendSound, _ schedule: Schedule?, _ effect: AvailableMessageEffects.MessageEffect?, submission: AnalyticsMediaSubmission?, part: Int) {
         let origin = captureAnalyticsContext(inherited: submission?.context ?? Analytics.shared.unresolvedContext())
         submission?.restrict(to: origin)
         let presentation = origin.beginPresentation()
         defer { presentation.end() }
         if let sendMessageWithAnalytics = sendMessageWithAnalytics {
-            sendMessageWithAnalytics(silent, schedule, effect, submission, part)
+            sendMessageWithAnalytics(sound, schedule, effect, submission, part)
         } else {
             submission?.discard()
-            sendMessage(silent, schedule, effect)
+            sendMessage(sound.notificationIsSilent ?? false, schedule, effect)
         }
     }
     public var sendPlainText: (String) -> Void = {_ in}
@@ -547,29 +569,37 @@ public final class ChatInteraction : InterfaceObserver  {
     }
     public var sendCreatedStickerWithAnalytics: ((TelegramMediaFile, AnalyticsContext, AnalyticsStickerSendRequest?) -> Void)?
     public var sendAppFile:(TelegramMediaFile, Bool, String?, Bool, ItemCollectionId?, ChatTextInputState?, ChatInteraction.Schedule?) -> Void = { _,_, _, _, _, _, _ in}
-    public var sendAppFileWithContext: ((TelegramMediaFile, Bool, String?, Bool, ItemCollectionId?, ChatTextInputState?, Schedule?, AnalyticsContext) -> Void)?
+    public var sendAppFileWithContext: ((TelegramMediaFile, ChatSendSound, String?, Bool, ItemCollectionId?, ChatTextInputState?, Schedule?, AnalyticsContext) -> Void)?
     public func sendAppFileObserved(_ file: TelegramMediaFile, _ silent: Bool, _ query: String?, _ scheduled: Bool, _ collectionId: ItemCollectionId?, _ caption: ChatTextInputState?, _ schedule: Schedule?, analyticsContext: AnalyticsContext) {
-        let origin = captureAnalyticsContext(inherited: analyticsContext)
+        sendAppFileObserved(file, silent ? .silent : .automatic, query, scheduled, collectionId, caption, schedule, analyticsContext: analyticsContext)
+    }
+
+    public func sendAppFileObserved(_ file: TelegramMediaFile, _ sound: ChatSendSound, _ query: String?, _ scheduled: Bool, _ collectionId: ItemCollectionId?, _ caption: ChatTextInputState?, _ schedule: Schedule?, analyticsContext: AnalyticsContext? = nil) {
+        let origin = captureAnalyticsContext(inherited: analyticsContext ?? captureAnalyticsContext())
         let presentation = origin.beginPresentation()
         defer { presentation.end() }
         if let sendAppFileWithContext {
-            sendAppFileWithContext(file, silent, query, scheduled, collectionId, caption, schedule, origin)
+            sendAppFileWithContext(file, sound, query, scheduled, collectionId, caption, schedule, origin)
         } else {
-            sendAppFile(file, silent, query, scheduled, collectionId, caption, schedule)
+            sendAppFile(file, sound.notificationIsSilent ?? false, query, scheduled, collectionId, caption, schedule)
         }
     }
     public var sendMedias:([Media], ChatTextInputState, Bool, ChatTextInputState?, Bool, Schedule?, Bool, AvailableMessageEffects.MessageEffect?, Bool) -> Void = {_,_,_,_,_,_,_,_, _ in}
-    public var sendMediasWithAnalytics: (([Media], ChatTextInputState, Bool, ChatTextInputState?, Bool, Schedule?, Bool, AvailableMessageEffects.MessageEffect?, Bool, AnalyticsMediaSubmission?, Int) -> Void)?
+    public var sendMediasWithAnalytics: (([Media], ChatTextInputState, Bool, ChatTextInputState?, ChatSendSound, Schedule?, Bool, AvailableMessageEffects.MessageEffect?, Bool, AnalyticsMediaSubmission?, Int) -> Void)?
     public func sendMediasObserved(_ medias: [Media], _ caption: ChatTextInputState, _ collage: Bool, _ additionalText: ChatTextInputState?, _ silent: Bool, _ schedule: Schedule?, _ spoiler: Bool, _ effect: AvailableMessageEffects.MessageEffect?, _ leadingText: Bool, submission: AnalyticsMediaSubmission?, part: Int) {
+        sendMediasObserved(medias, caption, collage, additionalText, silent ? .silent : .automatic, schedule, spoiler, effect, leadingText, submission: submission, part: part)
+    }
+
+    public func sendMediasObserved(_ medias: [Media], _ caption: ChatTextInputState, _ collage: Bool, _ additionalText: ChatTextInputState?, _ sound: ChatSendSound, _ schedule: Schedule?, _ spoiler: Bool, _ effect: AvailableMessageEffects.MessageEffect?, _ leadingText: Bool, submission: AnalyticsMediaSubmission?, part: Int) {
         let origin = captureAnalyticsContext(inherited: submission?.context ?? Analytics.shared.unresolvedContext())
         submission?.restrict(to: origin)
         let presentation = origin.beginPresentation()
         defer { presentation.end() }
         if let sendMediasWithAnalytics = sendMediasWithAnalytics {
-            sendMediasWithAnalytics(medias, caption, collage, additionalText, silent, schedule, spoiler, effect, leadingText, submission, part)
+            sendMediasWithAnalytics(medias, caption, collage, additionalText, sound, schedule, spoiler, effect, leadingText, submission, part)
         } else {
             submission?.discard()
-            sendMedias(medias, caption, collage, additionalText, silent, schedule, spoiler, effect, leadingText)
+            sendMedias(medias, caption, collage, additionalText, sound.notificationIsSilent ?? false, schedule, spoiler, effect, leadingText)
         }
     }
     public var focusInputField:()->Void = {}
@@ -1900,11 +1930,11 @@ public final class ChatInteraction : InterfaceObserver  {
     
 }
 
-public func sendMessageMenuItems(chatInteraction: ChatInteraction, send: @escaping (Bool, ChatInteraction.Schedule?) -> Void) -> [ContextMenuItem]? {
+public func sendMessageMenuItems(chatInteraction: ChatInteraction, send: @escaping (ChatSendSound, ChatInteraction.Schedule?) -> Void) -> [ContextMenuItem]? {
     return sendMessageMenuItems(chatInteraction: chatInteraction, analyticsContext: chatInteraction.captureAnalyticsContext(), send: send)
 }
 
-public func sendMessageMenuItems(chatInteraction: ChatInteraction, analyticsContext: AnalyticsContext, send: @escaping (Bool, ChatInteraction.Schedule?) -> Void) -> [ContextMenuItem]? {
+public func sendMessageMenuItems(chatInteraction: ChatInteraction, analyticsContext: AnalyticsContext, send: @escaping (ChatSendSound, ChatInteraction.Schedule?) -> Void) -> [ContextMenuItem]? {
     let schedulingAnalyticsContext = chatInteraction.captureAnalyticsContext(inherited: analyticsContext)
     let getAnalyticsContext = { [weak chatInteraction] in
         guard let chatInteraction else { return Analytics.shared.unresolvedContext() }
@@ -1929,12 +1959,12 @@ public func sendMessageMenuItems(chatInteraction: ChatInteraction, analyticsCont
     var items:[ContextMenuItem] = []
 
     if peer.id != context.account.peerId {
-        items.append(ContextMenuItem(strings().chatSendWithoutSound, handler: {
+        items.append(chatInteraction.sendSoundMenuItem { sound in
             guard deferredSendAction.takeIfCurrent() else { return }
             let presentation = getAnalyticsContext().beginPresentation()
             defer { presentation.end() }
-            send(true, nil)
-        }, itemImage: MenuAnimation.menu_mute.value))
+            send(sound, nil)
+        })
     }
 
     switch chatInteraction.mode {
@@ -1945,7 +1975,7 @@ public func sendMessageMenuItems(chatInteraction: ChatInteraction, analyticsCont
                     guard deferredSendAction.takeIfCurrent() else { return }
                     let presentation = getAnalyticsContext().beginPresentation()
                     defer { presentation.end() }
-                    send(false, .init(date: scheduleWhenOnlineDate))
+                    send(.automatic, .init(date: scheduleWhenOnlineDate))
                 }, itemImage: MenuAnimation.menu_online.value))
             }
 
@@ -1959,7 +1989,7 @@ public func sendMessageMenuItems(chatInteraction: ChatInteraction, analyticsCont
                         guard deferredSendAction.takeIfCurrent() else { return }
                         let presentation = getAnalyticsContext().beginPresentation()
                         defer { presentation.end() }
-                        send(false, .init(date: date, repeatPeriod: repeatPeriod))
+                        send(.automatic, .init(date: date, repeatPeriod: repeatPeriod))
                     }), for: context.window)
                 }, itemImage: MenuAnimation.menu_schedule_message.value))
             }

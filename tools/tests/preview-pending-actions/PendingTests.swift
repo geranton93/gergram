@@ -112,7 +112,7 @@ final class Controller: Base {
     var analyticsContext: Context? = Context()
     var sent = false
     var window: Window? = Window()
-    var sendCurrentMedia: ((Bool, ChatInteraction.Schedule?, Bool?, Via) -> Void)?
+    var sendCurrentMedia: ((ChatSendSound, ChatInteraction.Schedule?, Bool?, Via) -> Void)?
     var onSend: (() -> Void)?
     var pendingRenderSend: (() -> Void)?
 __EFFECT_PREMIUM__
@@ -157,7 +157,7 @@ __SUBMIT_PREFIX__
         let peer = Peer()
         let analyticsContext = self.analyticsContext!
         let scheduleAction = capturePendingAction()
-        let silent = false
+        let sound = ChatSendSound.audible
         let asSpoiler: Bool? = nil
         let via = Via.sendControl
 __SCHEDULE__

@@ -8,6 +8,7 @@ source = (root / 'packages/ChatHistoryModel/Sources/ChatHistoryModel/SenderContr
 start = source.index('    public static func enqueue(media:Media,')
 fixture = Path(__file__).with_name('MediaSendTests.swift').read_text()
 fixture = fixture.replace('__MEDIA_SEND__', source[start:source.rindex('}')].replace('public static func', 'static func'))
+fixture += '\n' + (root / 'packages/InAppSettings/Sources/InAppSettings/ChatSendSound.swift').read_text()
 with tempfile.TemporaryDirectory(prefix='media-send-observation-') as directory:
     directory = Path(directory)
     dependency = json.dumps(str(root / 'submodules/telegram-ios/submodules/SSignalKit'))

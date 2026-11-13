@@ -5082,9 +5082,10 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         }
         
         chatInteraction.sendMessage = { [weak self] silent, atDate, messageEffect in
-            self?.chatInteraction.sendMessageWithAnalytics?(silent, atDate, messageEffect, nil, 0)
+            self?.chatInteraction.sendMessageWithAnalytics?(silent ? .silent : .automatic, atDate, messageEffect, nil, 0)
         }
-        let sendMessage: (Bool, ChatInteraction.Schedule?, AvailableMessageEffects.MessageEffect?, AnalyticsMediaSubmission?, Int, ChatTextInputState?) -> Void = { [weak self] silent, atDate, messageEffect, submission, part, rewrittenInput in
+        let sendMessage: (ChatSendSound, ChatInteraction.Schedule?, AvailableMessageEffects.MessageEffect?, AnalyticsMediaSubmission?, Int, ChatTextInputState?) -> Void = { [weak self] sound, atDate, messageEffect, submission, part, rewrittenInput in
+            let silent = sound.notificationIsSilent ?? false
             let inherited = submission?.context ?? self?.chatInteraction.captureAnalyticsContext() ?? Analytics.shared.unresolvedContext()
             let schedulingAnalyticsContext = self?.chatInteraction.captureAnalyticsContext(inherited: inherited) ?? Analytics.shared.unresolvedContext()
             submission?.restrict(to: schedulingAnalyticsContext)
@@ -5166,9 +5167,12 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     submission?.restrict(to: analyticsContext)
                     let analyticsPresentation = analyticsContext.beginPresentation()
                     defer { analyticsPresentation.end() }
-                    let sendObservation = strongSelf.makeMessageSendObservation(.text, analyticsContext: analyticsContext, scheduled: date != nil, silent: false)
+                    let sendObservation = strongSelf.makeMessageSendObservation(.text, analyticsContext: analyticsContext, scheduled: date != nil, silent: silent)
                     ci.setRichTextDraft(nil)
                     var attributes: [MessageAttribute] = [RichTextMessageAttribute(instantPage: draft, fullInstantPage: nil)]
+                    if silent {
+                        attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
+                    }
                     if let date {
                         attributes.append(OutgoingScheduleInfoMessageAttribute(scheduleTime: Int32(min(date.timeIntervalSince1970, Double(scheduleWhenOnlineTimestamp))), repeatPeriod: repeatPeriod))
                     }
@@ -5258,7 +5262,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                                 makeTextSignal = { [weak controller] textContext in
                                     guard let controller else { submission?.discard(); return .complete() }
                                     let sendObservation = controller.makeMessageSendObservation(.text, analyticsContext: textContext, scheduled: atDate != nil, silent: silent)
-                                    return Sender.enqueue(input: rewrittenInput ?? presentation.effectiveInput, context: context, peerId: destinationPeerId, replyId: destinationReply, threadId: destinationThreadId, disablePreview: presentation.interfaceState.composeDisableUrlPreview != nil, linkBelowMessage: presentation.interfaceState.linkBelowMessage, largeMedia: presentation.interfaceState.largeMedia, silent: silent, atDate: atDate, repeatPeriod: repeatPeriod, sendAsPeerId: currentSendAsPeerId, mediaPreview: rewrittenInput == nil ? presentation.urlPreview?.1 : nil, emptyHandler: { [weak controller] in
+                                    return Sender.enqueue(input: rewrittenInput ?? presentation.effectiveInput, context: context, peerId: destinationPeerId, replyId: destinationReply, threadId: destinationThreadId, disablePreview: presentation.interfaceState.composeDisableUrlPreview != nil, linkBelowMessage: presentation.interfaceState.linkBelowMessage, largeMedia: presentation.interfaceState.largeMedia, sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, sendAsPeerId: currentSendAsPeerId, mediaPreview: rewrittenInput == nil ? presentation.urlPreview?.1 : nil, emptyHandler: { [weak controller] in
                                         _ = controller?.nextTransaction.execute()
                                     }, customChatContents: customChatContents, messageEffect: messageEffect, sendPaidMessageStars: paidMessageStars, suggestPost: presentation.interfaceState.suggestPost, observedResult: { expectedCount, ids in
                                         sendObservation?.complete(expectedCount: expectedCount, resultCount: ids.count, acceptedCount: ids.compactMap { $0 }.count)
@@ -5337,7 +5341,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                                                 return .complete()
                                             }
 
-                                            return Sender.forwardMessages(messageIds: messages.map { $0.id }, context: context, peerId: destinationPeerId, replyId: destinationReply, threadId: destinationThreadId, hideNames: hideNames, hideCaptions: hideCaptions, silent: silent, atDate: atDate, sendAsPeerId: currentSendAsPeerId) |> afterNext { ids in
+                                            return Sender.forwardMessages(messageIds: messages.map { $0.id }, context: context, peerId: destinationPeerId, replyId: destinationReply, threadId: destinationThreadId, hideNames: hideNames, hideCaptions: hideCaptions, sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, sendAsPeerId: currentSendAsPeerId) |> afterNext { ids in
                                                 resultGroup?.complete(index: hasText ? 1 : 0, buildResult: { chatAnalyticsEnqueueResult(ids) })
                                             } |> ignoreValues
                                         }))
@@ -5470,19 +5474,20 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         
         chatInteraction.sendAIEditorResult = { [weak self] in
             self?.cancelAlwaysUseAIRequest()
-            sendMessage(true, nil, nil, nil, 0, nil)
+            sendMessage(.silent, nil, nil, nil, 0, nil)
         }
-        chatInteraction.sendMessageWithAnalytics = { [weak self] silent, atDate, messageEffect, submission, part in
+        chatInteraction.sendMessageWithAnalytics = { [weak self] requestedSound, atDate, messageEffect, submission, part in
             guard let self else {
                 submission?.discard()
                 return
             }
             let interaction = self.chatInteraction
+            let sound = interaction.resolvedSendSound(requestedSound)
             let presentation = interaction.presentation
             let draft = presentation.effectiveInput
             if interaction.appliedAIEditorDraft != nil {
                 self.cancelAlwaysUseAIRequest()
-                sendMessage(silent, atDate, messageEffect, submission, part, nil)
+                sendMessage(sound, atDate, messageEffect, submission, part, nil)
                 return
             }
             guard let settings = self.alwaysUseAISettings, let mode = settings.mode,
@@ -5492,7 +5497,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                   presentation.interfaceState.forwardMessageIds.isEmpty, interaction.richTextDraft == nil,
                   !draft.inputText.trimmed.isEmpty,
                   !self.nextTransaction.isExutable, !interaction.isPreparingForwardSend else {
-                sendMessage(silent, atDate, messageEffect, submission, part, nil)
+                sendMessage(sound, atDate, messageEffect, submission, part, nil)
                 return
             }
             if self.alwaysUseAIRequestId != nil {
@@ -5502,7 +5507,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             if let failed = self.alwaysUseAIFailedDraft {
                 self.alwaysUseAIFailedDraft = nil
                 if failed.inputText == draft.inputText, failed.attributes == draft.attributes {
-                    sendMessage(silent, atDate, messageEffect, submission, part, nil)
+                    sendMessage(sound, atDate, messageEffect, submission, part, nil)
                     return
                 }
             }
@@ -5539,7 +5544,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 }
                 guard let animation = self.alwaysUseAIAnimation else {
                     self.alwaysUseAIRequestId = nil
-                    sendMessage(silent, atDate, messageEffect, submission, part, input)
+                    sendMessage(sound, atDate, messageEffect, submission, part, input)
                     return
                 }
 
@@ -5565,7 +5570,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                         submission?.discard()
                         return
                     }
-                    sendMessage(silent, atDate, messageEffect, submission, part, input)
+                    sendMessage(sound, atDate, messageEffect, submission, part, input)
                 }
             }
             let request = context.engine.messages.composeAIMessage(text: .plain(text: draft.inputText, entities: draft.messageTextEntities()), mode: mode)
@@ -5628,8 +5633,8 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     break
                 }
             } else {
-                items = sendMessageMenuItems(chatInteraction: chatInteraction, send: { [weak chatInteraction] silent, schedule in
-                    chatInteraction?.sendMessage(silent, schedule, chatInteraction?.presentation.messageEffect)
+                items = sendMessageMenuItems(chatInteraction: chatInteraction, send: { [weak chatInteraction] sound, schedule in
+                    chatInteraction?.sendMessageObserved(sound, schedule, chatInteraction?.presentation.messageEffect, submission: nil, part: 0)
                 }) ?? []
             }
             if ChatVoiceTranscription.isLiveDictationSupported, chatInteraction.voiceTranscription != nil, chatInteraction.presentation.state == .normal, chatInteraction.presentation.recordingState == nil {
@@ -5884,7 +5889,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     }
                 }
             }
-            let signal = Sender.enqueue(input: ChatTextInputState(inputText: text), context: context, peerId: destination, replyId: takeReplyId(), threadId: threadId64(), sendAsPeerId: presentation.currentSendAsPeerId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars(), observedResult: observedResult)
+            let signal = Sender.enqueue(input: ChatTextInputState(inputText: text), context: context, peerId: destination, replyId: takeReplyId(), threadId: threadId64(), sound: strongSelf.chatInteraction.resolvedSendSound(), sendAsPeerId: presentation.currentSendAsPeerId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars(), observedResult: observedResult)
             _ = analyticsContext.preservingPresentation(signal |> deliverOnMainQueue).start(completed: {
                 submission?.end()
                 scrollAfterSend()
@@ -6380,6 +6385,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             let confirmationAction = self?.chatInteraction.captureDeferredSendAction()
             let schedulingAnalyticsContext = self?.chatInteraction.captureAnalyticsContext() ?? Analytics.shared.unresolvedContext()
             if let strongSelf = self {
+                let silent = strongSelf.chatInteraction.resolvedSendSound() == .silent
                 let invoke:()->Void = { [weak strongSelf] in
                     guard confirmationAction?.takeIfCurrent() == true else { return }
                     guard let strongSelf = strongSelf else {
@@ -6390,8 +6396,8 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                         let origin = Analytics.shared.captureContext(engine: context.engine, peerId: destinationPeerId, inherited: schedulingAnalyticsContext.restricting(peerId: results.botId))
                         let presentation = origin.beginPresentation()
                         defer { presentation.end() }
-                        guard let message = context.engine.messages.outgoingMessageWithChatContextResult(to: destinationPeerId, threadId: threadId64(), botId: results.botId, result: result, replyToMessageId: takeReplyId(), replyToStoryId: nil, hideVia: false, silentPosting: false, scheduleTime: atDate, sendPaidMessageStars: takePaidMessageStars(), postpone: false, correlationId: nil) else { return }
-                        let sendObservation = controller.makeMessageSendObservation(chatAnalyticsMessageKind(result), analyticsContext: origin, scheduled: atDate != nil, silent: false)
+                        guard let message = context.engine.messages.outgoingMessageWithChatContextResult(to: destinationPeerId, threadId: threadId64(), botId: results.botId, result: result, replyToMessageId: takeReplyId(), replyToStoryId: nil, hideVia: false, silentPosting: silent, scheduleTime: atDate, sendPaidMessageStars: takePaidMessageStars(), postpone: false, correlationId: nil) else { return }
+                        let sendObservation = controller.makeMessageSendObservation(chatAnalyticsMessageKind(result), analyticsContext: origin, scheduled: atDate != nil, silent: silent)
                         _ = origin.preservingPresentation(enqueueMessages(account: context.account, peerId: destinationPeerId, messages: [message])).start(next: { ids in
                             sendObservation?.complete(expectedCount: 1, resultCount: ids.count, acceptedCount: ids.compactMap { $0 }.count)
                         })
@@ -7279,13 +7285,20 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 return
             }
             if let strongSelf = self, let peer = strongSelf.chatInteraction.peer {
+                let sound = strongSelf.chatInteraction.resolvedSendSound()
+                let silent = sound.notificationIsSilent ?? false
                 let currentSendAsPeerId = strongSelf.chatInteraction.presentation.currentSendAsPeerId
                 switch strongSelf.mode {
                 case .scheduled:
+                    let scheduleAction = strongSelf.chatInteraction.captureDeferredSendAction()
                     journey?.step(.openSchedule)
                     recordingRequest?.step(.openSchedule)
                     strongSelf.chatInteraction.voiceSendFlight?.cancel()
                     FeatureNavigationHooks.shared.selectDateObserved(strongSelf.context, strongSelf.context.window, nil, nil, .schedule(peer.id), analyticsContext: analyticsContext, selectedAt: { [weak strongSelf] date, repeatPeriod in
+                        guard scheduleAction.takeIfCurrent(onInvalidated: {
+                            journey?.discard()
+                            recordingRequest?.end()
+                        }) else { return }
                         if let strongSelf = strongSelf {
                             let destination = makePeerId()
                             let analyticsContext = strongSelf.chatInteraction.captureAnalyticsContext(inherited: analyticsContext).restricting(peerId: destination)
@@ -7293,10 +7306,10 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                             recordingRequest?.restrict(to: analyticsContext)
                             let analyticsPresentation = analyticsContext.beginPresentation()
                             defer { analyticsPresentation.end() }
-                            let submission = journey?.beginSubmission(parts: 1, via: .direct, scheduled: true, silent: false)
+                            let submission = journey?.beginSubmission(parts: 1, via: .direct, scheduled: true, silent: silent)
                             let resultGroup = submission?.group(part: 0, count: 1)
                             let recordingSubmission = recordingRequest?.commit(scheduled: true)
-                            let _ = analyticsContext.preservingPresentation(Sender.enqueue(media: media, context: context, peerId: destination, replyId: takeReplyId(), threadId: threadId64(), atDate: date, repeatPeriod: repeatPeriod, sendAsPeerId: currentSendAsPeerId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars()) |> deliverOnMainQueue).start(next: { ids in
+                            let _ = analyticsContext.preservingPresentation(Sender.enqueue(media: media, context: context, peerId: destination, replyId: takeReplyId(), threadId: threadId64(), sound: sound, atDate: date, repeatPeriod: repeatPeriod, sendAsPeerId: currentSendAsPeerId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars()) |> deliverOnMainQueue).start(next: { ids in
                                 recordingSubmission?.complete {
                                     guard media.count == 1, ids.count == 1 else { return nil }
                                     return ids[0] != nil
@@ -7330,10 +7343,10 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                         recordingRequest?.end()
                     })
                 case .history, .thread, .customChatContents:
-                    let submission = journey?.beginSubmission(parts: 1, via: .direct, scheduled: false, silent: false)
+                    let submission = journey?.beginSubmission(parts: 1, via: .direct, scheduled: false, silent: silent)
                     let resultGroup = submission?.group(part: 0, count: 1)
                     let recordingSubmission = recordingRequest?.commit(scheduled: false)
-                    let _ = analyticsContext.preservingPresentation(Sender.enqueue(media: media, context: context, peerId: peerId, replyId: takeReplyId(), threadId: threadId64(), sendAsPeerId: currentSendAsPeerId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars()) |> deliverOnMainQueue).start(next: { ids in
+                    let _ = analyticsContext.preservingPresentation(Sender.enqueue(media: media, context: context, peerId: peerId, replyId: takeReplyId(), threadId: threadId64(), sound: sound, sendAsPeerId: currentSendAsPeerId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars()) |> deliverOnMainQueue).start(next: { ids in
                         recordingSubmission?.complete {
                             guard media.count == 1, ids.count == 1 else { return nil }
                             return ids[0] != nil
@@ -7543,7 +7556,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             showModal(with: ChatUIHooks.shared.makeSendAudioModal(context, self.chatInteraction), for: context.window, morphSource: morphSource)
         }
         
-        let sendAppFileWithAnalytics: (TelegramMediaFile, Bool, String?, Bool, ItemCollectionId?, ChatTextInputState?, ChatInteraction.Schedule?, AnalyticsContext?, AnalyticsStickerSendRequest?) -> Void = { [weak self] file, silent, query, schedule, collectionId, caption, preSchedule, inheritedContext, stickerRequest in
+        let sendAppFileWithAnalytics: (TelegramMediaFile, ChatSendSound, String?, Bool, ItemCollectionId?, ChatTextInputState?, ChatInteraction.Schedule?, AnalyticsContext?, AnalyticsStickerSendRequest?) -> Void = { [weak self] file, requestedSound, query, schedule, collectionId, caption, preSchedule, inheritedContext, stickerRequest in
             let inherited = inheritedContext ?? self?.chatInteraction.captureAnalyticsContext() ?? Analytics.shared.unresolvedContext()
             let analyticsContext = (self?.chatInteraction.captureAnalyticsContext(inherited: inherited) ?? Analytics.shared.unresolvedContext()).restricting(peerId: makePeerId())
             let analyticsPresentation = analyticsContext.beginPresentation()
@@ -7556,9 +7569,13 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 stickerRequest?.end()
                 return
             }
+            let sound = strongSelf.chatInteraction.resolvedSendSound(requestedSound)
+            let silent = sound.notificationIsSilent ?? false
             if peer.canSendMessage(strongSelf.mode.isThreadMode, media: file, threadData: strongSelf.chatInteraction.presentation.threadInfo, cachedData: strongSelf.chatInteraction.presentation.cachedData) {
 
+                let confirmationAction = strongSelf.chatInteraction.captureDeferredSendAction()
                 let invoke:()->Void = { [strongSelf] in
+                    guard confirmationAction.takeIfCurrent(onInvalidated: { stickerRequest?.end() }) else { return }
                     let origin = strongSelf.chatInteraction.captureAnalyticsContext(inherited: analyticsContext).restricting(peerId: makePeerId())
                     let presentation = origin.beginPresentation()
                     defer { presentation.end() }
@@ -7582,9 +7599,9 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                             scrollAfterSend()
                         }
                         if let caption = caption {
-                            let _ = resultContext.preservingPresentation(Sender.enqueue(media: [file], caption: caption, context: context, peerId: makePeerId(), replyId: replyId, threadId: threadId64(), silent: silent, atDate: atDate, repeatPeriod: repeatPeriod, query: query, collectionId: collectionId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars(), observedResult: observedResult) |> deliverOnMainQueue).start(completed: completed)
+                            let _ = resultContext.preservingPresentation(Sender.enqueue(media: [file], caption: caption, context: context, peerId: makePeerId(), replyId: replyId, threadId: threadId64(), sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, query: query, collectionId: collectionId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars(), observedResult: observedResult) |> deliverOnMainQueue).start(completed: completed)
                         } else {
-                            let _ = resultContext.preservingPresentation(Sender.enqueue(media: file, context: context, peerId: makePeerId(), replyId: replyId, threadId: threadId64(), silent: silent, atDate: atDate, repeatPeriod: repeatPeriod, query: query, collectionId: collectionId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars(), observedResult: observedResult) |> deliverOnMainQueue).start(next: { ids in
+                            let _ = resultContext.preservingPresentation(Sender.enqueue(media: file, context: context, peerId: makePeerId(), replyId: replyId, threadId: threadId64(), sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, query: query, collectionId: collectionId, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars(), observedResult: observedResult) |> deliverOnMainQueue).start(next: { ids in
                                 stickerSubmission?.complete {
                                     guard ids.count == 1 else { return nil }
                                     return ids[0] != nil ? .accepted : .terminalFailure(.enqueueRejected)
@@ -7598,7 +7615,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                                 DispatchQueue.main.async {
                                     let presentation = resultContext.beginPresentation()
                                     defer { presentation.end() }
-                                    self?.chatInteraction.sendMessage(false, nil, self?.chatInteraction.presentation.messageEffect)
+                                    self?.chatInteraction.sendMessageObserved(sound, nil, self?.chatInteraction.presentation.messageEffect, submission: nil, part: 0)
                                 }
                             } else {
                                 _afterSentTransition(false)
@@ -7625,8 +7642,10 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     }
 
                     if shouldSchedule {
+                        let scheduleAction = strongSelf.chatInteraction.captureDeferredSendAction()
                         stickerRequest?.step(.openSchedule)
                         FeatureNavigationHooks.shared.selectDateObserved(context, context.window, nil, nil, .schedule(peer.id), analyticsContext: origin, selectedAt: { [weak strongSelf] date, repeatPeriod in
+                            guard scheduleAction.takeIfCurrent(onInvalidated: { stickerRequest?.end() }) else { return }
                             if let controller = strongSelf {
                                 apply(controller, atDate: date, repeatPeriod: repeatPeriod)
                             } else {
@@ -7675,7 +7694,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                             defer { presentation.end() }
                             stickerRequest?.restrict(to: origin)
                             confirmationResolved = true
-                            guard chatPaidMessagePriceIsCurrent(chatInteraction, payStars) else { return }
+                            guard confirmationAction.isAvailable, chatPaidMessagePriceIsCurrent(chatInteraction, payStars) else { return }
                             if starsState.balance.value > starsPrice {
                                 chatInteraction.update({ current in
                                     return current
@@ -7716,19 +7735,19 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             }
         }
         chatInteraction.sendAppFile = { file, silent, query, schedule, collectionId, caption, preSchedule in
-            sendAppFileWithAnalytics(file, silent, query, schedule, collectionId, caption, preSchedule, nil, nil)
+            sendAppFileWithAnalytics(file, silent ? .silent : .automatic, query, schedule, collectionId, caption, preSchedule, nil, nil)
         }
-        chatInteraction.sendAppFileWithContext = { file, silent, query, schedule, collectionId, caption, preSchedule, analyticsContext in
-            sendAppFileWithAnalytics(file, silent, query, schedule, collectionId, caption, preSchedule, analyticsContext, nil)
+        chatInteraction.sendAppFileWithContext = { file, sound, query, schedule, collectionId, caption, preSchedule, analyticsContext in
+            sendAppFileWithAnalytics(file, sound, query, schedule, collectionId, caption, preSchedule, analyticsContext, nil)
         }
         chatInteraction.sendCreatedStickerWithAnalytics = { file, analyticsContext, request in
-            sendAppFileWithAnalytics(file, false, nil, false, nil, nil, nil, analyticsContext, request)
+            sendAppFileWithAnalytics(file, .automatic, nil, false, nil, nil, nil, analyticsContext, request)
         }
 
         chatInteraction.sendMedias = { [weak self] medias, caption, isCollage, additionText, silent, atDate, isSpoiler, messageEffect, leadingText in
-            self?.chatInteraction.sendMediasWithAnalytics?(medias, caption, isCollage, additionText, silent, atDate, isSpoiler, messageEffect, leadingText, nil, 0)
+            self?.chatInteraction.sendMediasWithAnalytics?(medias, caption, isCollage, additionText, silent ? .silent : .automatic, atDate, isSpoiler, messageEffect, leadingText, nil, 0)
         }
-        chatInteraction.sendMediasWithAnalytics = { [weak self] medias, caption, isCollage, additionText, silent, atDate, isSpoiler, messageEffect, leadingText, submission, part in
+        chatInteraction.sendMediasWithAnalytics = { [weak self] medias, caption, isCollage, additionText, requestedSound, atDate, isSpoiler, messageEffect, leadingText, submission, part in
             let deferredSendAction = self?.chatInteraction.captureDeferredSendAction()
             let inherited = submission?.context ?? self?.chatInteraction.captureAnalyticsContext() ?? Analytics.shared.unresolvedContext()
             let schedulingAnalyticsContext = self?.chatInteraction.captureAnalyticsContext(inherited: inherited) ?? Analytics.shared.unresolvedContext()
@@ -7742,6 +7761,8 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 
                 let presentation = strongSelf.chatInteraction.presentation
                 
+                let sound = strongSelf.chatInteraction.resolvedSendSound(requestedSound)
+                let silent = sound.notificationIsSilent ?? false
                 let canSend = medias.map {
                     return peer.canSendMessage(strongSelf.mode.isThreadMode, media: $0, threadData: strongSelf.chatInteraction.presentation.threadInfo, cachedData: strongSelf.chatInteraction.presentation.cachedData)
                 }.allSatisfy { $0 }
@@ -7757,7 +7778,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                             defer { analyticsPresentation.end() }
                             let sendObservation = controller.makeMessageSendObservation(medias.count > 1 && isCollage ? .album : chatAnalyticsMessageKind(medias.first), analyticsContext: schedulingAnalyticsContext.restricting(peerId: destinationPeerId), scheduled: atDate != nil, silent: silent)
                             let resultGroup = submission?.group(part: part, count: 1)
-                            let _ = schedulingAnalyticsContext.preservingPresentation(Sender.enqueue(media: medias, caption: caption, context: context, peerId: destinationPeerId, replyId: takeReplyId(), threadId: threadId64(), isCollage: isCollage, additionText: additionText, silent: silent, atDate: atDate, repeatPeriod: repeatPeriod, isSpoiler: isSpoiler, customChatContents: customChatContents, messageEffect: messageEffect, leadingText: leadingText, sendPaidMessageStars: takePaidMessageStars(), suggestPost: presentation.interfaceState.suggestPost, observedResult: { expectedCount, ids in
+                            let _ = schedulingAnalyticsContext.preservingPresentation(Sender.enqueue(media: medias, caption: caption, context: context, peerId: destinationPeerId, replyId: takeReplyId(), threadId: threadId64(), isCollage: isCollage, additionText: additionText, sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, isSpoiler: isSpoiler, customChatContents: customChatContents, messageEffect: messageEffect, leadingText: leadingText, sendPaidMessageStars: takePaidMessageStars(), suggestPost: presentation.interfaceState.suggestPost, observedResult: { expectedCount, ids in
                                 sendObservation?.complete(expectedCount: expectedCount, resultCount: ids.count, acceptedCount: ids.compactMap { $0 }.count)
                             }) |> deliverOnMainQueue).start(next: { ids in
                                 resultGroup?.complete(index: 0, buildResult: { chatAnalyticsEnqueueResult(ids) })
@@ -7845,6 +7866,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 return
             }
             if let strongSelf = self, let peer = strongSelf.chatInteraction.peer, peer.canSendMessage(strongSelf.mode.isThreadMode, threadData: strongSelf.chatInteraction.presentation.threadInfo, cachedData: strongSelf.chatInteraction.presentation.cachedData) {
+                let sound = strongSelf.chatInteraction.resolvedSendSound()
                 func apply(_ controller: ChatController, atDate: Date?, repeatPeriod: Int32?) {
                     var commandText = "/" + command.command.text
                     if controller.chatInteraction.peerId.namespace != Namespaces.Peer.CloudUser, let addressName = command.peer.addressName, !addressName.isEmpty {
@@ -7852,8 +7874,8 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     }
                     let destinationPeerId = makePeerId()
                     let ephemeralBotPeerId = command.command.isEphemeral ? command.peer.id : nil
-                    let sendObservation = controller.makeMessageSendObservation(.text, analyticsContext: schedulingAnalyticsContext.restricting(peerId: destinationPeerId), scheduled: atDate != nil, silent: false)
-                    _ = Sender.enqueue(input: ChatTextInputState(inputText: commandText), context: context, peerId: destinationPeerId, replyId: takeReplyId(), threadId: threadId64(), atDate: atDate, repeatPeriod: repeatPeriod, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars(), ephemeralBotPeerId: ephemeralBotPeerId, observedResult: { expectedCount, ids in
+                    let sendObservation = controller.makeMessageSendObservation(.text, analyticsContext: schedulingAnalyticsContext.restricting(peerId: destinationPeerId), scheduled: atDate != nil, silent: sound == .silent)
+                    _ = Sender.enqueue(input: ChatTextInputState(inputText: commandText), context: context, peerId: destinationPeerId, replyId: takeReplyId(), threadId: threadId64(), sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, customChatContents: customChatContents, sendPaidMessageStars: takePaidMessageStars(), ephemeralBotPeerId: ephemeralBotPeerId, observedResult: { expectedCount, ids in
                         sendObservation?.complete(expectedCount: expectedCount, resultCount: ids.count, acceptedCount: ids.compactMap { $0 }.count)
                     }).start(completed: scrollAfterSend)
                     controller.chatInteraction.updateInput(with: "")

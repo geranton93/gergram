@@ -14,28 +14,33 @@ The development branch contains the changes below. The integrated macOS build an
 | Local message visibility | Hide an individual message or album for the current session and restore it from the chat menu. Privacy and Security includes account-local hidden sender rules. The blocked and hidden sender filters cover incoming messages in the transcript, including known forwarded and inline bot sources. Each chat can temporarily show its filtered messages. |
 | Message filters | Configure shared and chat-specific regex rules in Privacy and Security. Add a literal rule from selected message text, and import or export a validated JSON filter file for the current account. |
 | Message text and details | Turn on **Filter Zalgo Text in Messages** in General settings to remove excessive combining marks and explicit direction controls from ordinary message text and captions on screen. **Message Details** shows and copies IDs, timestamps, and available view and forward counts for eligible messages. |
-| Message Shot | Copy or save a single message or a selection as a PNG from the message menu. Exports include author labels, styled ordinary text and available cached photo or video previews. **Show Timestamps** controls dates and times. Turn off **Show Background** for a transparent canvas around the message cards. Both options are saved locally. gergram checks chat and message export permissions before rendering. |
+| Message Shot | Copy or save a single message or a selection as a PNG from the message menu. Exports include author labels, styled ordinary text and available cached photo or video previews. **Show Timestamps** controls dates and times. Turn off **Show Background** for a transparent canvas around the message cards. Choose the current chat palette or one of four built-in themes, and optionally include reaction totals. The export preferences are saved locally. gergram checks chat and message export permissions before rendering. |
 | Streamer Mode | A persistent app and menu-bar control requests capture exclusion across gergram windows and suppresses new chat and story notifications while active. Actual capture coverage depends on macOS and the sharing method. |
-| Discovery | Disable remote peer discovery in the main chat-list search while keeping local and message results. Hide the Similar Channels profile tab and start post-join recommendations collapsed. |
+| Discovery | Disable remote peer discovery in the main chat-list search while keeping local and message results. Hide the Similar Channels profile tab, start post-join recommendations collapsed, or hide stories and avatar story indicators in the chat list. |
 | Bot button inspection | View or copy inline callback data from the message menu without activating the button. Binary payloads use Base64. |
 | Context menu and bot Start | Configure which message commands appear in the regular or extended menu. Search by sender from an eligible message. A bot Start button can preview and clear its pending parameter locally. |
-| Settings and composer | gergram settings links open the message menu or hidden-sender controls for the active account. Mini Apps can open wider or taller. Canceling an attachment preview can return the edited caption to the originating draft. Reordering files or album tiles uses the same attachment order as sending. |
+| Settings and composer | gergram settings links open the message menu or hidden-sender controls for the active account. Mini Apps can open wider or taller. Canceling an attachment preview can return the edited caption to the originating draft. Reordering files or album tiles uses the same attachment order as sending. Choose silent sending per account and override it for an individual send. |
 | Plugin attachment metadata | Open the metadata for an eligible downloaded `.plugin` attachment. The viewer reads a bounded local file and displays the declared fields as plain text. |
 | Pack identifiers and profiles | Copy sticker pack, emoji pack and custom emoji IDs. Profile ID rows label a statistics DC or profile-photo DC when available. |
-| Translation and links | Select Google Translate for eligible messages with confirmation in the translation window. Telegram is the default provider. Eligible Spotify links can open in the installed app. |
-| Chat appearance | A compact unread divider surrounds its label. Message timestamps can show seconds in the current locale. |
-| Playback and sessions | Direct playback replenishes a bounded read-ahead window and handles cancellation or an incomplete fetch. Speculative story video downloads use a bounded prefix when metadata is missing. Session details show whether Telegram identifies the session as an official app. |
+| Translation and links | Select Google Translate for eligible messages with confirmation in the translation window. Telegram is the default provider. Eligible Spotify links can open in the installed app. gergram peer and chat links accept typed numeric IDs for peers known to the current account. |
+| On-device transcription | Choose **Transcribe on This Mac** for an eligible incoming voice message or round video. Apple Speech processes supported audio locally, up to 60 seconds and 24 MB. |
+| Chat appearance | A compact unread divider surrounds its label. Message timestamps can show seconds in the current locale. Preview custom emoji through the picker with a hold, context menu or VoiceOver action. |
+| Playback and sessions | Direct playback replenishes a bounded read-ahead window and handles cancellation or an incomplete fetch. Speculative story video downloads use a bounded prefix when metadata is missing and prioritize the next story's media ahead of its reactions. Session details show whether Telegram identifies the session as an official app. |
+
+### Numeric peer and chat links
+
+Use `gergram://peer/user/42` to open a profile and `gergram://chat/channel/42` to open a chat. The raw ID path takes `user`, `group` or `channel`. The `bot-api` path takes a signed Bot API dialog ID, for example `gergram://chat/bot-api/-1000000000042`. The selected account needs the target in its local peer data.
 
 ## Planned additions
 
 | Area | What gergram adds |
 | --- | --- |
 | Message filters | Extend sender filtering to remaining chat surfaces and add reference-format and sharing-link support. |
-| Message images | Extend Message Shot with richer media and message layouts, and controls for themes, reactions, and spoilers. |
+| Message images | Extend Message Shot with replies, richer media and message layouts, and spoiler controls. |
 | Local message history | Keep an opt-in, account-scoped record of eligible ordinary messages previously seen on this Mac. Browse earlier versions and deletion records, set retention, and clear stored entries. |
 | Chat appearance | Add settings for bubble width and shape, avatar corners, monospace fonts, and remaining timestamp surfaces. |
 | Composer controls | Choose visible composer actions and media send confirmations. Extend keyboard reordering controls. |
-| On-device transcription | Transcribe received voice messages and round videos on the Mac with supported local recognition, with optional local model support planned separately. |
+| Speech models | Add optional support for a locally installed speech model. |
 | Message and bot tools | Extend message details with media metadata and look up sticker and emoji pack authors where available. |
 
 ## Build from source

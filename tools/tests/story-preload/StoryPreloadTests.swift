@@ -27,6 +27,7 @@ final class Probe<T, E> {
     var active: Int { subscribers.count }
 }
 struct ResourceId: Hashable { let stringRepresentation: String }
+typealias MediaResource = Resource
 struct Resource { let id: ResourceId; init(_ id: String) { self.id = .init(stringRepresentation: id) } }
 struct MediaId: Hashable { let id: Int64 }
 enum Attribute { case Video(Int, Int, Int, Int32?, Int, Int) }
@@ -232,7 +233,7 @@ final class StoryPreloadTests: XCTestCase {
     func testInvalidNegativePrefixDoesNotCrash() {
         let c = Context(); var completed = 0
         let d = wait(c, story(.file(file(1, prefix: -1)))).start(completed: { completed += 1 }); XCTAssertEqual(completed, 1); d.dispose()
-        let b = background(c, story(.file(file(1, prefix: -1)))).start(); XCTAssertEqual(c.box.requests.last?.1, 0..<0); b.dispose()
+        let b = background(c, story(.file(file(1, prefix: -1)))).start(); XCTAssertEqual(c.box.requests.last?.1, 0..<(512 * 1024)); b.dispose()
     }
     func testCancelReleasesAllResourcesAndSuppressesCompletion() {
         let c = Context(); prepare(c, [2]); var completed = 0
@@ -269,6 +270,55 @@ final class StoryPreloadTests: XCTestCase {
         let d = background(c, story(.unsupported, [.builtin("x")])).start(completed: { completed += 1 })
         c.box.fetch("f1").fail(.generic); XCTAssertEqual(completed, 1); d.dispose()
     }
+    func testSpeculativeVideoReleasesCoveredFetchAndStartsReactionsAfterMedia() {
+        let context = Context()
+        prepare(context, [2])
+        let preload = background(context, story(.file(file(1, prefix: 100)), [.custom(2)])).start()
+        XCTAssertEqual(context.box.requests.map { $0.0 }, ["f1"])
+        XCTAssertEqual(context.box.frame("f1").active, 1)
+        context.box.rangeProbe("f1").send(RangeSet(0..<Int64(100)))
+        XCTAssertEqual(context.box.fetch("f1").active, 0)
+        XCTAssertEqual(context.box.frame("f1").active, 0)
+        XCTAssertEqual(context.box.requests.map { $0.0 }, ["f1", "f2"])
+        preload.dispose()
+        XCTAssertEqual(context.box.fetch("f2").active, 0)
+    }
+
+    func testCachedSpeculativeMediaDoesNotStartDuplicateWork() {
+        let context = Context()
+        context.box.dataProbe("image").initial = .init(complete: true)
+        context.box.rangeProbe("f1").initial = RangeSet(0..<Int64(100))
+        let photo = background(context, story(image())).start()
+        let video = background(context, story(.file(file(1, prefix: 100)))).start()
+        XCTAssertTrue(context.box.requests.isEmpty)
+        XCTAssertEqual(context.box.frame("f1").starts, 0)
+        photo.dispose()
+        video.dispose()
+    }
+
+    func testCancelingSpeculationDoesNotStartReactionWork() {
+        let context = Context()
+        prepare(context, [2])
+        let preload = background(context, story(.file(file(1, prefix: 100)), [.custom(2)])).start()
+        preload.dispose()
+        context.box.rangeProbe("f1").send(RangeSet(0..<Int64(100)))
+        XCTAssertEqual(context.box.requests.map { $0.0 }, ["f1"])
+        XCTAssertTrue(context.engine.stickers.requestedIds.isEmpty)
+    }
+
+    func testNearestStoryOwnsPriorityOnlyUntilItsMediaIsReady() {
+        let context = Context()
+        let info = StoryPreloadInfo(peer: PeerReference(.init(id: 20))!, storyId: 1, media: .file(file(1, prefix: 100)), reactions: [])
+        let nearest = preloadStoryMedia(context: context, info: info, prioritizeMedia: true).start()
+        let background = preloadStoryMedia(context: context, info: info).start()
+        XCTAssertEqual(context.engine.resources.starts.map { $0.1 }, [1])
+        XCTAssertEqual(context.engine.resources.count, 1)
+        context.box.rangeProbe("f1").send(RangeSet(0..<Int64(100)))
+        XCTAssertEqual(context.engine.resources.count, 0)
+        nearest.dispose()
+        background.dispose()
+    }
+
     func testBackgroundPrefixUsesKnownFileSize() {
         let c = Context(); let d = background(c, story(.file(file(1, prefix: 100, size: 30)))).start()
         XCTAssertEqual(c.box.requests.first?.1, 0..<30); d.dispose()
@@ -314,7 +364,7 @@ final class StoryPreloadTests: XCTestCase {
 
     func testBackgroundZeroPrefixDoesNotRequestFullVideo() {
         let c = Context(); let d = background(c, story(.file(file(1, prefix: 0)))).start()
-        XCTAssertEqual(c.box.requests.first?.1, 0..<0); d.dispose()
+        XCTAssertEqual(c.box.requests.first?.1, 0..<(512 * 1024)); d.dispose()
     }
     func testUnknownFileSizePreservesPrefix() {
         let c = Context(); let d = background(c, story(.file(file(1, prefix: 100)))).start()
@@ -325,9 +375,9 @@ final class StoryPreloadTests: XCTestCase {
         let d = wait(c, story(.file(file(1, prefix: 100, size: 0)))).start(completed: { completed += 1 })
         XCTAssertEqual(completed, 1); XCTAssertTrue(c.box.requests.isEmpty); d.dispose()
     }
-    func testMissingPrefixKeepsBackgroundFetchPolicy() {
+    func testMissingPrefixUsesBoundedSpeculativeDemand() {
         let c = Context(); let d = background(c, story(.file(file(1)))).start()
-        XCTAssertEqual(c.box.requests.count, 1); XCTAssertNil(c.box.requests.first?.1); d.dispose()
+        XCTAssertEqual(c.box.requests.count, 1); XCTAssertEqual(c.box.requests.first?.1, 0..<(512 * 1024)); d.dispose()
     }
 
 }

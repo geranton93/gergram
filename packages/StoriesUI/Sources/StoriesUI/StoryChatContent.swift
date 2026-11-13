@@ -17,7 +17,7 @@ private func storyPreloadInfos(_ items: [(EnginePeer, EngineStoryItem)], preferH
     var keys = Set<StoryKey>()
     for (peer, item) in items.prefix(3) {
         guard let peerReference = PeerReference(peer._asPeer()) else { continue }
-        let selectedMedia = !preferHighQualityStories ? (item.alternativeMediaList.first ?? item.media) : item.media
+        let selectedMedia = selectedStoryMedia(item, preferHighQuality: preferHighQualityStories)
         guard selectedMedia.id != nil else { continue }
         let key = StoryKey(peerId: peer.id, id: item.id)
         guard keys.insert(key).inserted else { continue }
@@ -39,6 +39,7 @@ private final class StoryMediaPreloadContext {
         init(_ info: StoryPreloadInfo) { self.info = info }
         func matches(_ info: StoryPreloadInfo) -> Bool {
             return self.info.peer == info.peer && self.info.media == info.media && Set(self.info.reactions) == Set(info.reactions)
+                && (self.info.priority == .top(position: 0)) == (info.priority == .top(position: 0))
         }
     }
 
@@ -1336,7 +1337,7 @@ public final class StoryContentContextImpl: StoryContentContext {
         
         let preloadInfos = storyPreloadInfos(possibleItems, preferHighQualityStories: stateValue.slice?.additionalPeerData.preferHighQualityStories ?? false)
         self.preloadStoryResources.update(preloadInfos) { info in
-            preloadStoryMedia(context: context, info: info)
+            preloadStoryMedia(context: context, info: info, prioritizeMedia: info.priority == .top(position: 0))
         }
 
         self.storyMetadataRefresh.update(pollItems) { peerId, ids in
@@ -1941,7 +1942,7 @@ public final class PeerStoryListContentContextImpl: StoryContentContext {
                 }
 
                 self.preloadStoryResources.update(preloadInfos) { info in
-                    preloadStoryMedia(context: context, info: info)
+                    preloadStoryMedia(context: context, info: info, prioritizeMedia: info.priority == .top(position: 0))
                 }
 
                 self.storyMetadataRefresh.update(pollItems) { peerId, ids in
@@ -2047,44 +2048,52 @@ private func storyMediaPreload(status: Signal<Never, NoError>, fetch: Signal<Nev
 }
 
 public func preloadStoryMedia(context: any AccountContextProtocol, info: StoryPreloadInfo) -> Signal<Never, NoError> {
-    var signals: [Signal<Never, NoError>] = []
-    
-    let selectedMedia: EngineMedia = info.media
+    return preloadStoryMedia(context: context, info: info, prioritizeMedia: false)
+}
+
+private func preloadStoryMedia(context: any AccountContextProtocol, info: StoryPreloadInfo, prioritizeMedia: Bool) -> Signal<Never, NoError> {
+    let mediaBox = context.account.postbox.mediaBox
+    let selectedMedia = info.media
+    var mediaPreload: Signal<Never, NoError> = .complete()
+    let resourcePriority: (MediaResource) -> (() -> Disposable)? = { resource in
+        guard prioritizeMedia else { return nil }
+        return { context.engine.resources.pushPriorityDownload(resourceId: resource.id.stringRepresentation, priority: 1) }
+    }
     
     switch selectedMedia {
     case let .image(image):
         if let representation = largestImageRepresentation(image.representations) {
-            signals.append(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, userLocation: .peer(info.peer.id), userContentType: .story, reference: .media(media: .story(peer: info.peer, id: info.storyId, media: selectedMedia._asMedia()), resource: representation.resource), range: nil)
+            let status = mediaBox.resourceData(representation.resource)
+            |> filter { $0.complete }
+            |> take(1)
+            |> ignoreValues
+            let fetch = fetchedMediaResource(mediaBox: mediaBox, userLocation: .peer(info.peer.id), userContentType: .story, reference: .media(media: .story(peer: info.peer, id: info.storyId, media: selectedMedia._asMedia()), resource: representation.resource), range: nil)
             |> ignoreValues
             |> `catch` { _ -> Signal<Never, NoError> in
                 return .complete()
-            })
+            }
+            mediaPreload = storyMediaPreload(status: status, fetch: fetch, priority: resourcePriority(representation.resource))
         }
     case let .file(file):
-        let advertisedRange = storyVideoPreloadRange(file)
-        guard let fetchRange = advertisedRange ?? storyVideoPreloadRange(file, allowFallback: true) else { break }
-        let mediaBox = context.account.postbox.mediaBox
+        guard let fetchRange = storyVideoPreloadRange(file, allowFallback: true) else { break }
         let fetch = fetchedMediaResource(mediaBox: mediaBox, userLocation: .peer(info.peer.id), userContentType: .story, reference: .media(media: .story(peer: info.peer, id: info.storyId, media: selectedMedia._asMedia()), resource: file.resource), range: fetchRange)
         |> ignoreValues
         |> `catch` { _ -> Signal<Never, NoError> in
             return .complete()
         }
         let firstFrame = mediaBox.cachedResourceRepresentation(file.resource, representation: CachedVideoFirstFrameRepresentation(), complete: true, fetch: true, attemptSynchronously: false)
+        |> take(1)
         |> ignoreValues
-        if advertisedRange != nil {
-            signals.append(fetch)
-            signals.append(firstFrame)
-        } else {
-            let status = mediaBox.resourceRangesStatus(file.resource)
-            |> filter { $0.isSuperset(of: RangeSet(fetchRange.0)) }
-            |> take(1)
-            |> ignoreValues
-            signals.append(storyMediaPreload(status: status, fetch: fetch, auxiliary: [firstFrame]))
-        }
+        let status = mediaBox.resourceRangesStatus(file.resource)
+        |> filter { $0.isSuperset(of: RangeSet(fetchRange.0)) }
+        |> take(1)
+        |> ignoreValues
+        mediaPreload = storyMediaPreload(status: status, fetch: fetch, priority: resourcePriority(file.resource), auxiliary: [firstFrame])
     default:
         break
     }
     
+    var reactionPreloads: [Signal<Never, NoError>] = []
     var builtinReactions: [String] = []
     var customReactions: [Int64] = []
     for reaction in info.reactions {
@@ -2102,7 +2111,7 @@ public func preloadStoryMedia(context: any AccountContextProtocol, info: StoryPr
         }
     }
     if !builtinReactions.isEmpty {
-        signals.append(context.engine.stickers.availableReactions()
+        reactionPreloads.append(context.engine.stickers.availableReactions()
         |> take(1)
         |> mapToSignal { availableReactions -> Signal<Never, NoError> in
             guard let availableReactions = availableReactions else {
@@ -2142,7 +2151,7 @@ public func preloadStoryMedia(context: any AccountContextProtocol, info: StoryPr
         })
     }
     if !customReactions.isEmpty {
-        signals.append(context.engine.stickers.resolveInlineStickers(fileIds: customReactions)
+        reactionPreloads.append(context.engine.stickers.resolveInlineStickers(fileIds: customReactions)
         |> take(1)
         |> mapToSignal { resolvedFiles -> Signal<Never, NoError> in
             var files: [TelegramMediaFile] = []
@@ -2176,7 +2185,7 @@ public func preloadStoryMedia(context: any AccountContextProtocol, info: StoryPr
         })
     }
     
-    return combineLatest(signals) |> ignoreValues
+    return mediaPreload |> then(combineLatest(reactionPreloads) |> ignoreValues)
 }
 
 
@@ -2219,12 +2228,7 @@ public func waitUntilStoryMediaPreloaded(context: any AccountContextProtocol, pe
         
         var statusSignals: [Signal<Never, NoError>] = []
         
-        let selectedMedia: EngineMedia
-        if !preferHighQualityStories, let alternativeMedia = storyItem.alternativeMediaList.first {
-            selectedMedia = alternativeMedia
-        } else {
-            selectedMedia = storyItem.media
-        }
+        let selectedMedia = selectedStoryMedia(storyItem, preferHighQuality: preferHighQualityStories)
         
         switch selectedMedia {
         case let .image(image):

@@ -25,10 +25,7 @@ public class StoryLayoutView : Control {
     var isHighQuality: Bool = true
     
     var media: EngineMedia? {
-        if let story = self.story {
-            return isHighQuality ? story.media : (story.alternativeMediaList.first ?? story.media)
-        }
-        return nil
+        return story.map { selectedStoryMedia($0, preferHighQuality: isHighQuality) }
     }
     
     fileprivate var magnifyView: MagnifyView!

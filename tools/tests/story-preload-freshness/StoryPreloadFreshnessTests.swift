@@ -45,7 +45,7 @@ final class Context {
     var onStart: ((Attempt)->Void)?
     var onDispose: ((Attempt)->Void)?
 }
-func preloadStoryMedia(context: Context, info: StoryPreloadInfo) -> Signal<Never, NoError> {
+func preloadStoryMedia(context: Context, info: StoryPreloadInfo, prioritizeMedia: Bool = false) -> Signal<Never, NoError> {
     Signal { subscriber in
         let attempt=Attempt(info); context.attempts.append(attempt)
         attempt.complete=subscriber.putCompletion

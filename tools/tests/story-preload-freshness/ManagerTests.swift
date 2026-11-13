@@ -2,6 +2,21 @@ final class StoryPreloadManagerTests: XCTestCase {
     func info(_ id: Int32 = 1, revision: Int = 0) -> StoryPreloadInfo {
         .init(peer: PeerReference(.init(id: 10))!,storyId: id,media: .init(id: .init(id: Int(id)),revision: revision),reactions: [],priority: .top(position: Int(id)))
     }
+    func testNearestPriorityTransitionRebindsOnlyTheAffectedAttempt() {
+        let context = Context()
+        let manager = StoryMediaPreloadContext()
+        let first = info()
+        let second = info(2)
+        manager.update([first, second]) { preloadStoryMedia(context: context, info: $0) }
+        let nearest = StoryPreloadInfo(peer: first.peer, storyId: first.storyId, media: first.media, reactions: first.reactions, priority: .top(position: 0))
+        manager.update([nearest, second]) { preloadStoryMedia(context: context, info: $0) }
+        XCTAssertEqual(context.attempts.map { $0.info.storyId }, [first.storyId, second.storyId, first.storyId])
+        XCTAssertTrue(context.attempts[0].disposed)
+        XCTAssertFalse(context.attempts[1].disposed)
+        XCTAssertFalse(context.attempts[2].disposed)
+        manager.dispose()
+    }
+
     func testSynchronousReentryDoesNotOverwriteNewAttempt() {
         let manager=StoryMediaPreloadContext(); let c=Context(); var reentered=false
         c.onStart={ _ in if !reentered { reentered=true; manager.update([self.info(revision: 2)]) { preloadStoryMedia(context: c,info: $0) } } }

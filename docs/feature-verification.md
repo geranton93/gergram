@@ -60,7 +60,7 @@ This register accounts for all 81 rows in the [feature audit](ayugram-feature-au
 | C16 | Planned | Existing composer actions provide native integration points. | Add visibility and hover preferences with discoverable alternate actions and accessible send paths. |
 | C17 | Planned | Existing sticker, GIF and recorded-media sending provides native integration points. | Add confirmation before send for each supported path. Verify accept once, cancel, shortcuts and scheduled sends. |
 | C18 | Planned | Native sticker and file sends are available. | Add file eligibility and encoding with ordinary file fallback. |
-| C19 | Planned | Native recents, favorites and pack lists exist. | Add reference-sized recents and only-added filters. Exercise incomplete loads and account switching. |
+| C19 | Partial | An account preference shows all eligible recents currently present in the synced list. Ten focused checks covered preference migration, display order and eligibility. | Verify live refresh and account switching. The pinned core can temporarily trim recents after local sends, and installed-only filters remain open. |
 | C20 | Native candidate | Native GIF playback and audio seek controls exist. | Compare actual voice and round-video seek, GIF gestures, pause, buffering and completion. |
 | C21 | Implemented | Native message actions display and copy raw inline callback payloads including binary data. | Check callback inspection leaves bot state unchanged and source permission is revalidated before copy. |
 | C22 | Dependency | The native pack schema exposes a creator flag for the current account without an arbitrary author ID. | Support author navigation when a trusted source can provide the author, and verify absent and unresolved metadata paths. |

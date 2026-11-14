@@ -330,17 +330,38 @@ private struct PeerInfoSortableStableId: Hashable {
 
 private struct PeerInfoSortableEntry: Identifiable, Comparable {
     let entry: PeerInfoEntry
+    let filtersProfileTitle: Bool
+
+    init<Context: AccountContextProtocol>(entry: PeerInfoEntry, arguments: PeerInfoArguments<Context>, filtersProfileTitle: Bool) {
+        self.entry = entry
+        if filtersProfileTitle && !arguments.isAd {
+            switch entry {
+            case UserInfoEntry<Context>.info(_, _, false, _, _, _, _),
+                 GroupInfoEntry<Context>.info(_, _, false, _, _),
+                 ChannelInfoEntry<Context>.info(_, _, false, _, _, _):
+                self.filtersProfileTitle = true
+            default:
+                self.filtersProfileTitle = false
+            }
+        } else {
+            self.filtersProfileTitle = false
+        }
+    }
     
     var stableId: PeerInfoSortableStableId {
         return PeerInfoSortableStableId(id: self.entry.stableId)
     }
     
     static func ==(lhs: PeerInfoSortableEntry, rhs: PeerInfoSortableEntry) -> Bool {
-        return lhs.entry.isEqual(to: rhs.entry)
+        return lhs.filtersProfileTitle == rhs.filtersProfileTitle && lhs.entry.isEqual(to: rhs.entry)
     }
     
     static func <(lhs: PeerInfoSortableEntry, rhs: PeerInfoSortableEntry) -> Bool {
         return lhs.entry.isOrderedBefore(rhs.entry)
+    }
+
+    func item<Context: AccountContextProtocol>(initialSize: NSSize, arguments: PeerInfoArguments<Context>) -> TableRowItem {
+        return entry.item(initialSize: initialSize, arguments: arguments, filtersProfileTitle: filtersProfileTitle)
     }
 }
 
@@ -365,7 +386,7 @@ fileprivate func prepareEntries<Context: AccountContextProtocol>(from:[Appearanc
             let index:Int = 0
             
             for i in index ..< entries.count {
-                let item = entries[i].entry.entry.item(initialSize: initialSize, arguments: arguments)
+                let item = entries[i].entry.item(initialSize: initialSize, arguments: arguments)
                 height += item.height
                 firstInsertion.append((i, item))
                 if initialSize.height < height {
@@ -384,7 +405,7 @@ fileprivate func prepareEntries<Context: AccountContextProtocol>(from:[Appearanc
                     
                     for i in initialIndex ..< entries.count {
                         let item:TableRowItem
-                        item = entries[i].entry.entry.item(initialSize: initialSize, arguments: arguments)
+                        item = entries[i].entry.item(initialSize: initialSize, arguments: arguments)
                         insertions.append((i, item))
                     }
                     subscriber.putNext(TableUpdateTransition(deleted: [], inserted: insertions, updated: updates, state: .none(nil)))
@@ -393,7 +414,7 @@ fileprivate func prepareEntries<Context: AccountContextProtocol>(from:[Appearanc
             }
         } else {
             let (deleted,inserted, updated) = proccessEntriesWithoutReverse(from, right: to, { (peerInfoSortableEntry) -> TableRowItem in
-                return peerInfoSortableEntry.entry.entry.item(initialSize: initialSize, arguments: arguments)
+                return peerInfoSortableEntry.entry.item(initialSize: initialSize, arguments: arguments)
             })
             
             subscriber.putNext(TableUpdateTransition(deleted: deleted, inserted: inserted, updated: updated, animated: animated, state: animated ? .none(nil) : .saveVisible(.lower, false), grouping: true, animateVisibleOnly: false))
@@ -1320,13 +1341,15 @@ public class PeerInfoController<Context: AccountContextProtocol>: EditableViewCo
             actionsDisposable.add((hideProfileStories |> deliverOnMainQueue).start(next: { [weak arguments] hidden in
                 arguments?.hidesProfileStories = hidden
             }))
-            let profilePresentation = combineLatest(savedMuicProfileState, FastSettings.profilePeerIdDisplay, ProfileJoinDatePreferences.shared.signal)
+            let profilePresentation = combineLatest(savedMuicProfileState, FastSettings.profilePeerIdDisplay, ProfileJoinDatePreferences.shared.signal, FastSettings.filterZalgoTextSignal)
             return combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(peerId, updateData: true), arguments.statePromise, appearanceSignal, inputActivityState.get(), channelMembersPromise.get(), mediaTabsData, mediaReady, inviteLinksCount, joinRequestsCount, availableReactions, threadData, threadPeer, visibleStories, personalChannelSignal, revenueState, tonRevenueState, webAppPermissionsState(context: context, peerId: peerId), profilePresentation)
             |> mapToQueue { view, state, appearance, inputActivities, channelMembers, mediaTabsData, _, inviteLinksCount, joinRequestsCount, availableReactions, threadData, threadPeer, stories, personalChannel, revenueState, tonRevenueState, webAppPermissionsState, profilePresentation -> Signal<(PeerView, TableUpdateTransition, MessageHistoryThreadData?, EnginePeer?), NoError> in
                     
                     
-                let (savedMuicProfileState, peerIdFormat, showsJoinDate) = profilePresentation
-                let entries:[AppearanceWrapperEntry<PeerInfoSortableEntry>] = peerInfoEntries(view: view, threadData: threadData, threadPeer: threadPeer, arguments: arguments, inputActivities: inputActivities, channelMembers: channelMembers, mediaTabsData: mediaTabsData, inviteLinksCount: inviteLinksCount, joinRequestsCount: joinRequestsCount, availableReactions: availableReactions, source: source, stories: stories, personalChannel: personalChannel, revenueState: revenueState, tonRevenueState: tonRevenueState, webAppPermissionsState: webAppPermissionsState, savedMuicProfileState: savedMuicProfileState, peerIdFormat: peerIdFormat, showsJoinDate: showsJoinDate).map({PeerInfoSortableEntry(entry: $0)}).map({AppearanceWrapperEntry(entry: $0, appearance: appearance)})
+                let (savedMuicProfileState, peerIdFormat, showsJoinDate, filtersProfileTitle) = profilePresentation
+                let entries:[AppearanceWrapperEntry<PeerInfoSortableEntry>] = peerInfoEntries(view: view, threadData: threadData, threadPeer: threadPeer, arguments: arguments, inputActivities: inputActivities, channelMembers: channelMembers, mediaTabsData: mediaTabsData, inviteLinksCount: inviteLinksCount, joinRequestsCount: joinRequestsCount, availableReactions: availableReactions, source: source, stories: stories, personalChannel: personalChannel, revenueState: revenueState, tonRevenueState: tonRevenueState, webAppPermissionsState: webAppPermissionsState, savedMuicProfileState: savedMuicProfileState, peerIdFormat: peerIdFormat, showsJoinDate: showsJoinDate).map {
+                    AppearanceWrapperEntry(entry: PeerInfoSortableEntry(entry: $0, arguments: arguments, filtersProfileTitle: filtersProfileTitle), appearance: appearance)
+                }
                     let previous = previousEntries.swap(entries)
                     return prepareEntries(from: previous, to: entries, account: context.account, initialSize: initialSize.modify({$0}), peerId: peerId, arguments:arguments, animated: previous != nil) |> runOn(onMainQueue.swap(false) ? .mainQueue() : prepareQueue) |> map { (view, $0, threadData, threadPeer) }
                     

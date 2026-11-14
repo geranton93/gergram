@@ -2358,7 +2358,7 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
     
     
     
-    func item<C: AccountContextProtocol>( initialSize:NSSize, arguments:PeerInfoArguments<C>) -> TableRowItem {
+    func item<C: AccountContextProtocol>( initialSize:NSSize, arguments:PeerInfoArguments<C>, filtersProfileTitle: Bool) -> TableRowItem {
         
         let arguments = arguments as! UserInfoArguments<Context>
         var state:UserInfoState {
@@ -2367,7 +2367,7 @@ enum UserInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
         
         switch self {
         case let .info(_, peerView, editable, updatingPhotoState, stories, savedMusic, viewType):
-            return PeerInfoHeadItem(initialSize, stableId:stableId.hashValue, context: arguments.context, arguments: arguments, peerView: peerView, threadData: nil, threadId: nil, stories: stories, viewType: viewType, editing: editable, updatingPhotoState: updatingPhotoState, updatePhoto: { image, control in
+            return PeerInfoHeadItem(initialSize, stableId:stableId.hashValue, context: arguments.context, arguments: arguments, peerView: peerView, threadData: nil, threadId: nil, stories: stories, viewType: viewType, editing: editable, filtersProfileTitle: filtersProfileTitle, updatingPhotoState: updatingPhotoState, updatePhoto: { image, control in
                 arguments.updateContactPhoto(image, control: control, type: .set)
             }, giftsContext: arguments.getStarGiftsContext?(), savedMusic: savedMusic, profileSavedMusic: arguments.getSavedMusicContext?())
         case let .personalChannelInfo(_, left, right, viewType):

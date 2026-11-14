@@ -53,7 +53,7 @@ protocol PeerInfoEntry {
     var stableId: PeerInfoEntryStableId { get }
     func isEqual(to: PeerInfoEntry) -> Bool
     func isOrderedBefore(_ entry: PeerInfoEntry) -> Bool
-    func item<C: AccountContextProtocol>(initialSize:NSSize, arguments:PeerInfoArguments<C>) -> TableRowItem
+    func item<C: AccountContextProtocol>(initialSize:NSSize, arguments:PeerInfoArguments<C>, filtersProfileTitle: Bool) -> TableRowItem
 }
 
 

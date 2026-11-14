@@ -229,7 +229,7 @@ enum TopicInfoEntry<Context: AccountContextProtocol>: PeerInfoEntry {
         return self.sortIndex < other.sortIndex
     }
     
-    func item<C: AccountContextProtocol>(initialSize:NSSize, arguments:PeerInfoArguments<C>) -> TableRowItem {
+    func item<C: AccountContextProtocol>(initialSize:NSSize, arguments:PeerInfoArguments<C>, filtersProfileTitle _: Bool) -> TableRowItem {
         let arguments = arguments as! TopicInfoArguments<Context>
         switch self {
         case let .info(_, peerView, threadPeer, editable, threadData, threadId, viewType):

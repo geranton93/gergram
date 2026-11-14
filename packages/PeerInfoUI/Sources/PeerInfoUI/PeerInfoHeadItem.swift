@@ -27,6 +27,7 @@ import TelegramUtils
 import InlineStickerLayer
 import AppAnalytics
 import MessageUtils
+import MessageTextUtils
 
 private func profileButtonColor(over background: NSColor, isDark: Bool) -> NSColor {
     let base = background.usingColorSpace(.sRGB) ?? background
@@ -687,7 +688,17 @@ class PeerInfoHeadItem<Context: AccountContextProtocol>: GeneralRowItem {
     
     fileprivate var statusLayout: TextViewLayout
     fileprivate var nameLayout: TextViewLayout
-    
+    private let filtersProfileTitle: Bool
+
+    private var profileTitleTransform: ((NSAttributedString) -> NSAttributedString?)? {
+        return Self.profileTitleTransform(enabled: filtersProfileTitle)
+    }
+
+    private static func profileTitleTransform(enabled: Bool) -> ((NSAttributedString) -> NSAttributedString?)? {
+        guard enabled else { return nil }
+        return ChatZalgoTextFilter.presentation(for:)
+    }
+
     
     var effectivePeer: Peer? {
         return threadPeer?._asPeer() ?? peer
@@ -716,7 +727,7 @@ class PeerInfoHeadItem<Context: AccountContextProtocol>: GeneralRowItem {
     
     var result:PeerStatusStringResult {
         didSet {
-            nameLayout = TextViewLayout(result.title, maximumNumberOfLines: 1)
+            nameLayout = TextViewLayout(result.title, maximumNumberOfLines: 1, displayTextTransform: profileTitleTransform)
             nameLayout.interactions = LinkHooks.shared.globalLinkExecutor()
             statusLayout = TextViewLayout(result.status, maximumNumberOfLines: 1, alwaysStaticItems: true)
         }
@@ -780,13 +791,13 @@ class PeerInfoHeadItem<Context: AccountContextProtocol>: GeneralRowItem {
     }
 
     fileprivate var effectiveNameLayout: TextViewLayout {
-        return isAvatarExpanded ? overlayTextLayout(nameLayout, color: .white) : nameLayout
+        return isAvatarExpanded ? overlayTextLayout(nameLayout, color: .white, displayTextTransform: profileTitleTransform) : nameLayout
     }
 
     fileprivate var effectiveStatusLayout: TextViewLayout {
         return isAvatarExpanded ? overlayTextLayout(statusLayout, color: NSColor.white.withAlphaComponent(0.8), alwaysStaticItems: true) : statusLayout
     }
-    init(_ initialSize:NSSize, stableId:AnyHashable, context: Context, arguments: PeerInfoArguments<Context>, peerView:PeerView, threadData: MessageHistoryThreadData?, threadId: Int64?, stories: PeerExpiringStoryListContext.State? = nil, viewType: GeneralViewType, editing: Bool, updatingPhotoState:PeerInfoUpdatingPhotoState? = nil, updatePhoto:@escaping(NSImage?, Control?)->Void = { _, _ in }, giftsContext: ProfileGiftsContext? = nil, threadPeer: EnginePeer? = nil, savedMusic: ProfileSavedMusicContext.State? = nil, profileSavedMusic: ProfileSavedMusicContext? = nil) {
+    init(_ initialSize:NSSize, stableId:AnyHashable, context: Context, arguments: PeerInfoArguments<Context>, peerView:PeerView, threadData: MessageHistoryThreadData?, threadId: Int64?, stories: PeerExpiringStoryListContext.State? = nil, viewType: GeneralViewType, editing: Bool, filtersProfileTitle: Bool = false, updatingPhotoState:PeerInfoUpdatingPhotoState? = nil, updatePhoto:@escaping(NSImage?, Control?)->Void = { _, _ in }, giftsContext: ProfileGiftsContext? = nil, threadPeer: EnginePeer? = nil, savedMusic: ProfileSavedMusicContext.State? = nil, profileSavedMusic: ProfileSavedMusicContext? = nil) {
         var peer = peerViewMainPeer(peerView)
         let hideEmojiStatus = (peerView.cachedData as? CachedUserData)?.isSuspiciousPeer == true
         self.hideEmojiStatus = hideEmojiStatus
@@ -799,6 +810,7 @@ class PeerInfoHeadItem<Context: AccountContextProtocol>: GeneralRowItem {
         self.peerView = peerView
         self.context = context
         self.editing = editing
+        self.filtersProfileTitle = filtersProfileTitle
         self.threadId = threadId
         self.giftsContext = giftsContext
         self.arguments = arguments
@@ -903,7 +915,7 @@ class PeerInfoHeadItem<Context: AccountContextProtocol>: GeneralRowItem {
         self.result = result
         
         
-        nameLayout = TextViewLayout(result.title, maximumNumberOfLines: 1)
+        nameLayout = TextViewLayout(result.title, maximumNumberOfLines: 1, displayTextTransform: Self.profileTitleTransform(enabled: filtersProfileTitle))
         statusLayout = TextViewLayout(result.status, maximumNumberOfLines: 1, alignment: threadData != nil ? .center : .left, alwaysStaticItems: true)
         
         
@@ -1041,11 +1053,15 @@ class PeerInfoHeadItem<Context: AccountContextProtocol>: GeneralRowItem {
     }
 
     override var accessibilityLabel: String? {
-        let name = nameLayout.attributedString.string
+        let name = nameLayout.displayString
         if !name.isEmpty {
             return name
         }
-        return effectivePeer?.displayTitle
+        return effectivePeer.map { ChatZalgoTextFilter.displayName($0.displayTitle, enabled: filtersProfileTitle) }
+    }
+
+    fileprivate var photoAccessibilityName: String {
+        return effectivePeer.map { ChatZalgoTextFilter.displayName($0.displayTitle, enabled: filtersProfileTitle) } ?? nameLayout.displayString
     }
     
     override var accessibilityValue: String? {
@@ -1124,10 +1140,10 @@ class PeerInfoHeadItem<Context: AccountContextProtocol>: GeneralRowItem {
 
 
 
-private func overlayTextLayout(_ layout: TextViewLayout, color: NSColor, alwaysStaticItems: Bool = false) -> TextViewLayout {
+private func overlayTextLayout(_ layout: TextViewLayout, color: NSColor, alwaysStaticItems: Bool = false, displayTextTransform: ((NSAttributedString) -> NSAttributedString?)? = nil) -> TextViewLayout {
     let attributed = NSMutableAttributedString(attributedString: layout.attributedString)
     attributed.addAttribute(.foregroundColor, value: color, range: NSMakeRange(0, attributed.length))
-    let result = TextViewLayout(attributed, maximumNumberOfLines: layout.maximumNumberOfLines, alwaysStaticItems: alwaysStaticItems)
+    let result = TextViewLayout(attributed, maximumNumberOfLines: layout.maximumNumberOfLines, alwaysStaticItems: alwaysStaticItems, displayTextTransform: displayTextTransform)
     result.interactions = layout.interactions
     result.measure(width: layout.layoutSize.width + 1)
     return result
@@ -2635,7 +2651,7 @@ private final class PeerInfoHeadView<Context: AccountContextProtocol> : GeneralC
         updatePhoto(item, animated: animated)
         
         updateCollapsedPhotoVisibility()
-        photoContainer.setAccessibilityLabel(strings().voiceOverCommonPhotoOf(item.effectivePeer?.displayTitle ?? item.nameLayout.attributedString.string))
+        photoContainer.setAccessibilityLabel(strings().voiceOverCommonPhotoOf(item.photoAccessibilityName))
 
         if !item.photos.isEmpty {
             

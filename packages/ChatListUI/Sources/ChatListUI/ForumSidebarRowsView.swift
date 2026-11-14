@@ -21,6 +21,11 @@ private final class SidebarRootRowItem: ChatListRowItem {
 }
 
 public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, ForumSidebarRowsContent, TableViewDelegate {
+    private struct ActivityScope: Equatable {
+        let peerId: PeerId
+        let filtersSenders: Bool
+    }
+
     public var view: NSView { self }
     private let tableView = TableView(frame: .zero)
     private let context: Context
@@ -38,6 +43,7 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
     private var searchPeerId: PeerId?
     private let searchLoading = MetaDisposable()
     private let inputActivities = MetaDisposable()
+    private let activityScope = ValuePromise<ActivityScope?>(nil, ignoreRepeated: true)
     private var activities: [PeerActivitySpace: [PeerListState.InputActivities.Activity]] = [:]
     private var content: (items: [EngineChatList.Item], selectedThreadId: Int64?, kind: ChatSidebarKind, parentPeer: EngineRenderedPeer)?
 
@@ -62,8 +68,19 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
         readButton.set(handler: { [weak self] _ in self?.applySelection(.read) }, for: .Click)
         muteButton.set(handler: { [weak self] _ in self?.applySelection(.mute) }, for: .Click)
         deleteButton.set(handler: { [weak self] _ in self?.applySelection(.delete) }, for: .Click)
-        inputActivities.set((context.account.allPeerInputActivities() |> mapToSignal { values in
-            context.account.postbox.transaction { transaction -> [PeerActivitySpace: [PeerListState.InputActivities.Activity]] in
+        let scopedActivities = activityScope.get() |> mapToSignal { scope -> Signal<ChatListActivityVisibility.Snapshot, NoError> in
+            guard let scope else { return .single([:]) }
+            let rawActivities = context.account.allPeerInputActivities() |> map { values in
+                values.filter { space, _ in
+                    guard space.peerId == scope.peerId, case .thread = space.category else { return false }
+                    return true
+                }
+            }
+            return scope.filtersSenders ? ChatListActivityVisibility.observe(context: context, activities: rawActivities) : rawActivities
+        }
+        inputActivities.set((scopedActivities |> mapToSignal { values in
+            guard !values.isEmpty else { return .single([:]) }
+            return context.account.postbox.transaction { transaction -> [PeerActivitySpace: [PeerListState.InputActivities.Activity]] in
                 values.mapValues { entries in
                     entries.compactMap { peerId, activity in
                         transaction.getPeer(peerId).map { PeerListState.InputActivities.Activity($0, activity) }
@@ -72,13 +89,11 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
             }
         } |> deliverOnMainQueue).start(next: { [weak self] activities in
             guard let self else { return }
-            let previous = self.activities
-            self.activities = activities
-            if let content = self.content {
-                let parentId = content.parentPeer.peerId
-                guard previous.filter({ $0.key.peerId == parentId }) != activities.filter({ $0.key.peerId == parentId }) else { return }
-                self.update(items: content.items, selectedThreadId: content.selectedThreadId, kind: content.kind, parentPeer: content.parentPeer)
-            }
+            guard let content = self.content else { return }
+            let scopedActivities = activities.filter { $0.key.peerId == content.parentPeer.peerId }
+            guard self.activities != scopedActivities else { return }
+            self.activities = scopedActivities
+            self.update(items: content.items, selectedThreadId: content.selectedThreadId, kind: content.kind, parentPeer: content.parentPeer)
         }))
     }
 
@@ -204,7 +219,13 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
         if self.kind != kind { selection.setActive(false); selectionBar.isHidden = true; selectionChanged?(false) }
         self.kind = kind
         selection.retain(Set(items.compactMap { item in if case let .forum(id) = item.id { return id }; return nil }))
+        let scope = ActivityScope(peerId: parentPeer.peerId, filtersSenders: kind == .forum)
+        let previousScope = content.map { ActivityScope(peerId: $0.parentPeer.peerId, filtersSenders: $0.kind == .forum) }
         self.content = (items, selectedThreadId, kind, parentPeer)
+        if scope != previousScope {
+            activities = [:]
+            activityScope.set(scope)
+        }
         let canCreate = kind.showsNewTopic && (parentPeer.peer?._asPeer() as? TelegramChannel)?.hasPermission(.createTopics) == true
         tableView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: canCreate || selection.isActive ? 88 : 0, right: 0)
         let previousOffset = tableView.clipView.bounds.origin

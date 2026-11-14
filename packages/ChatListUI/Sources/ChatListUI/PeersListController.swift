@@ -2593,7 +2593,13 @@ open class PeersListController<Context: AccountContextProtocol>: TelegramGeneric
         let postbox = context.account.postbox
         let previousPeerCache = Atomic<[PeerId: Peer]>(value: [:])
         let previousActivities = Atomic<PeerListState.InputActivities?>(value: nil)
-        let peerInputActivities = context.account.allPeerInputActivities()
+        let rawActivities = context.account.allPeerInputActivities() |> map { activities in
+            if case let .forum(peerId, _, _) = mode {
+                return activities.filter { $0.key.peerId == peerId }
+            }
+            return activities
+        }
+        let peerInputActivities = ChatListActivityVisibility.observe(context: context, activities: rawActivities)
                                            |> mapToSignal { activitiesByPeerId -> Signal<[PeerActivitySpace: [PeerListState.InputActivities.Activity]], NoError> in
                 var foundAllPeers = true
                 var cachedResult: [PeerActivitySpace: [PeerListState.InputActivities.Activity]] = [:]

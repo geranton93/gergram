@@ -79,6 +79,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case messageContextMenu(sectionId: Int)
     case miniAppWindowSize(sectionId: Int)
     case transcriptionLanguage(sectionId: Int, selection: ReceivedAudioTranscriptionLanguagePreferences.Selection)
+    case whisperModels(sectionId: Int)
     public var stableId: Int {
         switch self {
         case let .header(_, uniqueId, _):
@@ -169,6 +170,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 34
         case .transcriptionLanguage:
             return 43
+        case .whisperModels:
+            return 44
         case let .section(id):
             return (id + 1) * 1000 - id
         }
@@ -233,6 +236,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
         case let .profileIdFormat(sectionId, _):
             return (sectionId * 1000) + stableId
         case let .channelBottomAction(sectionId, _), let .collapseChannelRecommendations(sectionId, _), let .hideSimilarChannelsTab(sectionId, _), let .disableGlobalPeerSearch(sectionId, _), let .hideChatListStories(sectionId, _), let .hideProfileStories(sectionId, _), let .showMessageTimestampSeconds(sectionId, _), let .filterZalgoText(sectionId, _), let .messageContextMenu(sectionId), let .miniAppWindowSize(sectionId), let .transcriptionLanguage(sectionId, _):
+            return (sectionId * 1000) + stableId
+        case let .whisperModels(sectionId):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -416,6 +421,13 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Transcription.Language"),
                                             type: .nextContext(receivedAudioTranscriptionLanguageTitle(selection)), viewType: .singleItem, action: {
                 arguments.context.bindings.rootNavigation().push(receivedAudioTranscriptionLanguageController())
+            })
+        case .whisperModels:
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.WhisperModels"),
+                                            type: .next, viewType: .singleItem, action: {
+                if let controller = whisperModelSettingsController() {
+                    arguments.context.bindings.rootNavigation().push(controller)
+                }
             })
         case .miniAppWindowSize:
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.MiniApp.WindowSize"), type: .next, viewType: .singleItem, action: {
@@ -626,6 +638,12 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
     entries.append(.transcriptionLanguage(sectionId: sectionId, selection: transcriptionLanguage))
+
+    if #available(macOS 10.15, *) {
+        entries.append(.section(sectionId: sectionId))
+        sectionId += 1
+        entries.append(.whisperModels(sectionId: sectionId))
+    }
 
     entries.append(.section(sectionId: sectionId))
     return entries

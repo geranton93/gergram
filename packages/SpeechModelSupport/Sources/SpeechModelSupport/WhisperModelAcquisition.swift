@@ -17,6 +17,13 @@ public final class WhisperModelAcquisition {
         case unableToUseCache
     }
 
+    public enum Status: Equatable {
+        case missing
+        case verified
+        case unverified
+        case unavailable
+    }
+
     public let cache: WhisperModelCache
 
     private let queue = DispatchQueue(label: "GergramWhisperModelAcquisition", qos: .userInitiated)
@@ -64,8 +71,31 @@ public final class WhisperModelAcquisition {
         }
     }
 
-    private func perform(
-        completion: @escaping Completion, operation: @escaping (_ isCancelled: () -> Bool) throws -> Void
+    public func modelStatuses(
+        _ models: [SpeechModelArtifact.Model],
+        completion: @escaping (Result<[SpeechModelArtifact.Model: Status], Failure>) -> Void
+    ) -> Cancel {
+        perform(completion: completion) { isCancelled in
+            var result: [SpeechModelArtifact.Model: Status] = [:]
+            for model in models {
+                if isCancelled() { throw CancellationError() }
+                do {
+                    let installed = try self.cache.withInstalledModel(model, isCancelled: isCancelled) { _ in true }
+                    result[model] = installed == true ? .verified : .missing
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch is SpeechModelStagedFileError {
+                    result[model] = .unverified
+                } catch {
+                    result[model] = .unavailable
+                }
+            }
+            return result
+        }
+    }
+
+    private func perform<Value>(
+        completion: @escaping (Result<Value, Failure>) -> Void, operation: @escaping (_ isCancelled: () -> Bool) throws -> Value
     ) -> Cancel {
         gate.lock()
         guard !active else {
@@ -78,11 +108,10 @@ public final class WhisperModelAcquisition {
 
         let cancellation = Cancellation()
         queue.async {
-            let result: Result<Void, Failure>
+            let result: Result<Value, Failure>
             do {
                 if cancellation.isCancelled() { throw CancellationError() }
-                try operation(cancellation.isCancelled)
-                result = .success(())
+                result = .success(try operation(cancellation.isCancelled))
             } catch {
                 result = .failure(Self.failure(for: error))
             }

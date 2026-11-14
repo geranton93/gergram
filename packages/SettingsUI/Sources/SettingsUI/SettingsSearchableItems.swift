@@ -770,6 +770,12 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
                     present(.push, controller)
                 }))
             }
+            if #available(macOS 10.15, *) {
+                allItems.append(SettingsSearchableItem(id: .general(8), title: localizedString("Gergram.WhisperModels"), alternate: [], icon: .language, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
+                    guard let controller = whisperModelSettingsController() else { return }
+                    present(.push, controller)
+                }))
+            }
 
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)

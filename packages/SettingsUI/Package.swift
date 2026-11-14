@@ -29,6 +29,7 @@ let deps: [(String, String)] = [
     ("SceneEffects", "../SceneEffects"),
     ("ShortPeerRow", "../ShortPeerRow"),
     ("SelectPeersUI", "../SelectPeersUI"),
+    ("SpeechModelSupport", "../SpeechModelSupport"),
     ("TGModernGrowingTextView", "../TGModernGrowingTextView"),
     ("TGUIKit", "../TGUIKit"),
     ("TelegramContext", "../TelegramContext"),

@@ -123,6 +123,36 @@ final class WhisperModelAcquisitionTests: XCTestCase {
         }
     }
 
+    func testStatusChecksVerifyTheCacheAgainAndDistinguishMissingAndCorruptSlots() throws {
+        try withFixture { cache, file in
+            let cacheDirectory = file.deletingLastPathComponent().appendingPathComponent("WhisperModels", isDirectory: true)
+            let installed = cacheDirectory.appendingPathComponent("\(model.rawValue).bin")
+            try cache.install(stagedFile: file, for: model)
+            let acquisition = WhisperModelAcquisition(cache: cache, beginAccess: { _ in
+                XCTFail("Status checks should not request access to the original file")
+                return false
+            }, endAccess: { _ in XCTFail("No security scope to close") })
+            try FileManager.default.removeItem(at: file)
+
+            func assertStatuses(_ expected: [SpeechModelArtifact.Model: WhisperModelAcquisition.Status]) {
+                let checked = expectation(description: "Statuses checked")
+                _ = acquisition.modelStatuses([model, .whisperBase]) { result in
+                    XCTAssertTrue(Thread.isMainThread)
+                    XCTAssertEqual(result, .success(expected))
+                    checked.fulfill()
+                }
+                wait(for: [checked], timeout: 5)
+            }
+
+            assertStatuses([model: .verified, .whisperBase: .missing])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: installed.path)
+            try Data(repeating: 42, count: bytes.count).write(to: installed)
+            assertStatuses([model: .unverified, .whisperBase: .missing])
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cacheDirectory.path)
+            assertStatuses([model: .unavailable, .whisperBase: .unavailable])
+        }
+    }
+
     private func withFixture(_ body: (WhisperModelCache, URL) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])

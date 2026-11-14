@@ -25,6 +25,51 @@ final class ChatParticipantVisibilityTests: XCTestCase {
         XCTAssertFalse(ChatParticipantVisibility.isEligible(chatPeerId: selfId, accountPeerId: selfId))
     }
 
+    func testHistoryPreviewRevealUsesOneProjectionAndRestoresOnLocalChanges() {
+        let chat = PeerId(namespace: Namespaces.Peer.CloudGroup, id: ._internalFromInt64Value(10))
+        let anotherChat = PeerId(namespace: Namespaces.Peer.CloudGroup, id: ._internalFromInt64Value(11))
+        let previews = [chat: firstId, anotherChat: nextId]
+        let revealed = ValuePromise<Set<PeerId>>([], ignoreRepeated: true)
+        let locallyHidden = ValuePromise<Set<PeerId>>([firstId], ignoreRepeated: true)
+        let blocked = ValuePromise<Set<PeerId>>()
+        var queried: [[PeerId]] = []
+        var hidden: Set<PeerId> = []
+        var revealedChats: Set<PeerId> = []
+        let disposable = ChatParticipantVisibility.projectHistoryPreviews(
+            .single(previews),
+            accountPeerId: selfId,
+            queue: .mainQueue(),
+            participants: { previews, revealed in Set(previews.compactMap { revealed.contains($0.key) ? nil : $0.value }) },
+            revealed: revealed.get(),
+            hideBlocked: .single(true),
+            locallyHidden: locallyHidden.get(),
+            observeBlocked: { ids in
+                queried.append(ids)
+                return blocked.get()
+            }
+        ).start(next: { value, chats, hiddenSenders in
+            XCTAssertEqual(value, previews)
+            revealedChats = chats
+            hidden = hiddenSenders
+        })
+        defer { disposable.dispose() }
+
+        XCTAssertEqual(queried, [[firstId, nextId]])
+        XCTAssertEqual(hidden, [firstId, nextId])
+        blocked.set([nextId])
+        XCTAssertEqual(hidden, [firstId, nextId])
+        locallyHidden.set([])
+        XCTAssertEqual(hidden, [nextId])
+        XCTAssertEqual(queried.count, 1)
+        revealed.set([anotherChat])
+        XCTAssertEqual(queried.last, [firstId])
+        XCTAssertEqual(revealedChats, [anotherChat])
+        XCTAssertEqual(hidden, [])
+        revealed.set([])
+        XCTAssertEqual(queried.last, [firstId, nextId])
+        XCTAssertEqual(hidden, [nextId])
+    }
+
     func testHiddenFirstPageKeepsRawTotalAndPaginationThenRestoresNameOnUnblock() {
         let page = Page(peers: [firstId], totalCount: 77, canLoadMore: true)
         let blocked = ValuePromise<Set<PeerId>>()

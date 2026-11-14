@@ -334,6 +334,7 @@ public final class ChatListTopicNameAndTextLayout {
     private let items: [EngineChatList.ForumTopicData]
     private let draft:EngineChatList.Draft?
     private let filtersZalgoPreview: Bool
+    private let hidesSenderPreview: Bool
     
     public private(set) var size: NSSize = .zero
     
@@ -350,12 +351,13 @@ public final class ChatListTopicNameAndTextLayout {
     public private(set) var allNames: TextViewLayout?
     public private(set) var allSelectedNames: TextViewLayout?
 
-    public init(_ context: any AccountContextProtocol, message: Message, items: [EngineChatList.ForumTopicData], draft: EngineChatList.Draft?, filtersZalgoPreview: Bool = false) {
+    public init(_ context: any AccountContextProtocol, message: Message, items: [EngineChatList.ForumTopicData], draft: EngineChatList.Draft?, filtersZalgoPreview: Bool = false, hidesSenderPreview: Bool = false) {
         self.message = message
         self.items = items
         self.context = context
         self.draft = draft
         self.filtersZalgoPreview = filtersZalgoPreview
+        self.hidesSenderPreview = hidesSenderPreview
     }
     
     public var fastTrack: Bool {
@@ -401,10 +403,11 @@ public final class ChatListTopicNameAndTextLayout {
             
             _ = attr.append(string: "\n")
             
-            let text = chatListText(account: context.account, for: message, messagesCount: 1, draft: draft, folder: false, applyUserName: false, isPremium: context.isPremium).mutableCopy() as! NSMutableAttributedString
+            let preview = hidesSenderPreview ? nil : message
+            let text = chatListText(account: context.account, for: preview, messagesCount: 1, draft: draft, folder: false, applyUserName: false, isPremium: context.isPremium).mutableCopy() as! NSMutableAttributedString
             let previewLength = text.length
             
-            if let author = message.author {
+            if let author = preview?.author {
                 let ignore: Bool
                 if message.media.first is TelegramMediaAction {
                     ignore = true
@@ -416,7 +419,7 @@ public final class ChatListTopicNameAndTextLayout {
                     text.insert(.initialize(string: "\(name): ", color: theme.colors.text, font: .normal(.text)), at: 0)
                 }
             }
-            let transform = ChatListZalgoPreview.transform(enabled: filtersZalgoPreview, message: message, hasDraft: draft?.text.isEmpty == false,
+            let transform = ChatListZalgoPreview.transform(enabled: filtersZalgoPreview, message: preview, hasDraft: draft?.text.isEmpty == false,
                                                            prefixLength: attr.length + text.length - previewLength)
             attr.append(text)
             attr.setSelected(color: theme.colors.underSelectedColor, range: attr.range)

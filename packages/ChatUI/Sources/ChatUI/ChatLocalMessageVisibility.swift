@@ -75,6 +75,12 @@ final class ChatLocalMessageVisibility {
         |> distinctUntilChanged
     }
 
+    static func observeChatsShowingFilteredSenders(_ account: Account) -> Signal<Set<PeerId>, NoError> {
+        return get(account).snapshots.get()
+        |> map { Set($0.compactMap { id, visibility in visibility.showsFilteredSenders ? id : nil }) }
+        |> distinctUntilChanged
+    }
+
     func showsFilteredSenders(peerId: PeerId) -> Bool {
         assert(Thread.isMainThread)
         return stateByPeer[peerId]?.showsFilteredSenders ?? false

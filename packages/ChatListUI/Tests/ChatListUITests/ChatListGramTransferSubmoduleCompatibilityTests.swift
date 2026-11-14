@@ -294,6 +294,18 @@ final class ChatListGramTransferSubmoduleCompatibilityTests: XCTestCase {
         XCTAssertFalse(chatListGramBadgeHidesUnreadCounter(hasGramBadge: true, unreadCount: nil))
     }
 
+    func testHiddenTransferRestoresTheOrdinaryUnreadCounter() {
+        let messages = [message(in: contactPeerId, id: 5, incoming: true, media: [transfer(5_000_000_000)])]
+        let readState = EnginePeerReadCounters(incomingReadId: 4, outgoingReadId: 0, count: 1, markedUnread: false)
+        let showsTransfer = chatListHasUnreadIncomingGramTransfer(messages, readState: readState, accountPeerId: accountPeerId)
+        let hidesTransfer = chatListHasUnreadIncomingGramTransfer(messages, readState: readState, accountPeerId: accountPeerId, hidesSenderPreview: true)
+        XCTAssertTrue(showsTransfer)
+        XCTAssertTrue(chatListGramBadgeHidesUnreadCounter(hasGramBadge: showsTransfer, unreadCount: readState.count))
+        XCTAssertFalse(hidesTransfer)
+        XCTAssertFalse(chatListGramBadgeHidesUnreadCounter(hasGramBadge: hidesTransfer, unreadCount: readState.count))
+        XCTAssertEqual(readState.count, 1)
+    }
+
     func testSubmoduleBadgeRuleIsUnchanged() throws {
         let item = collapsed(try source("submodules/telegram-ios/submodules/ChatListUI/Sources/Node/ChatListItem.swift"))
         XCTAssertTrue(item.contains(collapsed("""

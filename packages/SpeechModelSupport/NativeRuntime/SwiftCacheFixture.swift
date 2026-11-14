@@ -1,16 +1,35 @@
+import AVFoundation
+import CoreMedia
 import CryptoKit
 import Foundation
-import GergramWhisperRuntime
 @testable import SpeechModelSupport
 
 private enum FixtureError: Error {
     case unexpectedResult
 }
 
-private final class Observation {
-    var checks = 0
-    var cancelOn = Int.max
-    var receivedTranscript = false
+private func makeSilence() throws -> CMSampleBuffer {
+    let frames = 48_000
+    let byteCount = frames * MemoryLayout<Int16>.size
+    var format = AudioStreamBasicDescription(mSampleRate: Double(frames), mFormatID: kAudioFormatLinearPCM,
+        mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked,
+        mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2, mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+    var formatDescription: CMAudioFormatDescription?
+    guard CMAudioFormatDescriptionCreate(allocator: nil, asbd: &format, layoutSize: 0, layout: nil,
+        magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &formatDescription) == noErr,
+        let formatDescription else { throw FixtureError.unexpectedResult }
+    var block: CMBlockBuffer?
+    guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+        blockLength: byteCount, blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+        dataLength: byteCount, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+        let block, CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0,
+            dataLength: byteCount) == noErr else { throw FixtureError.unexpectedResult }
+    var buffer: CMSampleBuffer?
+    guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: nil, dataBuffer: block,
+        formatDescription: formatDescription, sampleCount: frames, presentationTimeStamp: .zero,
+        packetDescriptions: nil, sampleBufferOut: &buffer) == noErr,
+        let buffer else { throw FixtureError.unexpectedResult }
+    return buffer
 }
 
 let source = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -28,30 +47,43 @@ let cache = WhisperModelCache(directory: root.appendingPathComponent("models")) 
         byteCount: Int64(bytes.count), sha256: digest
     )
 }
-try cache.install(stagedFile: source, for: .whisperTiny)
 
-private let observation = Observation()
-let context = Unmanaged.passUnretained(observation).toOpaque()
-let samples = [Float](repeating: 0, count: 16_000)
-let result = try cache.withInstalledModel(.whisperTiny) { handle in
-    try samples.withUnsafeBufferPointer { samples in
-        func check() -> GergramWhisperStatus {
-            gergramWhisperTranscribe(handle.fileDescriptor, samples.baseAddress, samples.count, "en", { context in
-                guard let context else { return false }
-                let observation = Unmanaged<Observation>.fromOpaque(context).takeUnretainedValue()
-                observation.checks += 1
-                return observation.checks >= observation.cancelOn
-            }, { _, _, context in
-                guard let context else { return }
-                Unmanaged<Observation>.fromOpaque(context).takeUnretainedValue().receivedTranscript = true
-            }, context)
-        }
-        guard check() == GergramWhisperNoSpeech, observation.checks > 3 else { throw FixtureError.unexpectedResult }
-        observation.cancelOn = observation.checks - 2
-        observation.checks = 0
-        guard check() == GergramWhisperCancelled, !observation.receivedTranscript,
-              try handle.offset() == 0 else { throw FixtureError.unexpectedResult }
-        return true
+let converter = try WhisperPCMBuffer()
+try converter.append(makeSilence())
+let samples = try converter.finish()
+guard samples.count == 16_000, samples.allSatisfy({ $0 == 0 }) else { throw FixtureError.unexpectedResult }
+
+func expect(_ expected: WhisperNativeTranscription.Failure, _ recognize: () throws -> String) throws {
+    do {
+        _ = try recognize()
+        throw FixtureError.unexpectedResult
+    } catch let actual as WhisperNativeTranscription.Failure {
+        guard actual == expected else { throw actual }
     }
 }
-guard result == true else { throw FixtureError.unexpectedResult }
+
+try expect(.modelUnavailable) {
+    try WhisperNativeTranscription.recognize(samples: samples, language: "en", model: .whisperTiny, cache: cache)
+}
+try cache.install(stagedFile: source, for: .whisperTiny)
+
+var checks = 0
+try expect(.noSpeech) {
+    try WhisperNativeTranscription.recognize(samples: samples, language: "en", model: .whisperTiny, cache: cache) {
+        checks += 1
+        return false
+    }
+}
+guard checks > 4 else { throw FixtureError.unexpectedResult }
+let cancelCheck = checks - 2
+checks = 0
+try expect(.cancelled) {
+    try WhisperNativeTranscription.recognize(samples: samples, language: "en", model: .whisperTiny, cache: cache) {
+        checks += 1
+        return checks >= cancelCheck
+    }
+}
+guard checks == cancelCheck else { throw FixtureError.unexpectedResult }
+try expect(.invalidInput) {
+    try WhisperNativeTranscription.recognize(samples: samples, language: "unknown-language", model: .whisperTiny, cache: cache)
+}

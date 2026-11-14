@@ -19,8 +19,10 @@ cd "$swiftFixture"
 export CLANG_MODULE_CACHE_PATH="$swiftFixture/cache"
 xcrun swiftc -emit-library -emit-module -enable-testing -module-name SpeechModelSupport \
     "${flags[@]}" "$runtime/../Sources/SpeechModelSupport/"*.swift
+mkdir executable
+cp "$runtime/SwiftCacheFixture.swift" executable/main.swift
 xcrun swiftc -I . -I "$runtime" -L . -lSpeechModelSupport -lc++ \
-    "${flags[@]}" "$runtime/SwiftCacheFixture.swift" "$build/libGergramWhisperRuntime.a" \
+    "${flags[@]}" executable/main.swift "$runtime/WhisperNativeTranscription.swift" "$build/libGergramWhisperRuntime.a" \
     "$build/whisper/src/libwhisper.a" "$build/whisper/ggml/src/libggml.a" \
     "$build/whisper/ggml/src/libggml-cpu.a" "$build/whisper/ggml/src/libggml-base.a" \
     -Xlinker -rpath -Xlinker "$swiftFixture" -o verify-swift

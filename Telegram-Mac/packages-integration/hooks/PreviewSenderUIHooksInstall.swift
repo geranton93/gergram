@@ -93,19 +93,29 @@ private final class ImageCanvasStickerPickerImpl: EditImageCanvasStickerPicker {
     private let disposable = MetaDisposable()
     private let dragDisposable = MetaDisposable()
     private let visibilityDisposable = MetaDisposable()
+    private var stopAcceptingDrags: (() -> Void)?
+    private var dropDisposable: MetaDisposable?
     var visibilityChanged: ((Bool) -> Void)?
 
     init(context: AccountContext) {
         self.context = context
         self.entertainment = ImageCanvasEntertainment.get(context).entertainment
         visibilityDisposable.set((entertainment.viewOnStage |> deliverOnMainQueue).start(next: { [weak self] isShown in
-            self?.visibilityChanged?(isShown)
+            self?.updatePickerVisibility(isShown)
         }))
+    }
+
+    private func updatePickerVisibility(_ isShown: Bool) {
+        if !isShown {
+            invalidateDragRoutes(preservingDrop: true)
+        }
+        visibilityChanged?(isShown)
     }
 
     deinit {
         disposable.dispose()
         dragDisposable.dispose()
+        dropDisposable?.dispose()
         visibilityDisposable.dispose()
         let interactions = entertainment.interactions
         interactions?.sendSticker = { _, _, _, _ in }
@@ -113,9 +123,11 @@ private final class ImageCanvasStickerPickerImpl: EditImageCanvasStickerPicker {
         interactions?.sendEmoji = { _, _ in }
         interactions?.sendGIF = { _, _, _ in }
         interactions?.dragItem = nil
+        interactions?.cancelItemDrag = nil
     }
 
     func show(for control: Control, select: @escaping (EditImageCanvasStickerPick) -> Void, drag: @escaping (EditImageCanvasStickerDrag) -> Void) {
+        invalidateDragRoutes(preservingDrop: false)
         let interactions = entertainment.interactions
         interactions?.sendSticker = { [weak self] file, _, _, _ in
             self?.pick(.file(file), disposable: self?.disposable, select: select)
@@ -135,22 +147,40 @@ private final class ImageCanvasStickerPickerImpl: EditImageCanvasStickerPicker {
         }
         var dragImage: CGImage?
         var isDragging = false
-        var lastPoint = NSZeroPoint
-        interactions?.dragItem = { [weak self] item, image, phase in
-            guard let self else {
+        var previewGeneration: UInt64 = 0
+        let finishDrag = { [weak self] in
+            guard isDragging else { return }
+            isDragging = false
+            dragImage = nil
+            self?.dragDisposable.set(nil)
+            drag(.ended)
+        }
+        interactions?.cancelItemDrag = finishDrag
+        var acceptsDrag = true
+        stopAcceptingDrags = { [weak interactions] in
+            acceptsDrag = false
+            interactions?.dragItem = nil
+            interactions?.cancelItemDrag = nil
+            finishDrag()
+        }
+        interactions?.dragItem = { [weak self, weak interactions] item, image, phase in
+            guard let self, interactions != nil, acceptsDrag else {
                 return
             }
             switch phase {
             case let .moved(point):
-                lastPoint = point
                 if let image = image {
                     dragImage = image
                 }
                 if !isDragging {
                     isDragging = true
+                    previewGeneration &+= 1
+                    self.cancelPendingDrop()
+                    let generation = previewGeneration
                     drag(.moved(dragImage, point))
+                    guard isDragging, previewGeneration == generation else { return }
                     self.pick(item, disposable: self.dragDisposable, select: { pick in
-                        if isDragging {
+                        if isDragging, previewGeneration == generation {
                             dragImage = pick.image
                             drag(.preview(pick))
                         }
@@ -159,11 +189,16 @@ private final class ImageCanvasStickerPickerImpl: EditImageCanvasStickerPicker {
                     drag(.moved(dragImage, point))
                 }
             case let .ended(point):
-                isDragging = false
-                dragImage = nil
-                self.dragDisposable.set(nil)
-                drag(.ended)
-                self.pick(item, disposable: self.disposable, select: { pick in
+                guard isDragging else { return }
+                let generation = previewGeneration
+                finishDrag()
+                guard acceptsDrag, previewGeneration == generation else { return }
+                let request = MetaDisposable()
+                self.dropDisposable = request
+                self.pick(item, disposable: request, select: { [weak self, weak interactions, weak request] pick in
+                    guard let self, let request, self.dropDisposable === request else { return }
+                    self.cancelPendingDrop()
+                    guard let interactions, self.entertainment.interactions === interactions else { return }
                     drag(.dropped(pick, point))
                 })
             }
@@ -171,7 +206,23 @@ private final class ImageCanvasStickerPickerImpl: EditImageCanvasStickerPicker {
         showPopover(for: control, with: entertainment)
     }
 
+    private func invalidateDragRoutes(preservingDrop: Bool) {
+        let stopAcceptingDrags = self.stopAcceptingDrags
+        self.stopAcceptingDrags = nil
+        stopAcceptingDrags?()
+        if !preservingDrop {
+            cancelPendingDrop()
+        }
+    }
+
+    private func cancelPendingDrop() {
+        let disposable = dropDisposable
+        dropDisposable = nil
+        disposable?.dispose()
+    }
+
     func close() {
+        invalidateDragRoutes(preservingDrop: false)
         entertainment.closePopover()
     }
 

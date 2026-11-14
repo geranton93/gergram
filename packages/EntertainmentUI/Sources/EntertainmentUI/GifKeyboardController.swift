@@ -680,12 +680,18 @@ public final class GifKeyboardController<Context: AccountContextProtocol> : Tele
         }, messageMenuItems: { message, view in
             return .single([])
         })
-        mediaArguments.drag = { [weak self] result, point, ended in
-            guard let dragItem = self?.interactions?.dragItem, case let .internalReference(values) = result, let file = values.file else {
-                return false
+        mediaArguments.beginDrag = { [weak self] result, point in
+            guard let interactions = self?.interactions, let dragItem = interactions.dragItem,
+                  case let .internalReference(values) = result, let file = values.file else {
+                return nil
             }
-            dragItem(.file(file), nil, ended ? .ended(point) : .moved(point))
-            return true
+            let cancel = interactions.cancelItemDrag
+            dragItem(.file(file), nil, .moved(point))
+            return (update: { point, ended in
+                dragItem(.file(file), nil, ended ? .ended(point) : .moved(point))
+            }, cancel: {
+                cancel?()
+            })
         }
 
         self.updateState = { f in

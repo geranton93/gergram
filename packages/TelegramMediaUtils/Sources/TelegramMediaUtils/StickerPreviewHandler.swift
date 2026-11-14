@@ -83,6 +83,12 @@ public func startModalPreviewHandle(_ global: ModalPreviewProtocol, window: Wind
     guard window.isKeyWindow, let initial = global.fileAtLocationInWindow(window.mouseLocationOutsideOfEventStream) else {
         return nil
     }
+    return startModalPreviewHandle(global, window: window, context: context, initial: initial)
+}
+
+@discardableResult
+public func startModalPreviewHandle(_ global: ModalPreviewProtocol, window: Window, context: any AccountContextProtocol, initial: (QuickPreviewMedia, NSView?)) -> Disposable? {
+    guard window.isKeyWindow else { return nil }
     activePreviewHandler?.stopHandler()
     let handler = ModalPreviewHandler(global, window: window, context: context)
     activePreviewHandler = handler

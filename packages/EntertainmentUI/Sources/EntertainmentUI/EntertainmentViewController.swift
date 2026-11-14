@@ -49,6 +49,7 @@ public final class EntertainmentInteractions {
     public var sendSticker:(TelegramMediaFile, Bool, Bool, ItemCollectionId?) ->Void = { _, _, _, _ in}
     public var sendGIF:(TelegramMediaFile, Bool, Bool) ->Void = { _, _, _ in}
     public var dragItem: ((EntertainmentDragItem, CGImage?, EntertainmentStickerDrag) -> Void)?
+    public var cancelItemDrag: (() -> Void)?
     
     public var showEntertainment:(EntertainmentState, Bool)->Void = { _,_  in}
     public var close:()->Void = {}

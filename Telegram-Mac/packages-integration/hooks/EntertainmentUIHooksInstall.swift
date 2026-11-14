@@ -139,9 +139,7 @@ func installEntertainmentUIHooks() {
         return animated ? MediaAnimatedStickerView(frame: frame) : ChatStickerContentView(frame: frame)
     }, makeContextMediaRowItem: { initialSize, row, index, context, arguments, collection, stableId in
         let mediaArguments = ContextMediaArguments(sendResult: arguments.sendResult, menuItems: arguments.menuItems, openMessage: arguments.openMessage, messageMenuItems: arguments.messageMenuItems)
-        mediaArguments.drag = { result, point, ended in
-            return arguments.drag?(result, point, ended) ?? false
-        }
+        mediaArguments.beginDrag = arguments.beginDrag
         return ContextMediaRowItem(initialSize, row, index, context, mediaArguments, collection: collection, stableId: stableId)
     }, launchSendFlight: { chatInteraction, view, rect, sourceLayer in
         guard let chatInteraction = chatInteraction as? ChatInteraction, let source = ChatMediaSendFlightSource(view: view, rect: rect, sourceLayer: sourceLayer) else {

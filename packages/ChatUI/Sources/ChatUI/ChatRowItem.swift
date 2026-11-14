@@ -2223,7 +2223,7 @@ public class ChatRowItem: TableRowItem {
                 for attr in message.attributes {
                     if let attr = attr as? AuthorSignatureMessageAttribute {
                         if !message.flags.contains(.Failed) {
-                            let attr: NSAttributedString = .initialize(string: attr.signature.prefixWithDots(13), color: isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: renderType == .bubble ? .normal(.small) : .normal(.short))
+                            let attr: NSAttributedString = .initialize(string: displayName(attr.signature.prefixWithDots(13)), color: isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: renderType == .bubble ? .normal(.small) : .normal(.short))
                             postAuthor = TextViewLayout(attr, maximumNumberOfLines: 1)
                             
                             postAuthor?.measure(width: .greatestFiniteMagnitude)
@@ -2236,7 +2236,7 @@ public class ChatRowItem: TableRowItem {
                 for attr in message.attributes {
                     if let attr = attr as? AuthorSignatureMessageAttribute {
                         if !message.flags.contains(.Failed) {
-                            let badge: NSAttributedString = .initialize(string: " " + attr.signature, color: !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: .normal(.short))
+                            let badge: NSAttributedString = .initialize(string: " " + displayName(attr.signature), color: !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: .normal(.short))
                         
                             adminBadge = TextViewLayout(badge, maximumNumberOfLines: 1, truncationType: .end, alignment: .left)
                             adminBadge?.mayItems = false
@@ -2248,7 +2248,7 @@ public class ChatRowItem: TableRowItem {
             }
             if postAuthor == nil, ChatRowItem.authorIsChannel(message: message, account: context.account) {
                 if let author = message.forwardInfo?.authorSignature {
-                    let attr: NSAttributedString = .initialize(string: author, color: isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: renderType == .bubble ? .normal(.small) : .normal(.short))
+                    let attr: NSAttributedString = .initialize(string: displayName(author), color: isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: renderType == .bubble ? .normal(.small) : .normal(.short))
                     postAuthor = TextViewLayout(attr, maximumNumberOfLines: 1)
                 }
             }
@@ -2387,7 +2387,7 @@ public class ChatRowItem: TableRowItem {
                         } else {
                             var fullName = attr.string
                             if let signature = message.forwardInfo?.authorSignature, message.isAnonymousMessage {
-                                fullName += " (\(signature))"
+                                fullName += " (\(displayName(signature)))"
                             }
                             if message.forwardInfo?.author != nil {
                                 text = strings().chatBubblesForwardedFromWithPhoto(fullName)
@@ -2911,7 +2911,7 @@ public class ChatRowItem: TableRowItem {
                     var forwardCount: Int?
                     for attr in message.attributes {
                         if let attr = attr as? AuthorSignatureMessageAttribute {
-                            author = "\(attr.signature), "
+                            author = "\(displayName(attr.signature)), "
                         } else if let attr = attr as? ForwardCountMessageAttribute {
                             forwardCount = attr.count
                         }

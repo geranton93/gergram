@@ -20,19 +20,25 @@ def section(source, start, end):
 
 view = (chat / 'ChatInputView.swift').read_text()
 attach = (chat / 'ChatInputAttachView.swift').read_text()
-preferences = (root / 'packages/InAppSettings/Sources/InAppSettings/ComposerAIToolsButtonPreferences.swift').read_text()
+settings = root / 'packages/InAppSettings/Sources/InAppSettings'
+preferences = [settings / name for name in (
+    'ComposerAIToolsButtonPreferences.swift',
+    'ComposerRichTextEditorPreferences.swift',
+)]
 fixture = Path(__file__).with_name('ComposerAIToolsTests.swift').read_text()
 substitutions = {
     '__ELIGIBILITY__': section(view, '    private func isComposerAIEditorEligible(', '    public override func layout() {\n        super.layout()\n        updateLayout(transition:'),
     '__MENU_BINDING__': section(view, '        attachView.canOpenAIEditorFromMenu =', '\n    }'),
     '__AI_LAYOUT__': section(view, '        let isAIEditorEligible =', '\n        let sendAsInset:'),
     '__RICH_LAYOUT__': section(view, '        let showExpand =', '\n        if showExpand {'),
-    '__PREFERENCE_BINDING__': section(view, '        composerAIToolsDisposable.set(', '\n    }'),
+    '__PREFERENCE_BINDING__': section(view, '        composerEditorControlsDisposable.set(', '\n    }'),
+    '__RICH_MENU_ELIGIBILITY__': section(attach, '    var canOpenRichTextEditorFromMenu: Bool {', '    public private(set) var isMorphHeld'),
+    '__RICH_MENU_ITEM__': section(attach, '                if #available(macOS 12, *), self.canOpenRichTextEditorFromMenu {', '\n            }'),
     '__MENU_ITEM__': section(attach, '            if self.canOpenAIEditorFromMenu?() == true {', '            if !items.isEmpty {'),
 }
 for marker, code in substitutions.items():
     fixture = fixture.replace(marker, code)
-fixture += '\n' + preferences
+fixture += '\n' + '\n'.join(path.read_text() for path in preferences)
 
 with tempfile.TemporaryDirectory(prefix='gergram-composer-ai-tools-') as scratch:
     directory = Path(scratch)

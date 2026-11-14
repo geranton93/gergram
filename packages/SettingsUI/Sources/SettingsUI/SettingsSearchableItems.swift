@@ -626,6 +626,9 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(30), title: localizedString("Gergram.Composer.HideAutoDelete"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .autoDeleteButton)
         }),
+        SettingsSearchableItem(id: .appearance(33), title: localizedString("Gergram.Composer.HideRichTextEditorShortcut"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .richTextEditorShortcut)
+        }),
     ]
 }
 

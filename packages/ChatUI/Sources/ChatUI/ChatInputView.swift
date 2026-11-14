@@ -346,6 +346,14 @@ public final class ChatInputContainerView: FlippableView {
             && chatInteraction.presentation.slowMode?.hasLocked != true
     }
 
+    private var hasComposerRichTextEditorMenuAlternative: Bool {
+        ComposerRichTextEditorPreferences.shared.hidesShortcut
+            && attachView.canOpenRichTextEditorFromMenu
+            && !attachView.button.isHiddenOrHasHiddenAncestor
+            && attachView.button.isEnabled
+            && attachView.button.userInteractionEnabled
+    }
+
     public override func layout() {
         super.layout()
         updateLayout(transition: .immediate)
@@ -539,7 +547,8 @@ public final class ChatInputContainerView: FlippableView {
             textView.updateLayout(size: textRect.size, textHeight: textHeight, transition: transition)
         }
 
-        let showExpand = ((isAIEditorEligible && chatInteraction.presentation.state == .normal) || richDraftPreview != nil) && chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled
+        let showExpand = chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled
+            && (richDraftPreview != nil || (isAIEditorEligible && chatInteraction.presentation.state == .normal && !hasComposerRichTextEditorMenuAlternative))
         if showExpand {
             let current: ImageButton
             var isNew = false
@@ -657,7 +666,7 @@ public class ChatInputView: View, Notifable {
     private let sendActivityDisposable = MetaDisposable()
     private let channelBottomActionDisposable = MetaDisposable()
     private let composerBotCommandsDisposable = MetaDisposable()
-    private let composerAIToolsDisposable = MetaDisposable()
+    private let composerEditorControlsDisposable = MetaDisposable()
     private var channelBottomAction = ChannelBottomActionPreferences.shared.action
     private(set) var isChannelBottomActionRowHidden = false
     public let ready = Promise<Bool>()
@@ -950,9 +959,12 @@ public class ChatInputView: View, Notifable {
         composerBotCommandsDisposable.set((ComposerBotCommandsPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] hidesButton in
             self?.updateComposerBotCommandsVisibility(hidesButton)
         }))
-        composerAIToolsDisposable.set((ComposerAIToolsButtonPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] _ in
-            self?.container.needsLayout = true
-        }))
+        composerEditorControlsDisposable.set(
+            (combineLatest(ComposerAIToolsButtonPreferences.shared.signal, ComposerRichTextEditorPreferences.shared.signal)
+                |> deliverOnMainQueue).start(next: { [weak self] _ in
+                self?.container.needsLayout = true
+            })
+        )
     }
 
     private func updateComposerBotCommandsVisibility(_ hidesButton: Bool) {
@@ -2434,7 +2446,7 @@ public class ChatInputView: View, Notifable {
         self.incomingTypingDraftDisposable.dispose()
         self.channelBottomActionDisposable.dispose()
         self.composerBotCommandsDisposable.dispose()
-        self.composerAIToolsDisposable.dispose()
+        self.composerEditorControlsDisposable.dispose()
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Return)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Delete)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Z, modifierFlags: [.command], forceCheckFlags: true)

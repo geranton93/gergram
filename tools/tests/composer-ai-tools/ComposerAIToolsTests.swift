@@ -21,19 +21,28 @@ private final class ChatInteraction {
     var presentation = Presentation()
     let interactionContext = InteractionContext()
     private(set) var editorOpened = 0
+    fileprivate var richEditorOpened = 0
     func openAIEditor(morphSource: (() -> NSView?)?) {
         precondition(morphSource?() != nil)
         editorOpened += 1
     }
 }
+private func showRichTextEditor(chatInteraction: ChatInteraction, morphSource: (() -> NSView?)? = nil) {
+    precondition(morphSource?() != nil)
+    chatInteraction.richEditorOpened += 1
+}
 private final class Button: NSView {
     var isEnabled = true
     var userInteractionEnabled = true
 }
-private struct Strings { let translateAIEditor = "AI Editor" }
+private struct Strings {
+    let translateAIEditor = "AI Editor"
+    let richTextEditorAttachTitle = "Rich Text Editor"
+}
 private func strings() -> Strings { Strings() }
 private struct MenuAnimation {
     static let menu_translate = MenuAnimation()
+    static let menu_article = MenuAnimation()
     var value: Int { 0 }
 }
 private struct ContextMenuItem {
@@ -49,6 +58,7 @@ private final class AttachView: NSView {
     let button = Button(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
     let chatInteraction: ChatInteraction
     var canOpenAIEditorFromMenu: (() -> Bool)?
+    __RICH_MENU_ELIGIBILITY__
 
     init(chatInteraction: ChatInteraction) {
         self.chatInteraction = chatInteraction
@@ -62,6 +72,12 @@ private final class AttachView: NSView {
         var items = [ContextMenuItem("File", handler: {}, itemImage: 0)]
         __MENU_ITEM__
         return items
+    }
+
+    func richEditorMenuItem() -> ContextMenuItem? {
+        var items = [ContextMenuItem]()
+        __RICH_MENU_ITEM__
+        return items.first
     }
 }
 private final class TextView {
@@ -104,23 +120,25 @@ private final class Container: NSView {
 }
 private final class InputViewOwner {
     let container = Container(frame: NSRect(x: 0, y: 0, width: 150, height: 50))
-    let composerAIToolsDisposable = MetaDisposable()
+    let composerEditorControlsDisposable = MetaDisposable()
 
     init() {
         __PREFERENCE_BINDING__
     }
 
-    deinit { composerAIToolsDisposable.dispose() }
+    deinit { composerEditorControlsDisposable.dispose() }
 }
 
 final class ComposerAIToolsTests: XCTestCase {
     override func setUp() {
         super.setUp()
         ComposerAIToolsButtonPreferences.shared.setHidden(false)
+        ComposerRichTextEditorPreferences.shared.setHidden(false)
     }
 
     override func tearDown() {
         ComposerAIToolsButtonPreferences.shared.setHidden(false)
+        ComposerRichTextEditorPreferences.shared.setHidden(false)
         super.tearDown()
     }
 
@@ -215,6 +233,97 @@ final class ComposerAIToolsTests: XCTestCase {
         owner = nil
         XCTAssertNil(released)
         ComposerAIToolsButtonPreferences.shared.setHidden(false)
+        XCTAssertEqual(container.layoutInvalidations, initial + 1)
+    }
+
+    func testRichEditorPreferenceDefaultsPersistsAndPublishesDistinctValues() throws {
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preference = ComposerRichTextEditorPreferences(defaults: defaults)
+        var values = [Bool]()
+        let listener = preference.signal.start(next: { values.append($0) })
+        defer { listener.dispose() }
+        XCTAssertFalse(preference.hidesShortcut)
+        preference.setHidden(true)
+        preference.setHidden(true)
+        XCTAssertTrue(ComposerRichTextEditorPreferences(defaults: defaults).hidesShortcut)
+        preference.setHidden(false)
+        XCTAssertEqual(values, [false, true, false])
+    }
+
+    func testHidingRichEditorPreservesPaperclipActionAndDraftExpand() throws {
+        let container = Container(frame: .zero)
+        XCTAssertTrue(container.visibility().richExpand)
+        ComposerRichTextEditorPreferences.shared.setHidden(true)
+        XCTAssertFalse(container.visibility().richExpand)
+        XCTAssertTrue(container.visibility().ai)
+        let menu = try XCTUnwrap(container.attachView.richEditorMenuItem())
+        XCTAssertEqual(menu.title, "Rich Text Editor")
+        menu.handler()
+        XCTAssertEqual(container.chatInteraction.richEditorOpened, 1)
+        container.richDraftPreview = NSView()
+        container.textView.lines = 1
+        XCTAssertTrue(container.visibility().richExpand)
+        container.richDraftPreview = nil
+        container.textView.lines = 4
+        ComposerRichTextEditorPreferences.shared.setHidden(false)
+        XCTAssertTrue(container.visibility().richExpand)
+    }
+
+    func testUnavailablePaperclipPreservesRichEditorShortcut() {
+        let container = Container(frame: .zero)
+        ComposerRichTextEditorPreferences.shared.setHidden(true)
+        container.attachView.isHidden = true
+        XCTAssertTrue(container.visibility().richExpand)
+        container.attachView.isHidden = false
+        container.attachView.button.isEnabled = false
+        XCTAssertTrue(container.visibility().richExpand)
+        container.attachView.button.isEnabled = true
+        container.attachView.button.userInteractionEnabled = false
+        XCTAssertTrue(container.visibility().richExpand)
+        container.attachView.button.userInteractionEnabled = true
+        container.chatInteraction.presentation.peer = nil
+        XCTAssertTrue(container.visibility().richExpand)
+        XCTAssertNil(container.attachView.richEditorMenuItem())
+        container.chatInteraction.presentation.peer = .init()
+        container.chatInteraction.presentation.slowMode = .init(hasLocked: true)
+        XCTAssertTrue(container.visibility().richExpand)
+        XCTAssertNil(container.attachView.richEditorMenuItem())
+        container.chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled = false
+        XCTAssertFalse(container.visibility().richExpand)
+    }
+
+    func testRichEditorPaperclipItemRevalidatesBeforeConsumingDraft() throws {
+        let container = Container(frame: .zero)
+        let interaction = container.chatInteraction
+        let menu = try XCTUnwrap(container.attachView.richEditorMenuItem())
+        interaction.presentation.interfaceState.editState = .init(loadingState: .none)
+        XCTAssertNil(container.attachView.richEditorMenuItem())
+        menu.handler()
+        interaction.presentation.interfaceState.editState = nil
+        interaction.presentation.slowMode = .init(hasLocked: true)
+        menu.handler()
+        interaction.presentation.slowMode = nil
+        interaction.presentation.state = .recording
+        XCTAssertNil(container.attachView.richEditorMenuItem())
+        menu.handler()
+        interaction.presentation.state = .normal
+        interaction.interactionContext.appConfiguration.isRichTextEditorEnabled = false
+        menu.handler()
+        XCTAssertEqual(interaction.richEditorOpened, 0)
+    }
+
+    func testLiveRichEditorPreferenceInvalidatesLayoutAndReleasesOwner() {
+        var owner: InputViewOwner? = InputViewOwner()
+        let container = owner!.container
+        let initial = container.layoutInvalidations
+        ComposerRichTextEditorPreferences.shared.setHidden(true)
+        XCTAssertEqual(container.layoutInvalidations, initial + 1)
+        weak let released = owner
+        owner = nil
+        XCTAssertNil(released)
+        ComposerRichTextEditorPreferences.shared.setHidden(false)
         XCTAssertEqual(container.layoutInvalidations, initial + 1)
     }
 }

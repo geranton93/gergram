@@ -20,6 +20,7 @@ final class GergramAppearanceResetTests: XCTestCase {
         ComposerGiftButtonPreferences(defaults: defaults).setHidden(true)
         ComposerAIToolsButtonPreferences(defaults: defaults).setHidden(true)
         ComposerAutoDeleteButtonPreferences(defaults: defaults).setHidden(true)
+        ComposerRichTextEditorPreferences(defaults: defaults).setHidden(true)
         let menuBarPreferences = StreamerModeMenuBarPreferences(defaults: defaults)
         menuBarPreferences.setVisible(false)
         menuBarPreferences.setVisible(true, for: .myProfile)
@@ -39,7 +40,7 @@ final class GergramAppearanceResetTests: XCTestCase {
         AvatarCornerPreferences(defaults: defaults).setRadius(0)
         AvatarCornerPreferences(defaults: defaults).setUsesSingleRadius(true)
         let changed = defaults.persistentDomain(forName: name) ?? [:]
-        XCTAssertEqual(changed.count - initial.count, 26)
+        XCTAssertEqual(changed.count - initial.count, 27)
         defaults.set("archive data", forKey: "gergram.archive.synthetic")
         defaults.set("native palette", forKey: "telegram.appearance.synthetic")
 

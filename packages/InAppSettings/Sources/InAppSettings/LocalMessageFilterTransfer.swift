@@ -11,6 +11,8 @@ public enum LocalMessageFilterTransfer {
         case sharedRuleCollision
         case tooManyRules
         case noSharedRules
+        case invalidLink
+        case linkTooLarge
     }
 
     public enum Import {
@@ -52,9 +54,11 @@ public enum LocalMessageFilterTransfer {
     }
 
     public static let maximumBytes = 1024 * 1024
+    public static let maximumLinkBytes = 8 * 1024
     private static let format = "gergram-message-filters"
     private static let version = 1
     private static let sharedBackupVersion = 2
+    private static let sharedLinkPrefix = "gergram://filters/v1/"
 
     private struct Header: Decodable {
         let format: String
@@ -154,6 +158,35 @@ public enum LocalMessageFilterTransfer {
         return data
     }
 
+    public static func encodeSharedRulesLink(_ preferences: LocalMessageFilterPreferences) throws -> String {
+        let link = sharedLinkPrefix + base64URL(try encodeSharedRules(preferences))
+        guard link.utf8.count <= maximumLinkBytes else { throw Error.linkTooLarge }
+        return link
+    }
+
+    public static func decodeSharedRulesLink(_ link: String) throws -> SharedRuleBackup {
+        guard link.utf8.prefix(maximumLinkBytes + 1).count <= maximumLinkBytes else { throw Error.linkTooLarge }
+        guard link.hasPrefix(sharedLinkPrefix) else { throw Error.invalidLink }
+        let payload = String(link.dropFirst(sharedLinkPrefix.count))
+        guard !payload.isEmpty, payload.utf8.allSatisfy({ byte in
+            (65 ... 90).contains(byte) || (97 ... 122).contains(byte) || (48 ... 57).contains(byte) || byte == 45 || byte == 95
+        }) else { throw Error.invalidLink }
+
+        let padding = (4 - payload.utf8.count % 4) % 4
+        let encoded = payload.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            + String(repeating: "=", count: padding)
+        guard let data = Data(base64Encoded: encoded), base64URL(data) == payload,
+              let header = try? JSONDecoder().decode(ImportHeader.self, from: data), header.format == nil,
+              header.version == sharedBackupVersion,
+              let backup = try? decodeSharedBackup(data) else { throw Error.invalidLink }
+        return backup
+    }
+
+    private static func base64URL(_ data: Data) -> String {
+        return data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+
     public static func decode(_ data: Data, accountPeerId: PeerId) throws -> LocalMessageFilterPreferences {
         guard data.count <= maximumBytes else { throw Error.fileTooLarge }
         let decoder = JSONDecoder()
@@ -196,6 +229,10 @@ public enum LocalMessageFilterTransfer {
             return .replacement(try decode(data, accountPeerId: accountPeerId))
         }
         guard header.version == sharedBackupVersion else { throw Error.unsupportedVersion }
+        return .sharedRules(try decodeSharedBackup(data))
+    }
+
+    private static func decodeSharedBackup(_ data: Data) throws -> SharedRuleBackup {
         let backup: SharedRuleBackupDocument
         do {
             backup = try JSONDecoder().decode(SharedRuleBackupDocument.self, from: data)
@@ -204,7 +241,7 @@ public enum LocalMessageFilterTransfer {
         } catch {
             throw Error.invalidFile
         }
-        return .sharedRules(SharedRuleBackup(rules: backup.rules))
+        return SharedRuleBackup(rules: backup.rules)
     }
 
     private struct BackupKey: CodingKey {

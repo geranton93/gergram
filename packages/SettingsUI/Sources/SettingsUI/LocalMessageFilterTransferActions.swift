@@ -3,9 +3,11 @@ import AppKit
 import Darwin
 import FilePanels
 import InAppSettings
+import Localization
 import Postbox
 import SwiftSignalKit
 import TelegramContext
+import TelegramUtils
 import TGUIKit
 import UniformTypeIdentifiers
 
@@ -67,6 +69,48 @@ enum LocalMessageFilterTransferActions {
         })
     }
 
+    static func copySharedRulesLink(context: any AccountContextProtocol) {
+        let window = context.window
+        guard isTransferCurrent(context, window: window) else { return }
+        _ = (localMessageFilterPreferences(context.account.postbox) |> take(1) |> deliverOnMainQueue).startStandalone(next: { [weak context, weak window] preferences in
+            guard let context, let window, isTransferCurrent(context, window: window) else { return }
+            DispatchQueue.global(qos: .userInitiated).async { [weak context, weak window] in
+                let result = Result { try LocalMessageFilterTransfer.encodeSharedRulesLink(preferences) }
+                DispatchQueue.main.async {
+                    guard let context, let window, isTransferCurrent(context, window: window) else { return }
+                    switch result {
+                    case let .success(link):
+                        copyToClipboard(link)
+                        showModalText(for: window, text: localizedString("Gergram.Chat.FilterTransferLinkCopied"))
+                    case let .failure(error):
+                        showError(error, window: window)
+                    }
+                }
+            }
+        })
+    }
+
+    static func importSharedRulesLink(context: any AccountContextProtocol) {
+        let window = context.window
+        guard isTransferCurrent(context, window: window) else { return }
+        guard let link = NSPasteboard.general.string(forType: .string) else {
+            showError(LocalMessageFilterTransfer.Error.invalidLink, window: window)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak context, weak window] in
+            let result = Result { try LocalMessageFilterTransfer.decodeSharedRulesLink(link) }
+            DispatchQueue.main.async {
+                guard let context, let window, isTransferCurrent(context, window: window) else { return }
+                switch result {
+                case let .success(backup):
+                    preview(.sharedRules(backup), context: context, window: window, showsRuleDetails: true)
+                case let .failure(error):
+                    showError(error, window: window)
+                }
+            }
+        }
+    }
+
     private static func readRules(from url: URL, accountPeerId: PeerId) throws -> LocalMessageFilterTransfer.Import {
         let descriptor = url.withUnsafeFileSystemRepresentation { path in
             path.map { open($0, O_RDONLY | O_CLOEXEC | O_NONBLOCK) } ?? -1
@@ -99,7 +143,7 @@ enum LocalMessageFilterTransferActions {
         context.window === window && window.isVisible && (context.isCurrent || context.isExternal) && !context.isFrozen
     }
 
-    private static func preview(_ imported: LocalMessageFilterTransfer.Import, context: any AccountContextProtocol, window: Window) {
+    private static func preview(_ imported: LocalMessageFilterTransfer.Import, context: any AccountContextProtocol, window: Window, showsRuleDetails: Bool = false) {
         let postbox = context.account.postbox
         _ = (localMessageFilterPreferences(postbox) |> take(1) |> deliverOnMainQueue).startStandalone(next: { [weak context, weak window] previous in
             guard let context, let window, isTransferCurrent(context, window: window) else { return }
@@ -128,7 +172,7 @@ enum LocalMessageFilterTransferActions {
                     return
                 }
             }
-            verifyAlert(for: window, header: title, information: description, ok: confirmTitle, successHandler: { [weak context, weak window] _ in
+            let apply = { [weak context, weak window] in
                 guard let context, let window, isTransferCurrent(context, window: window) else { return }
                 let update = updateLocalMessageFilterPreferences(postbox) { current -> Bool in
                     guard current == previous else { return false }
@@ -137,10 +181,75 @@ enum LocalMessageFilterTransferActions {
                 }
                 _ = (update |> deliverOnMainQueue).startStandalone(next: { [weak context, weak window] applied in
                     guard !applied, let context, let window, isTransferCurrent(context, window: window) else { return }
-                    alert(for: window, header: localizedString("Gergram.Chat.FilterTransferImport"), info: localizedString("Gergram.Chat.FilterTransferStale"))
+                    let key = showsRuleDetails ? "Gergram.Chat.FilterTransferLinkStale" : "Gergram.Chat.FilterTransferStale"
+                    alert(for: window, header: title, info: localizedString(key))
                 })
-            })
+            }
+            if showsRuleDetails, case let .sharedRules(backup) = imported {
+                confirmSharedRulesLink(backup.rules, context: context, window: window, title: title, description: description, confirmTitle: confirmTitle, apply: apply)
+            } else {
+                verifyAlert(for: window, header: title, information: description, ok: confirmTitle, successHandler: { _ in apply() })
+            }
         })
+    }
+
+    private static func confirmSharedRulesLink(_ rules: [LocalMessageFilterRule], context: any AccountContextProtocol, window: Window, title: String, description: String, confirmTitle: String, apply: @escaping () -> Void) {
+        guard window.attachedSheet == nil else { return }
+        let id = String(context.peerId.id._internalGetInt64Value())
+        let account = context.myPeer.map { "\(visibleText($0.displayTitle)) (\(id))" } ?? id
+        let accountDescription = String(format: localizedString("Gergram.Chat.FilterTransferLinkAccount"), account)
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = description + "\n\n" + accountDescription
+        let cancelButton = alert.addButton(withTitle: strings().alertCancel)
+        cancelButton.keyEquivalent = "\u{1b}"
+        let importButton = alert.addButton(withTitle: confirmTitle)
+        importButton.keyEquivalent = ""
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 180))
+        scroll.borderType = .bezelBorder
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        let text = NSTextView(frame: NSRect(origin: .zero, size: scroll.contentSize))
+        text.isEditable = false
+        text.isSelectable = true
+        text.isRichText = false
+        text.isAutomaticLinkDetectionEnabled = false
+        text.isVerticallyResizable = true
+        text.autoresizingMask = [.width]
+        text.textContainer?.widthTracksTextView = true
+        text.textContainerInset = NSSize(width: 8, height: 8)
+        text.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        text.string = rules.map { rule in
+            let enabled = localizedString(rule.isEnabled ? "Gergram.Chat.FilterRuleEnabled" : "Gergram.Chat.FilterRuleDisabled")
+            let matchCase = localizedString(rule.isCaseInsensitive ? "Gergram.Chat.FilterCaseInsensitive" : "Gergram.Chat.FilterTransferLinkMatchCase")
+            let matches = localizedString(rule.isReversed ? "Gergram.Chat.FilterReversed" : "Gergram.Chat.FilterTransferLinkHideMatching")
+            return visibleText(rule.pattern) + "\n" + [enabled, matchCase, matches].joined(separator: " · ")
+        }.joined(separator: "\n\n")
+        scroll.documentView = text
+        alert.accessoryView = scroll
+        alert.beginSheetModal(for: window) { response in
+            if response == .alertSecondButtonReturn { apply() }
+        }
+    }
+
+    private static func visibleText(_ value: String) -> String {
+        var text = ""
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x5c: text += "\\\\"
+            case 0x09: text += "\\t"
+            case 0x0a: text += "\\n"
+            case 0x0d: text += "\\r"
+            default:
+                switch scalar.properties.generalCategory {
+                case .control, .format, .lineSeparator, .paragraphSeparator: text += "\\u{\(String(scalar.value, radix: 16))}"
+                default: text.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return text
     }
 
     private static func showError(_ error: Swift.Error, window: Window) {
@@ -160,6 +269,10 @@ enum LocalMessageFilterTransferActions {
             message = "Gergram.Chat.FilterTransferTooManyRules"
         case .noSharedRules:
             message = "Gergram.Chat.FilterTransferNoSharedRules"
+        case .invalidLink:
+            message = "Gergram.Chat.FilterTransferInvalidLink"
+        case .linkTooLarge:
+            message = "Gergram.Chat.FilterTransferLinkTooLarge"
         case .invalidFile, nil:
             message = "Gergram.Chat.FilterTransferFailed"
         }

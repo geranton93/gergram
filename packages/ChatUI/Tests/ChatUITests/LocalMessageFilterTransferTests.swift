@@ -238,6 +238,92 @@ final class LocalMessageFilterTransferTests: XCTestCase {
         }
     }
 
+    func testSharedLinkRoundTripsOnlySharedRulesIntoTheDestination() throws {
+        var preferences = LocalMessageFilterPreferences()
+        let shared = LocalMessageFilterRule(pattern: "^résumé\\s", isEnabled: false, isReversed: true, isCaseInsensitive: true)
+        XCTAssertTrue(preferences.upsert(shared))
+        XCTAssertTrue(preferences.upsert(LocalMessageFilterRule(pattern: "account-specific", chatId: channel)))
+        XCTAssertTrue(preferences.setSharedRuleExcluded(shared.id, chatId: channel, excluded: true))
+
+        let link = try LocalMessageFilterTransfer.encodeSharedRulesLink(preferences)
+        XCTAssertTrue(link.hasPrefix("gergram://filters/v1/"))
+        XCTAssertEqual(link, sharedLink(try LocalMessageFilterTransfer.encodeSharedRules(preferences)))
+        let imported = try LocalMessageFilterTransfer.decodeSharedRulesLink(link)
+        XCTAssertEqual(imported.rules, [shared])
+        var existing = LocalMessageFilterPreferences()
+        let scoped = LocalMessageFilterRule(pattern: "current-chat", chatId: channel)
+        XCTAssertTrue(existing.upsert(scoped))
+        XCTAssertEqual(try imported.merging(into: existing).preferences.rules, [scoped, shared])
+    }
+
+    func testSharedLinkRejectsUntrustedSchemesAndCanonicalAliases() throws {
+        var preferences = LocalMessageFilterPreferences()
+        XCTAssertTrue(preferences.upsert(LocalMessageFilterRule(pattern: "notice")))
+        let data = try LocalMessageFilterTransfer.encodeSharedRules(preferences)
+        let paddedData = data.count % 3 == 0 ? data + Data([32]) : data
+        let link = sharedLink(paddedData)
+        XCTAssertNoThrow(try LocalMessageFilterTransfer.decodeSharedRulesLink(link))
+        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        let finalIndex = try XCTUnwrap(alphabet.firstIndex(of: try XCTUnwrap(link.last)))
+        let noncanonical = String(link.dropLast()) + String(alphabet[finalIndex + 1])
+        let invalid = [link + "=", link + "?payload=none", link + "#suffix", link + "/", link + "\n", " " + link,
+            link.replacingOccurrences(of: "filters/", with: "filters:443/"),
+            link.replacingOccurrences(of: "filters/", with: "account@filters/"),
+            link.replacingOccurrences(of: "filters/", with: "filters.example.com/"),
+            link.replacingOccurrences(of: "filters/", with: "%66ilters/"),
+            link.replacingOccurrences(of: "/v1/", with: "/v2/"),
+            link.replacingOccurrences(of: "gergram:", with: "https:"), noncanonical,
+            "gergram://filters/v1/", "gergram://filters/v1/A", "gergram://filters/v1/Ω", "gergram://filters/v1/QQ"]
+        for value in invalid {
+            XCTAssertThrowsError(try LocalMessageFilterTransfer.decodeSharedRulesLink(value)) { error in
+                XCTAssertEqual(error as? LocalMessageFilterTransfer.Error, .invalidLink, value.prefix(40).description)
+            }
+        }
+    }
+
+    func testSharedLinkRejectsReplacementAndScopedOrCommandPayloads() throws {
+        let replacement = try LocalMessageFilterTransfer.encode(LocalMessageFilterPreferences(), accountPeerId: source)
+        XCTAssertThrowsError(try LocalMessageFilterTransfer.decodeSharedRulesLink(sharedLink(replacement))) {
+            XCTAssertEqual($0 as? LocalMessageFilterTransfer.Error, .invalidLink)
+        }
+        let rule = backupRule()
+        let cases: [[String: Any]] = [
+            ["filters": [backupRule(dialogId: -42)]],
+            ["filters": [backupRule(pattern: "(")]],
+            ["peers": ["42": "username"]],
+            ["removeFiltersById": [rule["id"]!]],
+            ["exclusions": [["dialogId": -42, "filterId": rule["id"]!]]],
+            ["version": 3],
+        ]
+        for changes in cases {
+            let document: [String: Any] = ["version": 2, "filters": [rule]]
+            let data = try JSONSerialization.data(withJSONObject: document.merging(changes) { _, new in new })
+            XCTAssertThrowsError(try LocalMessageFilterTransfer.decodeSharedRulesLink(sharedLink(data))) {
+                XCTAssertEqual($0 as? LocalMessageFilterTransfer.Error, .invalidLink)
+            }
+        }
+    }
+
+    func testSharedLinkSizeLimitKeepsLargeRulesetsAvailableAsFiles() throws {
+        var preferences = LocalMessageFilterPreferences()
+        for index in 0 ..< LocalMessageFilterPreferences.maximumRules {
+            XCTAssertTrue(preferences.upsert(LocalMessageFilterRule(pattern: "notice-\(index)")))
+        }
+        XCTAssertNoThrow(try LocalMessageFilterTransfer.encodeSharedRules(preferences))
+        XCTAssertThrowsError(try LocalMessageFilterTransfer.encodeSharedRulesLink(preferences)) {
+            XCTAssertEqual($0 as? LocalMessageFilterTransfer.Error, .linkTooLarge)
+        }
+        let largeLink = "gergram://filters/v1/" + String(repeating: "a", count: LocalMessageFilterTransfer.maximumLinkBytes)
+        XCTAssertThrowsError(try LocalMessageFilterTransfer.decodeSharedRulesLink(largeLink)) {
+            XCTAssertEqual($0 as? LocalMessageFilterTransfer.Error, .linkTooLarge)
+        }
+    }
+
+    private func sharedLink(_ data: Data) -> String {
+        return "gergram://filters/v1/" + data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+
     private func backupRule(id: UUID = UUID(), pattern: String = "notice", dialogId: Int? = nil, enabled: Bool = true, reversed: Bool = false, caseInsensitive: Bool = false) -> [String: Any] {
         ["id": id.uuidString.lowercased(), "text": pattern, "dialogId": dialogId.map { $0 as Any } ?? NSNull(),
          "enabled": enabled, "reversed": reversed, "caseInsensitive": caseInsensitive]

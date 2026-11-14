@@ -10,6 +10,7 @@ public enum LocalMessageFilterTransfer {
         case unsupportedSharedBackup
         case sharedRuleCollision
         case tooManyRules
+        case noSharedRules
     }
 
     public enum Import {
@@ -53,6 +54,7 @@ public enum LocalMessageFilterTransfer {
     public static let maximumBytes = 1024 * 1024
     private static let format = "gergram-message-filters"
     private static let version = 1
+    private static let sharedBackupVersion = 2
 
     private struct Header: Decodable {
         let format: String
@@ -138,6 +140,20 @@ public enum LocalMessageFilterTransfer {
         return data
     }
 
+    public static func encodeSharedRules(_ preferences: LocalMessageFilterPreferences) throws -> Data {
+        let rules = preferences.rules.filter { $0.chatId == nil }
+        guard !rules.isEmpty else { throw Error.noSharedRules }
+        guard rules.count <= LocalMessageFilterPreferences.maximumRules else { throw Error.tooManyRules }
+        guard Set(rules.map(\.id)).count == rules.count, rules.allSatisfy(LocalMessageFilterEvaluation.isValid) else {
+            throw Error.invalidFile
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(SharedRuleBackupDocument(rules: rules))
+        guard data.count <= maximumBytes else { throw Error.fileTooLarge }
+        return data
+    }
+
     public static func decode(_ data: Data, accountPeerId: PeerId) throws -> LocalMessageFilterPreferences {
         guard data.count <= maximumBytes else { throw Error.fileTooLarge }
         let decoder = JSONDecoder()
@@ -179,7 +195,7 @@ public enum LocalMessageFilterTransfer {
         if header.format != nil {
             return .replacement(try decode(data, accountPeerId: accountPeerId))
         }
-        guard header.version == 2 else { throw Error.unsupportedVersion }
+        guard header.version == sharedBackupVersion else { throw Error.unsupportedVersion }
         let backup: SharedRuleBackupDocument
         do {
             backup = try JSONDecoder().decode(SharedRuleBackupDocument.self, from: data)
@@ -204,11 +220,15 @@ public enum LocalMessageFilterTransfer {
         }
     }
 
-    private struct SharedRuleBackupDocument: Decodable {
+    private struct SharedRuleBackupDocument: Codable {
         let rules: [LocalMessageFilterRule]
 
         private enum Key: String, CodingKey {
             case version, filters, exclusions, peers, removeFiltersById, removeExclusions
+        }
+
+        init(rules: [LocalMessageFilterRule]) {
+            self.rules = rules
         }
 
         init(from decoder: Decoder) throws {
@@ -238,13 +258,27 @@ public enum LocalMessageFilterTransfer {
             }
             self.rules = rules
         }
+
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: Key.self)
+            try values.encode(LocalMessageFilterTransfer.sharedBackupVersion, forKey: .version)
+            try values.encode(rules.map(SharedBackupRule.init(rule:)), forKey: .filters)
+            _ = values.nestedUnkeyedContainer(forKey: .exclusions)
+            _ = values.nestedContainer(keyedBy: BackupKey.self, forKey: .peers)
+            try values.encodeNil(forKey: .removeFiltersById)
+            try values.encodeNil(forKey: .removeExclusions)
+        }
     }
 
-    private struct SharedBackupRule: Decodable {
+    private struct SharedBackupRule: Codable {
         let rule: LocalMessageFilterRule
 
         private enum Key: String, CodingKey {
             case id, text, dialogId, enabled, reversed, caseInsensitive
+        }
+
+        init(rule: LocalMessageFilterRule) {
+            self.rule = rule
         }
 
         init(from decoder: Decoder) throws {
@@ -256,6 +290,16 @@ public enum LocalMessageFilterTransfer {
             rule = try LocalMessageFilterRule(id: values.decode(UUID.self, forKey: .id), pattern: values.decode(String.self, forKey: .text),
                 isEnabled: values.decode(Bool.self, forKey: .enabled), isReversed: values.decode(Bool.self, forKey: .reversed),
                 isCaseInsensitive: values.decode(Bool.self, forKey: .caseInsensitive))
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: Key.self)
+            try values.encode(rule.id.uuidString.lowercased(), forKey: .id)
+            try values.encode(rule.pattern, forKey: .text)
+            try values.encodeNil(forKey: .dialogId)
+            try values.encode(rule.isEnabled, forKey: .enabled)
+            try values.encode(rule.isReversed, forKey: .reversed)
+            try values.encode(rule.isCaseInsensitive, forKey: .caseInsensitive)
         }
     }
 }

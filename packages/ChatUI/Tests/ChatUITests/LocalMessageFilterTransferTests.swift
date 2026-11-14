@@ -191,6 +191,53 @@ final class LocalMessageFilterTransferTests: XCTestCase {
         }
     }
 
+    func testSharedExportMatchesVersionTwoAndOmitsScopedData() throws {
+        var preferences = LocalMessageFilterPreferences()
+        preferences.isEnabled = true
+        preferences.includesChats = true
+        let first = LocalMessageFilterRule(pattern: "^(Résumé|résumé)$", isEnabled: false, isReversed: true, isCaseInsensitive: true)
+        let second = LocalMessageFilterRule(pattern: "notice")
+        XCTAssertTrue(preferences.upsert(first))
+        XCTAssertTrue(preferences.upsert(LocalMessageFilterRule(pattern: "private-chat-rule", chatId: channel)))
+        XCTAssertTrue(preferences.upsert(second))
+        XCTAssertTrue(preferences.setSharedRuleExcluded(first.id, chatId: channel, excluded: true))
+
+        let data = try LocalMessageFilterTransfer.encodeSharedRules(preferences)
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(Set(document.keys), ["version", "filters", "exclusions", "peers", "removeFiltersById", "removeExclusions"])
+        XCTAssertEqual(document["version"] as? Int, 2)
+        XCTAssertEqual(document["exclusions"] as? [String], [])
+        XCTAssertEqual(document["peers"] as? [String: String], [:])
+        XCTAssertTrue(document["removeFiltersById"] is NSNull)
+        XCTAssertTrue(document["removeExclusions"] is NSNull)
+        let filters = try XCTUnwrap(document["filters"] as? [[String: Any]])
+        XCTAssertEqual(filters.count, 2)
+        XCTAssertTrue(filters.allSatisfy { Set($0.keys) == ["id", "text", "dialogId", "enabled", "reversed", "caseInsensitive"] })
+        XCTAssertTrue(filters.allSatisfy { $0["dialogId"] is NSNull })
+        XCTAssertEqual(filters.compactMap { $0["id"] as? String }, [first.id.uuidString.lowercased(), second.id.uuidString.lowercased()])
+
+        guard case let .sharedRules(backup) = try LocalMessageFilterTransfer.decodeImport(data, accountPeerId: destination) else {
+            return XCTFail("Expected shared-rule import")
+        }
+        XCTAssertEqual(backup.rules, [first, second])
+        let merged = try backup.merging(into: LocalMessageFilterPreferences())
+        XCTAssertEqual(merged.preferences.rules, [first, second])
+        XCTAssertFalse(merged.preferences.isEnabled)
+        XCTAssertFalse(merged.preferences.includesChats)
+        XCTAssertTrue(merged.preferences.excludedSharedRuleIds.isEmpty)
+    }
+
+    func testSharedExportRejectsEmptyAndScopedOnlyPreferences() throws {
+        var preferences = LocalMessageFilterPreferences()
+        XCTAssertThrowsError(try LocalMessageFilterTransfer.encodeSharedRules(preferences)) {
+            XCTAssertEqual($0 as? LocalMessageFilterTransfer.Error, .noSharedRules)
+        }
+        XCTAssertTrue(preferences.upsert(LocalMessageFilterRule(pattern: "scoped", chatId: channel)))
+        XCTAssertThrowsError(try LocalMessageFilterTransfer.encodeSharedRules(preferences)) {
+            XCTAssertEqual($0 as? LocalMessageFilterTransfer.Error, .noSharedRules)
+        }
+    }
+
     private func backupRule(id: UUID = UUID(), pattern: String = "notice", dialogId: Int? = nil, enabled: Bool = true, reversed: Bool = false, caseInsensitive: Bool = false) -> [String: Any] {
         ["id": id.uuidString.lowercased(), "text": pattern, "dialogId": dialogId.map { $0 as Any } ?? NSNull(),
          "enabled": enabled, "reversed": reversed, "caseInsensitive": caseInsensitive]

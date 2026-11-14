@@ -122,8 +122,11 @@ func localMessageFiltersController(context: any AccountContextProtocol, chatId: 
             entries.append(.general(sectionId: 1, index: 3, value: .none, error: nil, identifier: InputDataIdentifier("import-filters"), data: .init(name: localizedString("Gergram.Chat.FilterTransferImport"), color: theme.colors.accent, type: .none, viewType: .innerItem, action: {
                 LocalMessageFilterTransferActions.importRules(context: context)
             })))
-            entries.append(.general(sectionId: 1, index: 4, value: .none, error: nil, identifier: InputDataIdentifier("export-filters"), data: .init(name: localizedString("Gergram.Chat.FilterTransferExport"), color: theme.colors.accent, type: .none, viewType: .lastItem, action: {
+            entries.append(.general(sectionId: 1, index: 4, value: .none, error: nil, identifier: InputDataIdentifier("export-filters"), data: .init(name: localizedString("Gergram.Chat.FilterTransferExport"), color: theme.colors.accent, type: .none, viewType: .innerItem, action: {
                 LocalMessageFilterTransferActions.exportRules(context: context)
+            })))
+            entries.append(.general(sectionId: 1, index: 5, value: .none, error: nil, identifier: InputDataIdentifier("export-shared-filters"), data: .init(name: localizedString("Gergram.Chat.FilterTransferExportShared"), color: theme.colors.accent, type: .none, viewType: .lastItem, action: {
+                LocalMessageFilterTransferActions.exportRules(context: context, sharedOnly: true)
             })))
         }
         entries.append(.sectionId(1, type: .normal))

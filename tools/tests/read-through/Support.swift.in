@@ -1,0 +1,271 @@
+import Foundation
+
+public struct PeerId: Hashable {
+    public struct Id: Hashable {
+        let raw: Int64
+        static func _internalFromInt64Value(_ raw: Int64) -> Self { Self(raw: raw) }
+    }
+    let namespace: Int32
+    let id: Id
+}
+
+public struct MessageId: Hashable {
+    public typealias Namespace = Int32
+    public typealias Id = Int32
+    let peerId: PeerId
+    let namespace: Namespace
+    let id: Id
+}
+
+public struct MessageIndex: Comparable {
+    let id: MessageId
+    let timestamp: Int32
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        (lhs.timestamp, lhs.id.id) < (rhs.timestamp, rhs.id.id)
+    }
+}
+
+enum Namespaces {
+    enum Peer {
+        static let CloudUser: Int32 = 0
+        static let CloudChannel: Int32 = 2
+    }
+    enum Message {
+        static let Cloud: Int32 = 0
+        static let Local: Int32 = 1
+    }
+}
+
+protocol Peer {
+    var id: PeerId { get }
+    var isDeleted: Bool { get }
+    var isForumOrMonoForum: Bool { get }
+}
+extension Peer {
+    var isDeleted: Bool { false }
+    var isForumOrMonoForum: Bool { false }
+    func restrictionText(_ contentSettings: Int?) -> String? { nil }
+}
+
+struct TelegramChannelFlags: OptionSet {
+    let rawValue: Int
+    static let isForum = Self(rawValue: 1)
+    static let isMonoforum = Self(rawValue: 2)
+}
+enum TelegramChannelParticipationStatus { case member, left, kicked }
+enum TelegramChannelInfo { case broadcast(BroadcastInfo)
+    struct BroadcastInfo { let flags: [Int] }
+}
+struct TelegramChannel: Peer {
+    let id: PeerId
+    let participationStatus: TelegramChannelParticipationStatus
+    let flags: TelegramChannelFlags
+    var isForumOrMonoForum: Bool { flags.contains(.isForum) || flags.contains(.isMonoforum) }
+
+    init(id: PeerId, accessHash: Int?, title: String, username: String?, photo: [Int], creationDate: Int, version: Int,
+         participationStatus: TelegramChannelParticipationStatus, info: TelegramChannelInfo, flags: TelegramChannelFlags,
+         restrictionInfo: Int?, adminRights: Int?, bannedRights: Int?, defaultBannedRights: Int?, usernames: [Int],
+         storiesHidden: Bool?, nameColor: Int?, backgroundEmojiId: Int?, profileColor: Int?, profileBackgroundEmojiId: Int?,
+         emojiStatus: Int?, approximateBoostLevel: Int?, subscriptionUntilDate: Int?, verificationIconFileId: Int?,
+         sendPaidMessageStars: Int?, linkedMonoforumId: PeerId?) {
+        self.id = id
+        self.participationStatus = participationStatus
+        self.flags = flags
+    }
+}
+struct TelegramGroup: Peer {
+    enum Membership { case Member, Left }
+    let id: PeerId
+    let membership: Membership
+    let migrationReference: Int?
+}
+struct TelegramUser: Peer {
+    let id: PeerId
+    let name: String?
+    var isDeleted: Bool { name == nil }
+
+    init(id: PeerId, accessHash: Int?, firstName: String?, lastName: String?, username: String?, phone: String?, photo: [Int],
+         botInfo: Int?, restrictionInfo: Int?, flags: [Int], emojiStatus: Int?, usernames: [Int], storiesHidden: Bool?,
+         nameColor: Int?, backgroundEmojiId: Int?, profileColor: Int?, profileBackgroundEmojiId: Int?,
+         subscriberCount: Int?, verificationIconFileId: Int?) {
+        self.id = id
+        self.name = firstName
+    }
+}
+protocol CachedPeerData {}
+struct ChannelMigrationReference { let maxMessageId: MessageId }
+struct CachedChannelData: CachedPeerData {
+    var isNotAccessible = false
+    var migrationReference: ChannelMigrationReference?
+    func withUpdatedIsNotAccessible(_ value: Bool) -> Self {
+        Self(isNotAccessible: value, migrationReference: migrationReference)
+    }
+    func withUpdatedMigrationReference(_ value: ChannelMigrationReference?) -> Self {
+        Self(isNotAccessible: isNotAccessible, migrationReference: value)
+    }
+}
+struct MessageFlags: OptionSet {
+    let rawValue: Int
+    static let Incoming = Self(rawValue: 1)
+    static let Unsent = Self(rawValue: 2)
+    static let Sending = Self(rawValue: 4)
+    static let Failed = Self(rawValue: 8)
+}
+struct TelegramMediaAction {}
+struct EphemeralMessageAttribute {}
+struct SimpleDictionary {}
+struct Message {
+    let stableId: UInt32
+    let stableVersion: UInt32
+    let id: MessageId
+    let globallyUniqueId: Int64?
+    let groupingKey: Int64?
+    let groupInfo: Int64?
+    let threadId: Int64?
+    let timestamp: Int32
+    let flags: MessageFlags
+    let tags: [Int]
+    let globalTags: [Int]
+    let localTags: [Int]
+    let customTags: [Int]
+    let forwardInfo: Int?
+    let author: Peer?
+    let text: String
+    let attributes: [Any]
+    let media: [Int]
+    let peers: SimpleDictionary
+    let associatedMessages: SimpleDictionary
+    let associatedMessageIds: [MessageId]
+    let associatedMedia: [Int: Int]
+    let associatedThreadInfo: Int?
+    let associatedStories: [Int: Int]
+    var index: MessageIndex { MessageIndex(id: id, timestamp: timestamp) }
+    var isScheduledMessage: Bool { false }
+    var adAttribute: Int? { nil }
+    var extendedMedia: Any? { nil }
+    var containsSecretMedia: Bool { false }
+    var autoclearTimeout: Int? { nil }
+    var autoremoveAttribute: Int? { nil }
+    var activeEphemeralReplacementMessage: Int? { nil }
+
+    func effectivelyIncoming(_ accountPeerId: PeerId) -> Bool {
+        flags.contains(.Incoming)
+    }
+}
+enum ChatMode: Equatable { case history, preview, scheduled, pinned }
+enum ChatLocation: Equatable {
+    case peer(PeerId)
+    case thread(PeerId, Int64)
+    static func makeSaved(_ accountId: PeerId, threadId: Int64) -> Self {
+        .thread(accountId, threadId)
+    }
+}
+struct SearchState {
+    let inSearch = false
+    let tag: Int? = nil
+}
+struct ChatPresentationInterfaceState {
+    var chatLocation: ChatLocation
+    var chatMode: ChatMode
+    var peer: Peer?
+    var isNotAccessible = false
+    var selectionState: Int?
+    let reportMode: Int? = nil
+    let contentSettings: Int? = nil
+    var cachedData: CachedPeerData?
+    let searchMode = SearchState()
+
+    func updatedPeer(_ update: (Peer?) -> Peer?) -> Self {
+        var copy = self
+        copy.peer = update(peer)
+        return copy
+    }
+    func withSelectionState() -> Self {
+        var copy = self
+        copy.selectionState = 1
+        return copy
+    }
+    func withUpdatedIsNotAccessible(_ value: Bool) -> Self {
+        var copy = self
+        copy.isNotAccessible = value
+        return copy
+    }
+    func withUpdatedChatLocation(_ value: ChatLocation) -> Self {
+        var copy = self
+        copy.chatLocation = value
+        return copy
+    }
+    func withUpdatedCachedData(_ value: CachedPeerData?) -> Self {
+        var copy = self
+        copy.cachedData = value
+        return copy
+    }
+}
+
+let traceReadStates = false
+final class PostboxImpl {}
+enum ApplyInteractiveMaxReadIdResult: Equatable { case None, Push(thenSync: Bool) }
+
+final class MessageHistoryReadStateTable {
+    final class Record {
+        var namespaces: [MessageId.Namespace: PeerReadState]
+
+        init(_ namespaces: [MessageId.Namespace: PeerReadState]) {
+            self.namespaces = namespaces
+        }
+    }
+
+    var states: [PeerId: Record] = [:]
+    func get(_ id: PeerId) -> Record? { states[id] }
+    func markReadStatesAsUpdated(_ id: PeerId, namespaces: [MessageId.Namespace: PeerReadState]) {}
+    func applyIncomingMaxReadIndex(_ index: MessageIndex, topMessageIndex: MessageIndex?, incomingStatsInRange: (MessageIndex, MessageIndex) -> (count: Int, holes: Bool, readMessageIds: [MessageId])) -> (CombinedPeerReadState?, Bool, [MessageId]) {
+        fatalError("The exact mode must not use index-based state")
+    }
+__READ_STATE_METHODS__
+}
+
+enum NoError: Error {}
+struct Signal<Value, ErrorType: Error> { let value: Value }
+
+final class Transaction {
+    var peer: Peer?
+    var cachedData: CachedPeerData?
+    var message: Message?
+    var album: [Message]?
+    var readState: CombinedPeerReadState?
+    var writes: [MessageIndex] = []
+    func getPeer(_ id: PeerId) -> Peer? { peer?.id == id ? peer : nil }
+    func getPeerCachedData(peerId: PeerId) -> CachedPeerData? { cachedData }
+    func getMessage(_ id: MessageId) -> Message? { message?.id == id ? message : nil }
+    func getCombinedPeerReadState(_ id: PeerId) -> CombinedPeerReadState? { readState }
+    func getMessageGroup(_ id: MessageId) -> [Message]? { album }
+    func applyInteractiveReadThroughIndex(_ index: MessageIndex) { writes.append(index) }
+}
+
+final class Postbox {
+    let data = Transaction()
+    private(set) var transactionCount = 0
+    func transaction<T>(userInteractive: Bool, _ perform: (Transaction) -> T) -> Signal<T, NoError> {
+        transactionCount += 1
+        return Signal(value: perform(data))
+    }
+}
+
+final class StateManager {
+    private(set) var notifications: [MessageId] = []
+    func notifyAppliedIncomingReadMessages(_ ids: [MessageId]) {
+        notifications.append(contentsOf: ids)
+    }
+}
+
+final class Account {
+    let peerId: PeerId
+    let postbox = Postbox()
+    let stateManager = StateManager()
+    init(peerId: PeerId) { self.peerId = peerId }
+}
+func peerKeepsReadState(_ peer: Peer) -> Bool {
+    (peer as? TelegramChannel).map { $0.participationStatus == .member } ?? true
+}
+__READ_THROUGH_TRANSACTION__

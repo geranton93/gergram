@@ -3305,7 +3305,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         }
         chatInteraction.canInspectMessageDetails = { [weak self, weak chatInteraction] in
             guard let self, let chatInteraction, self.chatInteraction === chatInteraction else { return false }
-            return self.isAnalyticsVisible && self.navigationController?.controller === self
+            return NSApp.isActive && self.isAnalyticsVisible && self.navigationController?.controller === self
                 && self.genericView.window === self.context.window && !self.genericView.isHiddenOrHasHiddenAncestor
                 && ChatUIHooks.shared.appIsLockedValue() != true
         }

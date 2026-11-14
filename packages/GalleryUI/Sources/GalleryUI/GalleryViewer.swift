@@ -425,6 +425,9 @@ public class GalleryViewer: NSResponder {
         }
         window.setGalleryKeyHandler({ [weak self] event in
             guard let `self` = self else {return .rejected}
+            if self.handleGIFPlaybackShortcut(event) {
+                return .invoked
+            }
             if self.pager.selectedItem is MGalleryVideoItem || self.pager.selectedItem is MGalleryExternalVideoItem {
                 self.pager.selectedItem?.togglePlayerOrPause()
                 return .invoked
@@ -432,6 +435,10 @@ public class GalleryViewer: NSResponder {
                 return self.interactions.dismiss(event)
             }
         }, with:self, for: .Space)
+
+        window.setGalleryKeyHandler({ [weak self] event in
+            return self?.handleGIFPlaybackShortcut(event) == true ? .invoked : .rejected
+        }, with: self, for: .K)
         
         window.setGalleryKeyHandler({ [weak self] event in
             guard let `self` = self else {return .rejected}
@@ -1018,6 +1025,22 @@ public class GalleryViewer: NSResponder {
 
     }
     
+
+    private func handleGIFPlaybackShortcut(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .control, .shift, .function]).isEmpty,
+              self.type != .secret,
+              let item = self.pager.selectedItem as? MGalleryGIFItem,
+              !item.entry.isProtected,
+              item.entry.message?.isCopyProtected(cachedData: self.cachedPeerData) != true,
+              item.entry.message?.autoclearTimeout == nil,
+              item.media.isVideo, item.media.isAnimated else {
+            return false
+        }
+        if !event.isARepeat {
+            item.togglePlayerOrPause()
+        }
+        return true
+    }
 
     private func showControlsPopoverReady(_ control: Control, savedGifs: [RecentMediaItem]) {
         

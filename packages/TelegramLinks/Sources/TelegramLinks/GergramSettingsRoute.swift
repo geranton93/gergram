@@ -1,6 +1,12 @@
 public enum GergramSettingsRoute: String {
     case messageContextMenu = "general/message-context-menu"
     case transcriptionLanguage = "general/on-device-transcription-language"
+    case filterZalgoText = "general/filter-zalgo-text"
+    case miniAppWindowSize = "general/mini-app-window-size"
+    case hideChatListStories = "general/hide-chat-list-stories"
+    case hideProfileStories = "general/hide-profile-stories"
+    case channelBottomAction = "general/channel-bottom-action"
+    case sendWithoutSound = "general/send-without-sound"
     case messageBubbleCorners = "appearance/message-bubble-corners"
     case avatarCorners = "appearance/avatar-corners"
     case editedMessageLabel = "appearance/edited-message-label"

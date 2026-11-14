@@ -7,6 +7,7 @@ import InAppSettings
 import Localization
 import TelegramTheme
 import TelegramContext
+import TelegramLinks
 import TelegramUtils
 import AlertsUI
 import WallpaperUI
@@ -750,45 +751,22 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
             
             let appearanceItems = appearanceSearchableItems(context: context)
             allItems.append(contentsOf: appearanceItems)
-            allItems.append(SettingsSearchableItem(id: .general(0), title: localizedString("Gergram.Chat.FilterZalgoText"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
-                let controller = GeneralSettingsViewController(context)
-                controller.focusOnZalgoFilter()
-                present(.push, controller)
-            }))
-            allItems.append(SettingsSearchableItem(id: .general(1), title: localizedString("Gergram.Chat.MenuSettings"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
-                present(.push, messageContextMenuSettingsController())
-            }))
-            allItems.append(SettingsSearchableItem(id: .general(2), title: localizedString("Gergram.MiniApp.WindowSize"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
-                present(.push, miniAppWindowSizeSettingsController())
-            }))
-            
-            allItems.append(SettingsSearchableItem(id: .general(3), title: localizedString("Gergram.Stories.HideInChatList"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
-                let controller = GeneralSettingsViewController(context)
-                controller.focusOnHideChatListStories()
-                present(.push, controller)
-            }))
-
-            allItems.append(SettingsSearchableItem(id: .general(4), title: localizedString("Gergram.Settings.SendWithoutSoundByDefault"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
-                let controller = GeneralSettingsViewController(context)
-                controller.focusOnSendWithoutSound()
-                present(.push, controller)
-            }))
-
-            allItems.append(SettingsSearchableItem(id: .general(5), title: localizedString("Gergram.Stories.HideInProfiles"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
-                let controller = GeneralSettingsViewController(context)
-                controller.focusOnHideProfileStories()
-                present(.push, controller)
-            }))
-
-            allItems.append(SettingsSearchableItem(id: .general(6), title: localizedString("Gergram.Chat.ChannelBottomAction"), alternate: [], icon: .appearance, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
-                let controller = GeneralSettingsViewController(context)
-                controller.focusOnChannelBottomAction()
-                present(.push, controller)
-            }))
-
-            allItems.append(SettingsSearchableItem(id: .general(7), title: localizedString("Gergram.Transcription.Language"), alternate: [], icon: .language, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
-                present(.push, receivedAudioTranscriptionLanguageController())
-            }))
+            let generalRoutes: [(Int32, GergramSettingsRoute, String, SettingsSearchableItemIcon)] = [
+                (0, .filterZalgoText, "Gergram.Chat.FilterZalgoText", .appearance),
+                (1, .messageContextMenu, "Gergram.Chat.MenuSettings", .appearance),
+                (2, .miniAppWindowSize, "Gergram.MiniApp.WindowSize", .appearance),
+                (3, .hideChatListStories, "Gergram.Stories.HideInChatList", .appearance),
+                (4, .sendWithoutSound, "Gergram.Settings.SendWithoutSoundByDefault", .appearance),
+                (5, .hideProfileStories, "Gergram.Stories.HideInProfiles", .appearance),
+                (6, .channelBottomAction, "Gergram.Chat.ChannelBottomAction", .appearance),
+                (7, .transcriptionLanguage, "Gergram.Transcription.Language", .language)
+            ]
+            for (id, route, titleKey, icon) in generalRoutes {
+                allItems.append(SettingsSearchableItem(id: .general(id), title: localizedString(titleKey), alternate: [], icon: icon, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
+                    guard let controller = gergramSettingsController(route, context: context) else { return }
+                    present(.push, controller)
+                }))
+            }
 
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)

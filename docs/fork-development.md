@@ -21,6 +21,23 @@ git fetch upstream
 git log --oneline --left-right HEAD...upstream/master
 ```
 
+## Settings links
+
+Links open a native settings screen for the account selected by the app. Change a preference from its control after the screen opens.
+
+| General setting | Link path after `gergram://settings/` |
+| --- | --- |
+| Message Context Menu | `general/message-context-menu` |
+| On-Device Transcription Language | `general/on-device-transcription-language` |
+| Filter Zalgo Text in Messages | `general/filter-zalgo-text` |
+| Mini App Window Size | `general/mini-app-window-size` |
+| Hide Stories in Chat List | `general/hide-chat-list-stories` |
+| Hide Stories in Profiles | `general/hide-profile-stories` |
+| Channel Bottom Action | `general/channel-bottom-action` |
+| Send Without Sound by Default | `general/send-without-sound` |
+
+Appearance supports `appearance/message-bubble-corners`, `appearance/avatar-corners` and `appearance/edited-message-label`. Privacy and Security supports `privacy/locally-hidden-senders`, `privacy/message-filters` and `privacy/local-message-archive`.
+
 ## Prepare a checkout
 
 Use full Xcode, Homebrew, and Rust via rustup. Upstream uses Xcode 26. The current development machine was identified as arm64 with Xcode 27.0 and Swift 6.4, so use the local Xcode 27 steps below on that toolchain. On Apple Silicon, upstream setup also checks for Rosetta 2 to run the x86_64 `tde2e` code generator.

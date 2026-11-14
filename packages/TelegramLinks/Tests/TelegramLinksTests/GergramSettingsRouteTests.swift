@@ -19,6 +19,24 @@ final class GergramSettingsRouteTests: XCTestCase {
         XCTAssertFalse(GergramSettingsRoute.recognizesScheme("https://example.test/gergram://settings/general/message-context-menu"))
     }
 
+    func testGeneralPreferenceLinksAreNavigationOnly() {
+        let paths = [
+            "general/filter-zalgo-text",
+            "general/mini-app-window-size",
+            "general/hide-chat-list-stories",
+            "general/hide-profile-stories",
+            "general/channel-bottom-action",
+            "general/send-without-sound"
+        ]
+        for path in paths {
+            let url = "gergram://settings/" + path
+            XCTAssertEqual(GergramSettingsRoute(url: url)?.rawValue, path)
+            for suffix in ["?enabled=true", "?account=123", "#reset", "/reset"] {
+                XCTAssertNil(GergramSettingsRoute(url: url + suffix), url + suffix)
+            }
+        }
+    }
+
     func testRejectsOtherAuthoritiesAndNoncanonicalPaths() {
         let urls = [
             "tg://settings/general/message-context-menu",

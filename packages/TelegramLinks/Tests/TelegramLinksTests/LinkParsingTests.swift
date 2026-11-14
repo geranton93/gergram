@@ -267,9 +267,16 @@ final class LinkParsingTests: XCTestCase {
 
     func testGergramSettingsLinksStayLocalAndRequireAccountContext() {
         let editedLabel = "gergram://settings/appearance/edited-message-label"
+        let zalgoFilter = "gergram://settings/general/filter-zalgo-text"
         let cases: [(String, GergramSettingsRoute)] = [
             ("gergram://settings/general/message-context-menu", .messageContextMenu),
             ("gergram://settings/general/on-device-transcription-language", .transcriptionLanguage),
+            (zalgoFilter, .filterZalgoText),
+            ("gergram://settings/general/mini-app-window-size", .miniAppWindowSize),
+            ("gergram://settings/general/hide-chat-list-stories", .hideChatListStories),
+            ("gergram://settings/general/hide-profile-stories", .hideProfileStories),
+            ("gergram://settings/general/channel-bottom-action", .channelBottomAction),
+            ("gergram://settings/general/send-without-sound", .sendWithoutSound),
             ("gergram://settings/appearance/message-bubble-corners", .messageBubbleCorners),
             ("gergram://settings/appearance/avatar-corners", .avatarCorners),
             (editedLabel, .editedMessageLabel),
@@ -291,6 +298,7 @@ final class LinkParsingTests: XCTestCase {
             editedLabel + "?value=custom",
             editedLabel + "#reset",
             editedLabel + "/reset",
+            zalgoFilter + "?enabled=true",
             "GERGRAM://example.t.me/settings/privacy/locally-hidden-senders",
             "gergram://settings/privacy/locally-hidden-senders?account=123",
             "gergram://settings/privacy/message-filters?import=https://example.test/rules",

@@ -130,6 +130,7 @@ public final class ChatWrappedEntry : Comparable, Identifiable {
     fileprivate let hidesPremiumStatuses: Bool
     fileprivate let simplifiesQuotesAndReplies: Bool
     fileprivate let hidesMessageReactions: Bool
+    fileprivate let hiddenReactionAvatarPeerIds: Set<PeerId>
     fileprivate let hidesMessageBubbleTail: Bool
     fileprivate let messageWidth: ChatMessageWidth
     fileprivate let revealsMediaSpoilers: Bool
@@ -140,7 +141,8 @@ public final class ChatWrappedEntry : Comparable, Identifiable {
         appearance: AppearanceWrapperEntry<ChatHistoryEntry>, tag: HistoryViewInputTag?, showsTimestampSeconds: Bool = false,
         filtersZalgoText: Bool = false, hidesPremiumStatuses: Bool = false, simplifiesQuotesAndReplies: Bool = false,
         hidesMessageReactions: Bool = false, hidesMessageBubbleTail: Bool = false, messageWidth: ChatMessageWidth = .standard, revealsMediaSpoilers: Bool = false,
-        monospaceFont: ChatMonospaceFont = .system, messageBubbleRadius: Int = MessageBubbleRadiusPreferences.defaultRadius, hidesFastShare: Bool = false
+        monospaceFont: ChatMonospaceFont = .system, messageBubbleRadius: Int = MessageBubbleRadiusPreferences.defaultRadius, hidesFastShare: Bool = false,
+        hiddenReactionAvatarPeerIds: Set<PeerId> = []
     ) {
         self.appearance = appearance
         self.tag = tag
@@ -149,6 +151,7 @@ public final class ChatWrappedEntry : Comparable, Identifiable {
         self.hidesPremiumStatuses = hidesPremiumStatuses
         self.simplifiesQuotesAndReplies = simplifiesQuotesAndReplies
         self.hidesMessageReactions = hidesMessageReactions
+        self.hiddenReactionAvatarPeerIds = hiddenReactionAvatarPeerIds
         self.hidesMessageBubbleTail = hidesMessageBubbleTail
         self.messageWidth = messageWidth
         self.revealsMediaSpoilers = revealsMediaSpoilers
@@ -170,6 +173,7 @@ public func ==(lhs:ChatWrappedEntry, rhs: ChatWrappedEntry) -> Bool {
         && lhs.hidesPremiumStatuses == rhs.hidesPremiumStatuses
         && lhs.simplifiesQuotesAndReplies == rhs.simplifiesQuotesAndReplies
         && lhs.hidesMessageReactions == rhs.hidesMessageReactions
+        && lhs.hiddenReactionAvatarPeerIds == rhs.hiddenReactionAvatarPeerIds
         && lhs.hidesMessageBubbleTail == rhs.hidesMessageBubbleTail
         && lhs.messageWidth == rhs.messageWidth
         && lhs.revealsMediaSpoilers == rhs.revealsMediaSpoilers
@@ -188,16 +192,18 @@ final class ChatHistoryView {
     let theme: TelegramPresentationTheme
     let locallyHiddenItems: Set<ChatLocalHiddenItem>
     let filteredSenderIds: Set<PeerId>
+    let hiddenReactionAvatarPeerIds: Set<PeerId>
     let regexHiddenItems: Set<ChatLocalHiddenItem>
     let isLocallyEmpty: Bool
     let editedIndicator: ChatEditedIndicatorAppearance
 
-    init(originalView: MessageHistoryView?, filteredEntries: [ChatWrappedEntry], theme: TelegramPresentationTheme, locallyHiddenItems: Set<ChatLocalHiddenItem> = [], filteredSenderIds: Set<PeerId> = [], regexHiddenItems: Set<ChatLocalHiddenItem> = [], isLocallyEmpty: Bool = false, editedIndicator: ChatEditedIndicatorAppearance = .init()) {
+    init(originalView: MessageHistoryView?, filteredEntries: [ChatWrappedEntry], theme: TelegramPresentationTheme, locallyHiddenItems: Set<ChatLocalHiddenItem> = [], filteredSenderIds: Set<PeerId> = [], hiddenReactionAvatarPeerIds: Set<PeerId> = [], regexHiddenItems: Set<ChatLocalHiddenItem> = [], isLocallyEmpty: Bool = false, editedIndicator: ChatEditedIndicatorAppearance = .init()) {
         self.originalView = originalView
         self.filteredEntries = filteredEntries
         self.theme = theme
         self.locallyHiddenItems = locallyHiddenItems
         self.filteredSenderIds = filteredSenderIds
+        self.hiddenReactionAvatarPeerIds = hiddenReactionAvatarPeerIds
         self.regexHiddenItems = regexHiddenItems
         self.isLocallyEmpty = isLocallyEmpty
         self.editedIndicator = editedIndicator
@@ -2085,6 +2091,7 @@ fileprivate func prepareEntries(from fromView:ChatHistoryView?, to toView:ChatHi
             if let row = item as? ChatRowItem {
                 row.setHidesDecorativeAuthorStatus(entry.hidesPremiumStatuses)
                 row.hidesMessageReactions = entry.hidesMessageReactions
+                row.hiddenReactionAvatarPeerIds = entry.hiddenReactionAvatarPeerIds
                 row.hidesMessageBubbleTail = entry.hidesMessageBubbleTail
                 row.messageBubbleRadius = entry.messageBubbleRadius
                 row.hidesFastShare = entry.hidesFastShare
@@ -4368,7 +4375,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             : .single([])
         let historyPresentation = combineLatest(historyUiState, localVisibility, locallyRevealedMessageId.get(), FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, ChatEditedIndicatorPreferences.shared.appearanceSignal, PremiumStatusVisibilityPreferences.shared.signal, ChatReplyAppearancePreferences.shared.signal, ChatReactionVisibilityPreferences.shared.signal, MessageBubbleTailPreferences.shared.signal, ChatMessageWidthPreferences.shared.signal, ChatMediaSpoilerPreferences.shared.signal, ChatMonospaceFontPreferences.shared.signal, MessageBubbleRadiusPreferences.shared.signal, ChatAffordancePreferences.shared.hidesFastShareSignal)
         typealias HistoryUpdate = (ChatHistoryViewUpdate, TableSavingSide?, ChatHistoryLocationInput, ChatLocation, Int)
-        let historyWithFilteredSenders: Signal<(HistoryUpdate, Set<PeerId>), NoError>
+        let historyWithFilteredSenders: Signal<(HistoryUpdate, Set<PeerId>, Set<PeerId>), NoError>
         if supportsLocalMessageVisibility {
             let localShadowBans: Signal<Set<PeerId>, NoError> = peerId.namespace != Namespaces.Peer.SecretChat
                 ? localShadowBannedSenderIds(context.account.postbox) |> deliverOnMainQueue |> map { [weak self] ids in
@@ -4383,25 +4390,35 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 localMessageVisibility.observeShowsFilteredSenders(peerId: peerId),
                 localShadowBans
             ) |> mapToSignal { update, hideBlockedSenders, showInChat, shadowBannedSenderIds in
-                guard (hideBlockedSenders || !shadowBannedSenderIds.isEmpty), !showInChat, update.3.peerId == peerId, update.2.tag == nil,
+                guard ChatBlockedSenderVisibility.Candidates.shouldFilter(hidesBlocked: hideBlockedSenders, showsFilteredSenders: showInChat, locallyHidden: shadowBannedSenderIds),
+                      update.3.peerId == peerId, update.2.tag == nil,
                       case let .HistoryView(view, _, _, _) = update.0 else {
-                    return .single((update, []))
+                    return .single((update, [], []))
                 }
-                let senderIds = view.entries.reduce(into: Set<PeerId>()) { ids, entry in
-                    ids.formUnion(ChatBlockedSenderVisibility.candidates(for: entry.message, accountPeerId: context.peerId))
+                var senderIds: Set<PeerId> = []
+                var reactionAvatarIds: Set<PeerId> = []
+                for entry in view.entries {
+                    senderIds.formUnion(ChatBlockedSenderVisibility.candidates(for: entry.message, accountPeerId: context.peerId))
+                    reactionAvatarIds.formUnion(ChatReactionAvatarVisibility.candidates(for: entry.message, accountPeerId: context.peerId))
                 }
-                let locallyHidden = shadowBannedSenderIds.intersection(senderIds)
-                guard hideBlockedSenders, !senderIds.isEmpty else { return .single((update, locallyHidden)) }
-                let items = senderIds.map { TelegramEngine.EngineData.Item.Peer.IsBlocked(id: $0) }
+                let candidates = ChatBlockedSenderVisibility.Candidates(messageSenders: senderIds, reactionAvatars: reactionAvatarIds)
+                let blockedCandidates = candidates.blockedPeerIds
+                let locallyHidden = shadowBannedSenderIds.intersection(candidates.peerIds)
+                let project: (Set<PeerId>) -> (HistoryUpdate, Set<PeerId>, Set<PeerId>) = { blocked in
+                    let hidden = candidates.project(knownBlocked: blocked, locallyHidden: locallyHidden)
+                    return (update, hidden.messageSenders, hidden.reactionAvatars)
+                }
+                guard hideBlockedSenders, !blockedCandidates.isEmpty else { return .single(project([])) }
+                let items = blockedCandidates.map { TelegramEngine.EngineData.Item.Peer.IsBlocked(id: $0) }
                 return context.engine.data.subscribe(EngineDataMap(items)) |> map { states in
                     let blocked = Set(states.compactMap { id, state in state.knownValue == true ? id : nil })
-                    return (update, locallyHidden.union(blocked))
+                    return project(blocked)
                 }
             }
         } else {
-            historyWithFilteredSenders = historyViewUpdate |> map { ($0, []) }
+            historyWithFilteredSenders = historyViewUpdate |> map { ($0, [], []) }
         }
-        typealias LocallyFilteredHistoryUpdate = (HistoryUpdate, Set<PeerId>, Set<ChatLocalHiddenItem>)
+        typealias LocallyFilteredHistoryUpdate = (HistoryUpdate, Set<PeerId>, Set<PeerId>, Set<ChatLocalHiddenItem>)
         let historyWithLocalFilters: Signal<LocallyFilteredHistoryUpdate, NoError>
         if supportsLocalMessageVisibility, LocalMessageFilterPreferences.acceptsChat(peerId) {
             let isBroadcast = historyPeerView |> map { view -> Bool in
@@ -4419,16 +4436,16 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             }
             historyWithLocalFilters = combineLatest(queue: queue, historyWithFilteredSenders, rules, localMessageVisibility.observeShowsFilteredSenders(peerId: peerId), searchState.get())
             |> mapToSignal { history, rules, showInChat, search -> Signal<LocallyFilteredHistoryUpdate, NoError> in
-                let (update, hiddenSenders) = history
+                let (update, hiddenSenders, hiddenReactionAvatars) = history
                 guard !rules.isEmpty, !showInChat, search.query.isEmpty, search.messages.isEmpty, update.3.peerId == peerId,
                       update.2.tag == nil, case let .HistoryView(view, _, _, _) = update.0 else {
-                    return .single((update, hiddenSenders, []))
+                    return .single((update, hiddenSenders, hiddenReactionAvatars, []))
                 }
                 return ChatRegexFilterProjection.hiddenItems(entries: view.entries, rules: rules, accountPeerId: context.peerId)
-                |> map { (update, hiddenSenders, $0) }
+                |> map { (update, hiddenSenders, hiddenReactionAvatars, $0) }
             }
         } else {
-            historyWithLocalFilters = historyWithFilteredSenders |> map { ($0.0, $0.1, []) }
+            historyWithLocalFilters = historyWithFilteredSenders |> map { ($0.0, $0.1, $0.2, []) }
         }
         let historyViewTransition = combineLatest(queue: queue,
                                                   historyWithLocalFilters,
@@ -4448,7 +4465,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                                                   recommendedChannels
     ) |> mapToQueue { historyUpdate, appearance, maxReadIndex, searchState, animatedEmojiStickers, messageEffects, savedMessageTags, customChannelDiscussionReadState, customThreadOutgoingReadState, updatingMedia, adMessages, reactions, historyPresentation, peerView, recommendedChannels -> Signal<(TableUpdateTransition, ChatHistoryCombinedInitialData, Bool, ChatHistoryView, Bool), NoError> in
 
-            let (update, hiddenSenderIds, regexHiddenItems) = historyUpdate
+            let (update, hiddenSenderIds, hiddenReactionAvatars, regexHiddenItems) = historyUpdate
             let (uiState, localVisibility, revealedMessageId, showsTimestampSeconds, filtersZalgoText, editedIndicator, hidesPremiumStatuses, simplifiesQuotesAndReplies, hiddenReactionKinds, hidesMessageBubbleTail, messageWidth, revealMediaSpoilers, monospaceFont, messageBubbleRadius, hidesFastShare) = historyPresentation
             let pollAnswersLoading = uiState.pollAnswers
             let threadLoading = uiState.threadLoading
@@ -4602,6 +4619,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                         reactionKind = nil
                     }
                     let hidesMessageReactions = reactionKind.map(hiddenReactionKinds.contains) ?? false
+                    let hiddenReactionAvatarPeerIds = isOrdinaryHistory && !hidesMessageReactions ? hiddenReactionAvatars : []
                     let revealsMediaSpoilers: Bool
                     switch mode {
                     case .history, .thread:
@@ -4609,13 +4627,24 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     default:
                         revealsMediaSpoilers = false
                     }
-                    let entries = messageEntries(msgEntries, location: chatLocation, maxReadIndex: view.isAnchorOnlyWhileLoading ? nil : maxReadIndex, dayGrouping: customChatContents == nil, renderType: chatTheme.bubbled ? .bubble : .list, includeBottom: true, timeDifference: timeDifference, ranks: ranks, pollAnswersLoading: pollAnswersLoading, threadLoading: threadLoading, groupingPhotos: true, autoplayMedia: initialData.autoplayMedia, searchState: searchState, animatedEmojiStickers: bigEmojiEnabled ? animatedEmojiStickers : [:], topFixedMessages: topMessages, customChannelDiscussionReadState: customChannelDiscussionReadState, customThreadOutgoingReadState: customThreadOutgoingReadState, addRepliesHeader: peerId == repliesPeerId && view.earlierId == nil, addWelcomeMessagesHeader: customChatContents?.kind == .welcomeMessages, updatingMedia: updatingMedia, adMessage: ads.fixed, dynamicAdMessages: ads.opportunistic, chatTheme: chatTheme, reactions: reactions, transribeState: uiState.transribe, topicCreatorId: uiState.topicCreatorId, mediaRevealed: uiState.mediaRevealed, translate: uiState.translate, storyState: uiState.storyState, peerStoryStats: view.peerStoryStats, cachedData: peerView?.cachedData, peer: peer, holeLater: view.holeLater, holeEarlier: view.holeEarlier, recommendedChannels: recommendedChannels, includeJoin: includeJoin, earlierId: view.earlierId, laterId: view.laterId, automaticDownload: initialData.autodownloadSettings, savedMessageTags: savedMessageTags, contentSettings: context.contentSettings, codeSyntaxData: uiState.codeSyntaxes, messageEffects: messageEffects, factCheckRevealed: uiState.factCheck, solutionRevealed: uiState.solutionRevealed, quoteRevealed: uiState.quoteRevealed, detailsExpanded: uiState.detailsExpanded, peerStatus: uiState.peerStatus, commonGroups: uiState.commonGroups, monoforumState: uiState.monoforumState, accountPeerId: context.peerId, contentConfig: context.contentConfig, walletFiatRate: uiState.walletFiatRate, editedIndicator: editedIndicator).map { ChatWrappedEntry(appearance: AppearanceWrapperEntry(entry: $0, appearance: appearance), tag: view.tag, showsTimestampSeconds: showsTimestampSeconds, filtersZalgoText: filtersZalgoText, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hidesMessageReactions: hidesMessageReactions, hidesMessageBubbleTail: hidesMessageBubbleTail, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius, hidesFastShare: hidesFastShare) }
+                    let entries = messageEntries(msgEntries, location: chatLocation, maxReadIndex: view.isAnchorOnlyWhileLoading ? nil : maxReadIndex, dayGrouping: customChatContents == nil, renderType: chatTheme.bubbled ? .bubble : .list, includeBottom: true, timeDifference: timeDifference, ranks: ranks, pollAnswersLoading: pollAnswersLoading, threadLoading: threadLoading, groupingPhotos: true, autoplayMedia: initialData.autoplayMedia, searchState: searchState, animatedEmojiStickers: bigEmojiEnabled ? animatedEmojiStickers : [:], topFixedMessages: topMessages, customChannelDiscussionReadState: customChannelDiscussionReadState, customThreadOutgoingReadState: customThreadOutgoingReadState, addRepliesHeader: peerId == repliesPeerId && view.earlierId == nil, addWelcomeMessagesHeader: customChatContents?.kind == .welcomeMessages, updatingMedia: updatingMedia, adMessage: ads.fixed, dynamicAdMessages: ads.opportunistic, chatTheme: chatTheme, reactions: reactions, transribeState: uiState.transribe, topicCreatorId: uiState.topicCreatorId, mediaRevealed: uiState.mediaRevealed, translate: uiState.translate, storyState: uiState.storyState, peerStoryStats: view.peerStoryStats, cachedData: peerView?.cachedData, peer: peer, holeLater: view.holeLater, holeEarlier: view.holeEarlier, recommendedChannels: recommendedChannels, includeJoin: includeJoin, earlierId: view.earlierId, laterId: view.laterId, automaticDownload: initialData.autodownloadSettings, savedMessageTags: savedMessageTags, contentSettings: context.contentSettings, codeSyntaxData: uiState.codeSyntaxes, messageEffects: messageEffects, factCheckRevealed: uiState.factCheck, solutionRevealed: uiState.solutionRevealed, quoteRevealed: uiState.quoteRevealed, detailsExpanded: uiState.detailsExpanded, peerStatus: uiState.peerStatus, commonGroups: uiState.commonGroups, monoforumState: uiState.monoforumState, accountPeerId: context.peerId, contentConfig: context.contentConfig, walletFiatRate: uiState.walletFiatRate, editedIndicator: editedIndicator).map { entry in
+                        var rowHiddenAvatars: Set<PeerId> = []
+                        if !hiddenReactionAvatarPeerIds.isEmpty {
+                            for message in entry.messages {
+                                rowHiddenAvatars.formUnion(hiddenReactionAvatarPeerIds.intersection(
+                                    ChatReactionAvatarVisibility.candidates(for: message, accountPeerId: context.peerId)
+                                ))
+                            }
+                        }
+                        return ChatWrappedEntry(appearance: AppearanceWrapperEntry(entry: entry, appearance: appearance), tag: view.tag, showsTimestampSeconds: showsTimestampSeconds, filtersZalgoText: filtersZalgoText, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hidesMessageReactions: hidesMessageReactions, hidesMessageBubbleTail: hidesMessageBubbleTail, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius, hidesFastShare: hidesFastShare, hiddenReactionAvatarPeerIds: rowHiddenAvatars)
+                    }
                     proccesedView = ChatHistoryView(
                         originalView: view,
                         filteredEntries: entries,
                         theme: chatTheme,
                         locallyHiddenItems: hiddenItems,
                         filteredSenderIds: filteredSenderIds,
+                        hiddenReactionAvatarPeerIds: hiddenReactionAvatarPeerIds,
                         regexHiddenItems: filteredRegexItems,
                         isLocallyEmpty: msgEntries.isEmpty && !view.entries.isEmpty,
                         editedIndicator: editedIndicator
@@ -4628,6 +4657,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             let previous = previousView.swap(proccesedView)
             let localVisibilityChanged = previous?.locallyHiddenItems != proccesedView.locallyHiddenItems
                 || previous?.filteredSenderIds != proccesedView.filteredSenderIds
+                || previous?.hiddenReactionAvatarPeerIds != proccesedView.hiddenReactionAvatarPeerIds
                 || previous?.regexHiddenItems != proccesedView.regexHiddenItems
             let timestampFormatChanged = previous?.filteredEntries.first?.showsTimestampSeconds != proccesedView.filteredEntries.first?.showsTimestampSeconds
             let zalgoFilterChanged = previous?.filteredEntries.first?.filtersZalgoText != proccesedView.filteredEntries.first?.filtersZalgoText
@@ -7245,6 +7275,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                                         let updatedItem = ChatRowItem.item(size, from: entry, interaction: self.chatInteraction, theme: theme)
                                         if let updatedRow = updatedItem as? ChatRowItem {
                                             updatedRow.hidesMessageReactions = item.hidesMessageReactions
+                                            updatedRow.hiddenReactionAvatarPeerIds = item.hiddenReactionAvatarPeerIds
                                             updatedRow.hidesMessageBubbleTail = item.hidesMessageBubbleTail
                                             updatedRow.messageBubbleRadius = item.messageBubbleRadius
                                             updatedRow.hidesFastShare = item.hidesFastShare

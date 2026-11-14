@@ -260,6 +260,7 @@ public final class ChatReactionsLayout {
             lhs.minimumSize == rhs.minimumSize &&
             lhs.source == rhs.source &&
             lhs.mode == rhs.mode &&
+            lhs.avatars == rhs.avatars &&
             lhs.rect == rhs.rect &&
             lhs.message.id == rhs.message.id &&
             lhs.message.containsSecretMedia == rhs.message.containsSecretMedia &&
@@ -302,8 +303,8 @@ public final class ChatReactionsLayout {
                         self.text?.measure(width: .greatestFiniteMagnitude)
 
                     } else {
-                        if recentPeers.isEmpty, mode != .tag {
-                            self.text = .init(.initialize(string: Int(value.count).prettyNumber, color: value.isSelected ? presentation.textSelectedColor : presentation.textColor, font: .normal(.text)))
+                        if mode != .tag, let count = ChatReactionAvatarVisibility.countText(value, hasAvatars: !recentPeers.isEmpty) {
+                            self.text = .init(.initialize(string: count, color: value.isSelected ? presentation.textSelectedColor : presentation.textColor, font: .normal(.text)))
                             self.text?.measure(width: .greatestFiniteMagnitude)
                         } else {
                             self.text = nil
@@ -429,6 +430,9 @@ public final class ChatReactionsLayout {
             } else {
                 let menu = ContextMenu()
                 self.menu = menu
+                if System.legacyMenu {
+                    menu.delegate = menu
+                }
                 menu.onClose = { [weak self] in
                     self?.resetParticipantMenu()
                 }
@@ -562,7 +566,7 @@ public final class ChatReactionsLayout {
     public let mode: Mode
     
     
-    public init(context: any AccountContextProtocol, message: Message, available: AvailableReactions?, peerAllowed: PeerAllowedReactions?, savedMessageTags: SavedMessageTags?, engine:Reactions, theme: TelegramPresentationTheme, renderType: ChatItemRenderType, currentTag: MessageReaction.Reaction?, isIncoming: Bool, isOutOfBounds: Bool, hasWallpaper: Bool, stateOverlayTextColor: NSColor, canSendReactions: @escaping () -> Bool, sendStars: @escaping () -> Void, openInfo:@escaping(PeerId)->Void, runEffect: @escaping(MessageReaction.Reaction, Bool)->Void, tagAction:@escaping(MessageReaction.Reaction)->Void, starReact:@escaping()->Void, reactionsDisabled:@escaping()->Void = {}, analyticsContext: AnalyticsContext? = nil) {
+    public init(context: any AccountContextProtocol, message: Message, available: AvailableReactions?, peerAllowed: PeerAllowedReactions?, savedMessageTags: SavedMessageTags?, engine:Reactions, theme: TelegramPresentationTheme, renderType: ChatItemRenderType, currentTag: MessageReaction.Reaction?, isIncoming: Bool, isOutOfBounds: Bool, hasWallpaper: Bool, stateOverlayTextColor: NSColor, canSendReactions: @escaping () -> Bool, sendStars: @escaping () -> Void, openInfo:@escaping(PeerId)->Void, runEffect: @escaping(MessageReaction.Reaction, Bool)->Void, tagAction:@escaping(MessageReaction.Reaction)->Void, starReact:@escaping()->Void, reactionsDisabled:@escaping()->Void = {}, analyticsContext: AnalyticsContext? = nil, hiddenReactionAvatarPeerIds: Set<PeerId> = []) {
         
         let inherited = message.containsSecretMedia ? Analytics.shared.unresolvedContext() : (analyticsContext ?? Analytics.shared.unresolvedContext())
         let origin = Analytics.shared.captureContext(engine: context.engine, peerId: message.id.peerId, inherited: inherited)
@@ -599,6 +603,9 @@ public final class ChatReactionsLayout {
         }
         
         let sorted = reactions.reactions.sorted(by: <)
+        let showsRecentPeers = mode == .full
+            && message.peers[message.id.peerId]?.isChannel != true
+            && ChatReactionAvatarVisibility.eligibleReactionCounts(reactions.reactions)
         
         
         self.reactions = sorted.compactMap { reaction in
@@ -618,23 +625,11 @@ public final class ChatReactionsLayout {
             }
             
             if let source = source {
-                var recentPeers:[Peer] = reactions.recentPeers.filter { recent in
-                    return recent.value == reaction.value
-                }.compactMap {
-                    message.peers[$0.peerId]
-                }
-                if recentPeers.count < reaction.count {
-                    recentPeers = []
-                }
-                if let peer = message.peers[message.id.peerId], peer.isChannel {
-                    recentPeers = []
-                }
-                if reactions.reactions.reduce(0, { $0 + $1.count }) > 3 {
-                    recentPeers = []
-                }
-                if mode == .tag {
-                    recentPeers = []
-                }
+                var recentPeers = showsRecentPeers ? ChatReactionAvatarVisibility.resolvedPeers(
+                    for: reaction,
+                    recentPeers: reactions.recentPeers,
+                    resolve: { message.peers[$0] }
+                ) : []
                 
                 if message.id.peerId.namespace == Namespaces.Peer.CloudUser {
                     if mode == .full {
@@ -655,6 +650,7 @@ public final class ChatReactionsLayout {
                         }
                     }
                 }
+                recentPeers = ChatReactionAvatarVisibility.visiblePeers(recentPeers, excluding: hiddenReactionAvatarPeerIds)
                 
                 let presentation: Theme = .Current(theme: theme, renderType: renderType, isIncoming: isIncoming, isOutOfBounds: isOutOfBounds, hasWallpaper: hasWallpaper, stateOverlayTextColor: stateOverlayTextColor, mode: mode, isStars: reaction.value == .stars)
                 

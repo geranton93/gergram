@@ -1866,6 +1866,13 @@ public class ChatRowItem: TableRowItem {
     private var _reactionsLayout: ChatReactionsLayout?
     private var hasNoReactionsLayout: Bool = false
     var hidesMessageReactions = false
+    var hiddenReactionAvatarPeerIds: Set<PeerId> = [] {
+        didSet {
+            if hiddenReactionAvatarPeerIds != oldValue {
+                _reactionsLayout = nil
+            }
+        }
+    }
 
     public var reactionsLayout: ChatReactionsLayout? {
         guard !hidesMessageReactions else { return nil }
@@ -1918,7 +1925,7 @@ public class ChatRowItem: TableRowItem {
                     }
                 }, reactionsDisabled: { [weak chatInteraction] in
                     chatInteraction?.showRestrictionToast(strings().chatSendReactionRestricted)
-                }, analyticsContext: origin)
+                }, analyticsContext: origin, hiddenReactionAvatarPeerIds: hiddenReactionAvatarPeerIds)
                 
                 _reactionsLayout = layout
                 return layout

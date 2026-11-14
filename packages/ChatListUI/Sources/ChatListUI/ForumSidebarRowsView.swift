@@ -45,10 +45,13 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
     private let searchLoading = MetaDisposable()
     private let inputActivities = MetaDisposable()
     private let previewSettings = MetaDisposable()
+    private let senderPreviewObservation = MetaDisposable()
+    private var senderPreviewVisibility = ForumSidebarSenderPreviewVisibility()
+    private let senderPreviewRequests = ValuePromise(ForumSidebarSenderPreviewVisibility.Request.empty, ignoreRepeated: true)
     private var filtersZalgoPreview = FastSettings.filterZalgoText
     private let activityScope = ValuePromise<ActivityScope?>(nil, ignoreRepeated: true)
     private var activities: [PeerActivitySpace: [PeerListState.InputActivities.Activity]] = [:]
-    private var content: (items: [EngineChatList.Item], selectedThreadId: Int64?, kind: ChatSidebarKind, parentPeer: EngineRenderedPeer)?
+    private var content: (items: [EngineChatList.Item], selectedThreadId: Int64?, kind: ChatSidebarKind, parentPeer: EngineRenderedPeer, rootMessage: Message?)?
 
     public init(context: Context, onSelect: @escaping (Int64?, MessageId?) -> Void) {
         self.context = context
@@ -96,14 +99,22 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
             let scopedActivities = activities.filter { $0.key.peerId == content.parentPeer.peerId }
             guard self.activities != scopedActivities else { return }
             self.activities = scopedActivities
-            self.update(items: content.items, selectedThreadId: content.selectedThreadId, kind: content.kind, parentPeer: content.parentPeer)
+            self.renderRows()
         }))
         previewSettings.set((FastSettings.filterZalgoTextSignal |> deliverOnMainQueue).start(next: { [weak self] enabled in
             guard let self, self.filtersZalgoPreview != enabled else { return }
             self.filtersZalgoPreview = enabled
-            if let content = self.content {
-                self.update(items: content.items, selectedThreadId: content.selectedThreadId, kind: content.kind, parentPeer: content.parentPeer)
-            }
+            self.renderRows()
+        }))
+        let senderPreviews = ChatParticipantVisibility.observeHistoryPreviews(
+            senderPreviewRequests.get(),
+            context: context,
+            queue: prepareQueue,
+            participants: { ChatListSenderPreviewVisibility.participatingSenders(in: $0.candidates, revealed: $1) }
+        )
+        senderPreviewObservation.set((senderPreviews |> deliverOnMainQueue).start(next: { [weak self] request, revealed, hidden in
+            guard let self, self.senderPreviewVisibility.apply(request, revealed: revealed, hidden: hidden) else { return }
+            self.renderRows()
         }))
     }
 
@@ -130,13 +141,14 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
         searchLoading.dispose()
         inputActivities.dispose()
         previewSettings.dispose()
+        senderPreviewObservation.dispose()
     }
 
     public func setSelecting(_ selecting: Bool) {
         guard !selecting || (kind == .forum && !context.isFrozen) else { return }
         selection.setActive(selecting)
         selectionBar.isHidden = !selecting
-        if let content { update(items: content.items, selectedThreadId: content.selectedThreadId, kind: content.kind, parentPeer: content.parentPeer) }
+        renderRows()
         selectionChanged?(selecting)
     }
 
@@ -232,19 +244,33 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
         selection.retain(Set(items.compactMap { item in if case let .forum(id) = item.id { return id }; return nil }))
         let scope = ActivityScope(peerId: parentPeer.peerId, filtersSenders: kind == .forum)
         let previousScope = content.map { ActivityScope(peerId: $0.parentPeer.peerId, filtersSenders: $0.kind == .forum) }
-        self.content = (items, selectedThreadId, kind, parentPeer)
+        let rootMessage = ForumSidebarSenderPreviewVisibility.rootPreview(in: items)
+        self.content = (items, selectedThreadId, kind, parentPeer, rootMessage)
+        let previewPeerId = kind == .forum ? parentPeer.peerId : nil
+        let candidates = previewPeerId.map {
+            ForumSidebarSenderPreviewVisibility.candidates(peerId: $0, rootMessage: rootMessage, items: items, accountPeerId: context.peerId)
+        } ?? [:]
+        let previewRequest = senderPreviewVisibility.update(peerId: previewPeerId, candidates: candidates)
         if scope != previousScope {
             activities = [:]
             activityScope.set(scope)
         }
+        if let previewRequest {
+            senderPreviewRequests.set(previewRequest)
+        }
+        renderRows()
+    }
+
+    private func renderRows() {
+        guard let (items, selectedThreadId, kind, parentPeer, rootMessage) = content else { return }
         let canCreate = kind.showsNewTopic && (parentPeer.peer?._asPeer() as? TelegramChannel)?.hasPermission(.createTopics) == true
         tableView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: canCreate || selection.isActive ? 88 : 0, right: 0)
         let previousOffset = tableView.clipView.bounds.origin
         tableView.removeAll()
         var rows: [(Int, TableRowItem)] = []
         var selectedRow: ChatListRowItem?
-        let messages = items.flatMap(\.messages).sorted { $0.index > $1.index }.prefix(1).map { $0._asMessage() }
-        let root = SidebarRootRowItem(NSMakeSize(max(bounds.width, 320), 70), context: context, stableId: .chatId(.chatList(parentPeer.peerId), parentPeer.peerId, -1), mode: .chat, messages: messages, renderedPeer: parentPeer, titleOverride: kind != .channelMessages ? localizedString("Chat.Sidebar.AllMessages") : nil, filtersZalgoPreview: filtersZalgoPreview)
+        let rootId = EngineChatList.Item.Id.chatList(parentPeer.peerId)
+        let root = SidebarRootRowItem(NSMakeSize(max(bounds.width, 320), 70), context: context, stableId: .chatId(rootId, parentPeer.peerId, -1), mode: .chat, messages: rootMessage.map { [$0] } ?? [], renderedPeer: parentPeer, titleOverride: kind != .channelMessages ? localizedString("Chat.Sidebar.AllMessages") : nil, filtersZalgoPreview: filtersZalgoPreview, hidesSenderPreview: senderPreviewVisibility.hidesPreview(rootId, peerId: parentPeer.peerId))
         root.isForumSidebarRow = true
         rows.append((0, root))
         rootRowId = root.stableId
@@ -261,7 +287,7 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
                 mode = .topic(id, threadData)
             }
             let space = PeerActivitySpace(peerId: parentPeer.peerId, category: .thread(threadId))
-            let row = ChatListRowItem(NSMakeSize(max(bounds.width, 320), 70), context: context, stableId: .chatId(item.id, item.renderedPeer.peerId, -1), mode: mode, messages: item.messages.map { $0._asMessage() }, index: item.chatListIndex, readState: item.readCounters, draft: item.draft, pinnedType: item.chatListIndex.pinningIndex == nil ? .none : .some, renderedPeer: item.renderedPeer, peerPresence: item.presence, forumTopicData: item.forumTopicData, forumTopicItems: item.topForumTopicItems, activities: activities[space] ?? [], isMuted: item.isMuted, hasFailed: item.hasFailed, hasUnreadMentions: item.hasUnseenMentions, hasUnreadReactions: item.hasUnseenReactions, hasUnreadVotes: item.hasUnseenPollVotes, story: item.storyStats, isContact: item.isContact, titleOverride: kind == .channelMessages ? item.renderedPeer.peer?._asPeer().displayTitle : nil, savedMessagesParentPeerId: kind.usesSourceChats ? parentPeer.peerId : nil, filtersZalgoPreview: filtersZalgoPreview)
+            let row = ChatListRowItem(NSMakeSize(max(bounds.width, 320), 70), context: context, stableId: .chatId(item.id, item.renderedPeer.peerId, -1), mode: mode, messages: item.messages.map { $0._asMessage() }, index: item.chatListIndex, readState: item.readCounters, draft: item.draft, pinnedType: item.chatListIndex.pinningIndex == nil ? .none : .some, renderedPeer: item.renderedPeer, peerPresence: item.presence, forumTopicData: item.forumTopicData, forumTopicItems: item.topForumTopicItems, activities: activities[space] ?? [], isMuted: item.isMuted, hasFailed: item.hasFailed, hasUnreadMentions: item.hasUnseenMentions, hasUnreadReactions: item.hasUnseenReactions, hasUnreadVotes: item.hasUnseenPollVotes, story: item.storyStats, isContact: item.isContact, titleOverride: kind == .channelMessages ? item.renderedPeer.peer?._asPeer().displayTitle : nil, savedMessagesParentPeerId: kind.usesSourceChats ? parentPeer.peerId : nil, filtersZalgoPreview: filtersZalgoPreview, hidesSenderPreview: senderPreviewVisibility.hidesPreview(item.id, peerId: parentPeer.peerId))
             row.isForumSidebarRow = true
             row.sidebarSelection = selection.isActive ? selection.selectedIds.contains(threadId) : nil
             rows.append((rows.count, row))
@@ -289,7 +315,7 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
         if selection.isActive {
             guard let row = item as? ChatListRowItem, let id = row.mode.threadId else { return false }
             selection.toggle(id)
-            if let content { update(items: content.items, selectedThreadId: content.selectedThreadId, kind: content.kind, parentPeer: content.parentPeer) }
+            renderRows()
             return false
         }
         return item is ChatListRowItem

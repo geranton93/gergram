@@ -266,9 +266,13 @@ final class LinkParsingTests: XCTestCase {
     }
 
     func testGergramSettingsLinksStayLocalAndRequireAccountContext() {
+        let editedLabel = "gergram://settings/appearance/edited-message-label"
         let cases: [(String, GergramSettingsRoute)] = [
             ("gergram://settings/general/message-context-menu", .messageContextMenu),
+            ("gergram://settings/general/on-device-transcription-language", .transcriptionLanguage),
+            ("gergram://settings/appearance/message-bubble-corners", .messageBubbleCorners),
             ("gergram://settings/appearance/avatar-corners", .avatarCorners),
+            (editedLabel, .editedMessageLabel),
             ("gergram://settings/privacy/locally-hidden-senders", .locallyHiddenSenders),
             ("gergram://settings/privacy/message-filters", .messageFilters),
             ("gergram://settings/privacy/local-message-archive", .localMessageArchive)
@@ -284,6 +288,9 @@ final class LinkParsingTests: XCTestCase {
 
         for url in [
             "gergram://settings/privacy/reset",
+            editedLabel + "?value=custom",
+            editedLabel + "#reset",
+            editedLabel + "/reset",
             "GERGRAM://example.t.me/settings/privacy/locally-hidden-senders",
             "gergram://settings/privacy/locally-hidden-senders?account=123",
             "gergram://settings/privacy/message-filters?import=https://example.test/rules",

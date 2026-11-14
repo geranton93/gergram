@@ -12,6 +12,8 @@ public func gergramSettingsController(_ route: GergramSettingsRoute, context: an
         return AppAppearanceViewController(context: context, focusOnItemTag: .messageBubbleRadius)
     case .avatarCorners:
         return AppAppearanceViewController(context: context, focusOnItemTag: .avatarRadius)
+    case .editedMessageLabel:
+        return AppAppearanceViewController(context: context, focusOnItemTag: .editedIndicatorText)
     case .locallyHiddenSenders:
         guard !context.isFrozen else { return nil }
         return localShadowBannedSendersController(context: context)

@@ -3,6 +3,7 @@ public enum GergramSettingsRoute: String {
     case transcriptionLanguage = "general/on-device-transcription-language"
     case messageBubbleCorners = "appearance/message-bubble-corners"
     case avatarCorners = "appearance/avatar-corners"
+    case editedMessageLabel = "appearance/edited-message-label"
     case locallyHiddenSenders = "privacy/locally-hidden-senders"
     case messageFilters = "privacy/message-filters"
     case localMessageArchive = "privacy/local-message-archive"

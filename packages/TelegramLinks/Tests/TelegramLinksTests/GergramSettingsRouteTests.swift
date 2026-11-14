@@ -7,6 +7,7 @@ final class GergramSettingsRouteTests: XCTestCase {
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/general/on-device-transcription-language"), .transcriptionLanguage)
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/appearance/message-bubble-corners"), .messageBubbleCorners)
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/appearance/avatar-corners"), .avatarCorners)
+        XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/appearance/edited-message-label"), .editedMessageLabel)
         XCTAssertEqual(GergramSettingsRoute(url: "GERGRAM://SETTINGS/privacy/locally-hidden-senders"), .locallyHiddenSenders)
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/privacy/message-filters"), .messageFilters)
         XCTAssertEqual(GergramSettingsRoute(url: "GERGRAM://SETTINGS/privacy/local-message-archive"), .localMessageArchive)
@@ -48,6 +49,10 @@ final class GergramSettingsRouteTests: XCTestCase {
             "gergram://settings/appearance/message-bubble-corners/reset",
             "gergram://settings/appearance/avatar-corners/reset",
             "gergram://settings/appearance/avatar-corners?level=0",
+            "gergram://settings/appearance/edited-message-label?value=custom",
+            "gergram://settings/appearance/edited-message-label#reset",
+            "gergram://settings/appearance/edited-message-label/reset",
+            "gergram://settings/appearance/edited-message-%6cabel",
             "gergram://settings/appearance/reset",
             "gergram://settings/devices/terminate-sessions"
         ]

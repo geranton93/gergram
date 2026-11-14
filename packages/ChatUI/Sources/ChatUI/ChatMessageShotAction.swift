@@ -126,14 +126,22 @@ enum ChatMessageShotAction {
     }
 
     private static func headerDecorationLabel(for message: Message, interaction: ChatInteraction) -> String? {
-        guard message.effectiveAuthor?.id == message.author?.id,
-              ChatChannelAuthorBadge.showsDirectAuthor(
-                in: (message.peers[message.id.peerId] as? TelegramChannel)?.info,
-                author: (message.author as? TelegramChannel)?.info,
-                displaysAuthor: message.effectiveAuthor?.displayTitle.isEmpty == false,
-                isIncoming: message.isIncoming(interaction.interactionContext.account, true)
-              ) else { return nil }
-        return strings().chatChannelBadge
+        guard let author = message.author, let displayed = message.effectiveAuthor,
+              author.id == displayed.id, !displayed.displayTitle.isEmpty else { return nil }
+        let peer = message.peers[message.id.peerId]
+        let showsChannel = ChatChannelAuthorBadge.showsDirectAuthor(
+            in: (peer as? TelegramChannel)?.info,
+            author: (author as? TelegramChannel)?.info,
+            displaysAuthor: true,
+            isIncoming: message.isIncoming(interaction.interactionContext.account, true)
+        )
+        let rank = (peer is TelegramGroup || peer?.isSupergroup == true)
+            ? message.attributes.lazy.compactMap { ($0 as? ParticipantRankMessageAttribute)?.rank }.first : nil
+        let boost = message.boostAttribute?.count
+        let boostLabel = boost.flatMap { count in
+            count > 0 ? translate(key: "Gergram.Chat.MessageShotBoostCount", [count]) : nil
+        }
+        return MessageShotOptions.headerDecorationLabel(rank: rank, channel: showsChannel ? strings().chatChannelBadge : nil, boost: boostLabel)
     }
 
     private static func headerDecorations(for messages: [Message], interaction: ChatInteraction, options: MessageShotOptions) -> [MessageId: String] {

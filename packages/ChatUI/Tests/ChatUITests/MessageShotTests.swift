@@ -137,6 +137,16 @@ final class MessageShotTests: XCTestCase {
         XCTAssertEqual(options.headerTitle(author: "Sender", timestamp: "Date"), "Sender • Date")
     }
 
+    func testHeaderDecorationCombinesBoostAndRankWithChannelFallback() {
+        func label(_ rank: String?, _ channel: String?, _ boost: String?) -> String? {
+            MessageShotOptions.headerDecorationLabel(rank: rank, channel: channel, boost: boost)
+        }
+        XCTAssertEqual(label("  Team\n lead ", "Channel", "Boosts 3"), "Boosts 3 · Team lead")
+        XCTAssertEqual(label(" ", "Channel", nil), "Channel")
+        XCTAssertEqual(label(String(repeating: "x", count: 65), nil, "Boosts 1"), "Boosts 1")
+        XCTAssertNil(label(nil, nil, nil))
+    }
+
     func testHiddenHeaderDecorationMatchesUndecoratedExport() throws {
         let suiteName = "MessageShotTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

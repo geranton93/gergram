@@ -56,11 +56,21 @@ struct MessageShotOptions {
             .joined(separator: " • ")
     }
 
+    static func headerDecorationLabel(rank: String?, channel: String?, boost: String?) -> String? {
+        let title = normalizedDecoration(rank, limit: 64) ?? normalizedDecoration(channel, limit: 64)
+        let parts = [normalizedDecoration(boost, limit: 60), title].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private static func normalizedDecoration(_ label: String?, limit: Int) -> String? {
+        guard let label, label.utf16.prefix(limit + 1).count <= limit else { return nil }
+        let plain = label.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return plain.isEmpty ? nil : plain
+    }
+
     func headerDecoration(_ label: String?, foreground: NSColor, background: NSColor) -> MessageShotRenderer.HeaderDecoration? {
-        guard showsHeaderDecorations, let label, label.utf16.prefix(129).count <= 128 else { return nil }
-        let display = label.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard !display.isEmpty else { return nil }
-        return .init(label: display, foreground: foreground, background: background)
+        guard showsHeaderDecorations, let label = Self.normalizedDecoration(label, limit: 128) else { return nil }
+        return .init(label: label, foreground: foreground, background: background)
     }
 
     func reactionSummary(_ reactions: some Sequence<(label: String, count: Int)>) -> String {

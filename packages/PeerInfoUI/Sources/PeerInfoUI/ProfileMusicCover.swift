@@ -1,8 +1,15 @@
 import AppKit
 import Darwin
 import ImageIO
+import SwiftSignalKit
 
 struct ProfileMusicCover {
+    struct Candidate {
+        let resourceId: String
+        let cachedPath: Signal<String, NoError>
+    }
+
+    static let maximumCandidates = 4
     static let maximumBytes = 2 * 1024 * 1024
     private static let maximumSide = 4_096
     private static let maximumPixels = 8_000_000
@@ -13,6 +20,31 @@ struct ProfileMusicCover {
     let background: NSColor
     let primary: NSColor
     let secondary: NSColor
+
+    static func observeCached(
+        _ candidates: [Candidate], accountId: Int64, pixelSize: Int, isDark: Bool, on queue: Queue
+    ) -> Signal<Self?, NoError> {
+        let candidates = Array(candidates.prefix(maximumCandidates))
+        return deferred {
+            var attempted = Set<Int>()
+            var decoded: [Int: Self] = [:]
+            let paths = candidates.map { candidate in
+                Signal<String?, NoError>.single(nil) |> then(candidate.cachedPath |> take(1) |> map(Optional.some))
+            }
+            return combineLatest(queue: queue, paths)
+                |> map { paths in
+                    for index in paths.indices {
+                        guard let path = paths[index] else { continue }
+                        if attempted.insert(index).inserted {
+                            decoded[index] = load(path: path, accountId: accountId, resourceId: candidates[index].resourceId,
+                                                  pixelSize: pixelSize, isDark: isDark)
+                        }
+                        if let cover = decoded[index] { return cover }
+                    }
+                    return nil
+                }
+        }
+    }
 
     static func load(path: String, accountId: Int64, resourceId: String, pixelSize: Int, isDark: Bool) -> Self? {
         let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)

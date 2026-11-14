@@ -32,13 +32,13 @@ public final class PeerInfoMusicView : View {
     private struct ArtworkSource {
         let accountId: Int64
         let mediaBox: MediaBox
-        let resource: any MediaResource
+        let resources: [any MediaResource]
     }
 
     private struct ArtworkRequest: Equatable {
         let accountId: Int64
         let mediaBox: ObjectIdentifier
-        let resourceId: String
+        let resourceIds: [String]
         let pixelSize: Int
         let isDark: Bool
         let colorful: Bool
@@ -100,9 +100,11 @@ public final class PeerInfoMusicView : View {
                                            background: colorfull ? backgroundColor : .clear, colorful: colorfull, isDark: theme.colors.isDark)
         let appearanceChanged = appearance != updatedAppearance
         appearance = updatedAppearance
-        artworkSource = file.previewRepresentations.first(where: { !$0.hasVideo }).map { representation in
-            ArtworkSource(accountId: context.account.id.int64, mediaBox: context.account.postbox.mediaBox, resource: representation.resource)
-        }
+        let resources = file.previewRepresentations.lazy.filter { !$0.hasVideo }
+            .prefix(ProfileMusicCover.maximumCandidates).map(\.resource)
+        artworkSource = resources.isEmpty ? nil : ArtworkSource(
+            accountId: context.account.id.int64, mediaBox: context.account.postbox.mediaBox, resources: Array(resources)
+        )
         updateArtwork(appearanceChanged: appearanceChanged)
     }
 
@@ -127,7 +129,7 @@ public final class PeerInfoMusicView : View {
         }
 
         let request = ArtworkRequest(accountId: source.accountId, mediaBox: ObjectIdentifier(source.mediaBox),
-                                     resourceId: source.resource.id.stringRepresentation,
+                                     resourceIds: source.resources.map { $0.id.stringRepresentation },
                                      pixelSize: Int(ceil(Self.artworkSide(colorful: appearance.colorful) * backingScaleFactor)),
                                      isDark: appearance.isDark, colorful: appearance.colorful)
         guard artworkRequest != request else {
@@ -141,21 +143,19 @@ public final class PeerInfoMusicView : View {
         artworkRequest = request
         renderAppearance()
         let generation = artworkGeneration
-        let signal = source.mediaBox.resourceData(source.resource)
-            |> filter { $0.complete }
-            |> take(1)
-            |> mapToSignal { data -> Signal<ProfileMusicCover?, NoError> in
-                guard data.offset == 0, (1...Int64(ProfileMusicCover.maximumBytes)).contains(data.size) else { return .single(nil) }
-                return Signal { subscriber in
-                    subscriber.putNext(ProfileMusicCover.load(path: data.path, accountId: request.accountId,
-                                                              resourceId: request.resourceId, pixelSize: request.pixelSize, isDark: request.isDark))
-                    subscriber.putCompletion()
-                    return EmptyDisposable
-                } |> runOn(Self.artworkQueue)
-            }
-            |> deliverOnMainQueue
+        let candidates = zip(request.resourceIds, source.resources).map { id, resource in
+            ProfileMusicCover.Candidate(
+                resourceId: id,
+                cachedPath: source.mediaBox.resourceData(resource)
+                    |> filter { $0.complete && $0.offset == 0 && (1...Int64(ProfileMusicCover.maximumBytes)).contains($0.size) }
+                    |> map(\.path)
+            )
+        }
+        let signal = ProfileMusicCover.observeCached(
+            candidates, accountId: request.accountId, pixelSize: request.pixelSize, isDark: request.isDark, on: Self.artworkQueue
+        ) |> deliverOnMainQueue
         artworkDisposable.set(signal.start(next: { [weak self] artwork in
-            guard let self, self.artworkGeneration == generation else { return }
+            guard let self, self.artworkGeneration == generation, self.artwork?.image !== artwork?.image else { return }
             self.artwork = artwork
             self.renderAppearance()
         }))

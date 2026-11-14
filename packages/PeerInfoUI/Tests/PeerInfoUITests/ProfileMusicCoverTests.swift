@@ -96,6 +96,65 @@ final class ProfileMusicCoverTests: XCTestCase {
         }
     }
 
+    func testPendingFirstCoverUsesLaterCachedArtworkAndCanUpgrade() throws {
+        try inTemporaryDirectory { directory in
+            let earlierFile = directory.appendingPathComponent("earlier")
+            let laterFile = directory.appendingPathComponent("later")
+            try makeArtwork(at: earlierFile, color: .red)
+            try makeArtwork(at: laterFile, color: .blue)
+            let earlier = Promise<String>()
+            let queue = Queue(name: "ProfileMusicCoverTests")
+            let available = expectation(description: "Later cached candidate was displayed")
+            let preferred = expectation(description: "Earlier candidate was displayed after arriving")
+            let signal = ProfileMusicCover.observeCached([
+                .init(resourceId: "earlier", cachedPath: earlier.get()),
+                .init(resourceId: "later", cachedPath: .single(laterFile.path)),
+            ], accountId: 1, pixelSize: 32, isDark: false, on: queue)
+            let observation = signal.start(next: { artwork in
+                guard let artwork else { return }
+                if artwork.background.blueComponent > artwork.background.redComponent {
+                    available.fulfill()
+                } else {
+                    preferred.fulfill()
+                }
+            })
+            defer { observation.dispose() }
+
+            wait(for: [available], timeout: 3)
+            earlier.set(.single(earlierFile.path))
+            wait(for: [preferred], timeout: 3)
+        }
+    }
+
+    func testInvalidFirstCoverUsesLaterCandidateAndCapsObservers() throws {
+        try inTemporaryDirectory { directory in
+            let corrupt = directory.appendingPathComponent("invalid")
+            try Data([0]).write(to: corrupt)
+            let valid = directory.appendingPathComponent("valid")
+            try makeArtwork(at: valid, color: .blue)
+            let queue = Queue(name: "ProfileMusicCoverTests")
+            let available = expectation(description: "Later valid candidate was displayed")
+            let unexpected = Signal<String, NoError> { _ in
+                XCTFail("A fifth candidate was observed")
+                return EmptyDisposable
+            }
+            let signal = ProfileMusicCover.observeCached([
+                .init(resourceId: "invalid", cachedPath: .single(corrupt.path)),
+                .init(resourceId: "valid", cachedPath: .single(valid.path)),
+                .init(resourceId: "pending-one", cachedPath: .never()),
+                .init(resourceId: "pending-two", cachedPath: .never()),
+                .init(resourceId: "ignored", cachedPath: unexpected),
+            ], accountId: 1, pixelSize: 32, isDark: false, on: queue)
+            let observation = signal.start(next: { artwork in
+                guard let artwork else { return }
+                XCTAssertGreaterThan(artwork.background.blueComponent, artwork.background.redComponent)
+                available.fulfill()
+            })
+            defer { observation.dispose() }
+            wait(for: [available], timeout: 3)
+        }
+    }
+
     func testMissingTransparentCorruptAndOversizedArtUsesFallback() throws {
         try inTemporaryDirectory { directory in
             let missing = directory.appendingPathComponent("missing")

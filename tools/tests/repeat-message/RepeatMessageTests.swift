@@ -55,8 +55,11 @@ final class TelegramChannel: Peer {
     enum Info { case group, broadcast }
     enum Participation { case member, left }
     var info = Info.group
+    enum Permission { case canBeAnonymous }
     var participationStatus = Participation.member
     var sendPaidMessageStars: Stars?
+    var canBeAnonymous = false
+    func hasPermission(_ permission: Permission) -> Bool { canBeAnonymous }
 }
 struct Thread: Equatable {
     let peerId: PeerId
@@ -420,6 +423,24 @@ final class RepeatMessageTests: XCTestCase {
         XCTAssertEqual(reply, Reply(messageId: .init(peerId: .forum, id: 21), quote: nil, innerSubject: nil))
         owner.mode = .scheduled
         XCTAssertNil(owner.menu())
+    }
+
+    func testRepeatExcludesAnonymousSendersAndRechecksFreshPermission() throws {
+        let channel = TelegramChannel(.forum)
+        let owner = ChatInteraction(peer: channel, topic: true)
+        let postbox = owner.interactionContext.account.postbox
+        channel.canBeAnonymous = true
+        XCTAssertNil(owner.menu())
+
+        channel.canBeAnonymous = false
+        try XCTUnwrap(owner.menu()).handler()
+        let freshChannel = TelegramChannel(.forum)
+        freshChannel.isForumOrMonoForum = true
+        freshChannel.canBeAnonymous = true
+        postbox.peer = freshChannel
+        Fixture.prompts[0].accept()
+        XCTAssertTrue(Fixture.sent.isEmpty)
+        XCTAssertEqual(Fixture.alerts, ["Gergram.Chat.RepeatMessageUnavailable"])
     }
 
     func testNonOrdinaryProtectedAndPaidContentIsIneligible() {

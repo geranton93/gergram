@@ -156,7 +156,8 @@ final class ChatRepeatMessageAction {
         guard peer.id == location.peerId, !peer.isMonoForum,
               peer.restrictionText(interaction.interactionContext.contentSettings) == nil else { return false }
         if let channel = peer as? TelegramChannel {
-            guard case .group = channel.info, channel.participationStatus == .member else { return false }
+            guard case .group = channel.info, channel.participationStatus == .member,
+                  !channel.hasPermission(.canBeAnonymous) else { return false }
         } else if !(peer is TelegramUser || peer is TelegramGroup) {
             return false
         }

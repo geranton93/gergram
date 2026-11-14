@@ -79,6 +79,18 @@ public final class ChatInputAttachButton: View, MorphHoldObserving {
     /// AI (rephrase/translate) button — present only while the input has grown to several lines.
     public private(set) var aiButton: ImageButton?
     public var isAIVisible: Bool { aiButton != nil }
+    var canOpenAIEditorFromMenu: (() -> Bool)?
+
+    var canOpenRichTextEditorFromMenu: Bool {
+        guard #available(macOS 12, *), chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled else {
+            return false
+        }
+        let presentation = chatInteraction.presentation
+        return presentation.peer != nil
+            && presentation.state == .normal
+            && presentation.interfaceState.editState == nil
+            && presentation.slowMode?.hasLocked != true
+    }
 
     public private(set) var isMorphHeld = false
     public var onMorphHoldChange: ((Bool) -> Void)?
@@ -434,14 +446,21 @@ public final class ChatInputAttachButton: View, MorphHoldObserving {
                     }, itemImage: MenuAnimation.menu_location.value))
                 }
 
-                if #available(macOS 12, *), chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled {
+                if #available(macOS 12, *), self.canOpenRichTextEditorFromMenu {
                     items.append(ContextMenuItem(strings().richTextEditorAttachTitle, handler: { [weak self] in
-                        guard let self = self else { return }
+                        guard let self, self.canOpenRichTextEditorFromMenu else { return }
                         showRichTextEditor(chatInteraction: self.chatInteraction, morphSource: { [weak self] in self?.button })
                     }, itemImage: MenuAnimation.menu_article.value))
                 }
             }
 
+
+            if self.canOpenAIEditorFromMenu?() == true {
+                items.append(ContextMenuItem(strings().translateAIEditor, handler: { [weak self] in
+                    guard let self, self.canOpenAIEditorFromMenu?() == true else { return }
+                    self.chatInteraction.openAIEditor(morphSource: { [weak self] in self?.button })
+                }, itemImage: MenuAnimation.menu_translate.value))
+            }
 
             if !items.isEmpty {
                 let menu = ContextMenu(betterInside: true)

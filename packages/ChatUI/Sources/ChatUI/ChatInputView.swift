@@ -210,6 +210,11 @@ public final class ChatInputContainerView: FlippableView {
         bottomView.backgroundColor = .clear
         self.addSubview(keyboardGlass)
         self.addSubview(bottomView)
+
+        attachView.canOpenAIEditorFromMenu = { [weak self] in
+            guard let self, self.hasComposerAIEditorMenuAlternative else { return false }
+            return self.isComposerAIEditorEligible(lineCount: self.textView.numberOfLines(for: self.textViewSize(self.bounds.width).0.width))
+        }
     }
 
     public required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -324,6 +329,31 @@ public final class ChatInputContainerView: FlippableView {
         return (gap + sendButton.desiredSize.width, 0)
     }
 
+    private func isComposerAIEditorEligible(lineCount: Int) -> Bool {
+        let presentation = chatInteraction.presentation
+        return (presentation.state == .normal || presentation.state == .editing)
+            && (presentation.interfaceState.editState?.loadingState ?? EditStateLoading.none) == EditStateLoading.none
+            && presentation.peer?.isSecretChat != true
+            && lineCount >= 4
+    }
+
+    private var hasComposerAIEditorMenuAlternative: Bool {
+        ComposerAIToolsButtonPreferences.shared.hidesButton
+            && chatInteraction.presentation.peer != nil
+            && !attachView.button.isHiddenOrHasHiddenAncestor
+            && attachView.button.isEnabled
+            && attachView.button.userInteractionEnabled
+            && chatInteraction.presentation.slowMode?.hasLocked != true
+    }
+
+    private var hasComposerRichTextEditorMenuAlternative: Bool {
+        ComposerRichTextEditorPreferences.shared.hidesShortcut
+            && attachView.canOpenRichTextEditorFromMenu
+            && !attachView.button.isHiddenOrHasHiddenAncestor
+            && attachView.button.isEnabled
+            && attachView.button.userInteractionEnabled
+    }
+
     public override func layout() {
         super.layout()
         updateLayout(transition: .immediate)
@@ -383,10 +413,8 @@ public final class ChatInputContainerView: FlippableView {
 
         // The AI (rephrase) button lives in the attach view and appears once the input has grown to 4+
         // lines; the attach view then expands into a vertical pill to hold it (glass ghost follows).
-        let showAi = (chatInteraction.presentation.state == .normal || chatInteraction.presentation.state == .editing)
-            && (chatInteraction.presentation.interfaceState.editState?.loadingState ?? EditStateLoading.none) == EditStateLoading.none
-            && chatInteraction.presentation.peer?.isSecretChat != true
-            && textView.numberOfLines(for: textSize.width) >= 4
+        let isAIEditorEligible = isComposerAIEditorEligible(lineCount: textView.numberOfLines(for: textSize.width))
+        let showAi = isAIEditorEligible && !hasComposerAIEditorMenuAlternative
 
         let sendAsInset: CGFloat = sendAsView != nil ? 34 + 3 : 0
         let sendSize = sendButton.desiredSize
@@ -519,7 +547,8 @@ public final class ChatInputContainerView: FlippableView {
             textView.updateLayout(size: textRect.size, textHeight: textHeight, transition: transition)
         }
 
-        let showExpand = ((showAi && chatInteraction.presentation.state == .normal) || richDraftPreview != nil) && chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled
+        let showExpand = chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled
+            && (richDraftPreview != nil || (isAIEditorEligible && chatInteraction.presentation.state == .normal && !hasComposerRichTextEditorMenuAlternative))
         if showExpand {
             let current: ImageButton
             var isNew = false
@@ -635,6 +664,11 @@ public class ChatInputView: View, Notifable {
 
     
     private let sendActivityDisposable = MetaDisposable()
+    private let channelBottomActionDisposable = MetaDisposable()
+    private let composerBotCommandsDisposable = MetaDisposable()
+    private let composerEditorControlsDisposable = MetaDisposable()
+    private var channelBottomAction = ChannelBottomActionPreferences.shared.action
+    private(set) var isChannelBottomActionRowHidden = false
     public let ready = Promise<Bool>()
     public weak var delegate:ChatInputDelegate?
     public var chatInteraction:ChatInteraction
@@ -716,7 +750,7 @@ public class ChatInputView: View, Notifable {
             container.isTranscribing = true
         }
         finishGlassMorph()
-        needUpdateChatState(with: chatState, false)
+        needUpdateChatState(with: resolvedChatState, false)
         updateInput(chatInteraction.presentation, prevState: chatInteraction.presentation, animated: false)
         container.updateLayout(transition: .immediate)
         for ghost in [attachGhost, textGhost, voiceGhost, botMenuGhost, keyboardGhost].compactMap({ $0 }) {
@@ -804,6 +838,9 @@ public class ChatInputView: View, Notifable {
         contentView.backgroundColor = .clear
         textFieldContainer.backgroundColor = .clear
         actionsView.backgroundColor = .clear
+        actionsView.actionVisibilityChanged = { [weak self] in
+            self?.inputDidUpdateLayout(animated: false)
+        }
         bottomView.backgroundColor = .clear
         bottomView.documentView?.background = .clear
 
@@ -909,6 +946,37 @@ public class ChatInputView: View, Notifable {
         }))
         chatInteraction.reloadRichTextDraft()
         self.bindIncomingTypingDraft(for: chatInteraction.chatLocation, animated: false)
+        channelBottomActionDisposable.set((ChannelBottomActionPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] action in
+            guard let self, self.channelBottomAction != action else { return }
+            let previous = self.resolvedChatState
+            self.channelBottomAction = action
+            let next = self.resolvedChatState
+            if previous != next {
+                self.needUpdateChatState(with: next, false)
+                self.updateLayout(size: self.frame.size, transition: .immediate)
+            }
+        }))
+        composerBotCommandsDisposable.set((ComposerBotCommandsPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] hidesButton in
+            self?.updateComposerBotCommandsVisibility(hidesButton)
+        }))
+        composerEditorControlsDisposable.set(
+            (combineLatest(ComposerAIToolsButtonPreferences.shared.signal, ComposerRichTextEditorPreferences.shared.signal)
+                |> deliverOnMainQueue).start(next: { [weak self] _ in
+                self?.container.needsLayout = true
+            })
+        )
+    }
+
+    private func updateComposerBotCommandsVisibility(_ hidesButton: Bool) {
+        let wasVisible = botMenuView != nil
+        let state = chatInteraction.presentation
+        if hidesButton, let menu = state.botMenu, menu.closingComposerCommands != menu {
+            chatInteraction.update(animated: false) { $0.updateBotMenu { $0?.closingComposerCommands } }
+        }
+        updateAttachments(chatInteraction.presentation, false)
+        if wasVisible != (botMenuView != nil) {
+            inputDidUpdateLayout(animated: false)
+        }
     }
 
     private func scheduleInlineRichDraftStore() {
@@ -1116,6 +1184,10 @@ public class ChatInputView: View, Notifable {
     public static let inputBottomInset: CGFloat = 12
 
     public func height(for width: CGFloat) -> CGFloat {
+        if isChannelBottomActionRowHidden {
+            bottomHeight = 0
+            return ChatInputView.inputBottomInset
+        }
         let contentHeight:CGFloat = contentHeight(for: width)
         var sumHeight:CGFloat = contentHeight + ChatInputView.inputBottomInset
         if let markup = replyMarkupModel  {
@@ -1147,7 +1219,7 @@ public class ChatInputView: View, Notifable {
     public func updateInterface(with interaction:ChatInteraction) -> Void {
         self.chatInteraction = interaction
         sendButton.prepare(with: chatInteraction)
-        needUpdateChatState(with: chatState, false)
+        needUpdateChatState(with: resolvedChatState, false)
         needUpdateReplyMarkup(with: interaction.presentation, false)
         
         updateMessageEffect(interaction.presentation.interfaceState.messageEffect, animated: false)
@@ -1353,9 +1425,11 @@ public class ChatInputView: View, Notifable {
         }
 
         if let value = value as? ChatPresentationInterfaceState, let oldValue = oldValue as? ChatPresentationInterfaceState {
+            let state = value.state(channelBottomAction: channelBottomAction)
+            let previousState = oldValue.state(channelBottomAction: channelBottomAction)
             let textPermissionChanged = permissionText(from: value.peer, for: .banSendText, cachedData: value.cachedData) != permissionText(from: oldValue.peer, for: .banSendText, cachedData: oldValue.cachedData)
 
-            if value.effectiveInput != oldValue.effectiveInput || oldValue.state != value.state || textPermissionChanged {
+            if value.effectiveInput != oldValue.effectiveInput || previousState != state || textPermissionChanged {
                 updateInput(value, prevState: oldValue, animated: animated)
             }
             if value.sendPaidMessageStars != oldValue.sendPaidMessageStars {
@@ -1383,8 +1457,15 @@ public class ChatInputView: View, Notifable {
                 updateAdditions(value,animated)
             }
             
-            if value.state != oldValue.state || textPermissionChanged {
-                needUpdateChatState(with:value.state, animated)
+            let botStartBindingChanged: Bool
+            if case .botStart = state {
+                botStartBindingChanged = value.initialAction != oldValue.initialAction
+                    || value.chatLocation != oldValue.chatLocation || value.chatMode != oldValue.chatMode
+            } else {
+                botStartBindingChanged = false
+            }
+            if state != previousState || textPermissionChanged || botStartBindingChanged {
+                needUpdateChatState(with: state, animated)
             }
             
             var updateReplyMarkup = false
@@ -1554,6 +1635,10 @@ public class ChatInputView: View, Notifable {
     
     public var chatState: ChatState { container.chatState }
 
+    private var resolvedChatState: ChatState {
+        chatInteraction.presentation.state(channelBottomAction: channelBottomAction)
+    }
+
     public func contentHeight(for width: CGFloat) -> CGFloat {
         return container.contentHeight(for: width)
     }
@@ -1674,13 +1759,20 @@ public class ChatInputView: View, Notifable {
     public func needUpdateChatState(with state:ChatState, _ animated:Bool) -> Void {
         CATransaction.begin()
 
+        let channelBottomActionRowVisibilityChanged = isChannelBottomActionRowHidden != state.isChannelBottomActionRowHidden
+        isChannelBottomActionRowHidden = state.isChannelBottomActionRowHidden
+        if channelBottomActionRowVisibilityChanged {
+            isEventLess = isChannelBottomActionRowHidden
+            alphaValue = isChannelBottomActionRowHidden ? 0 : 1
+        }
+
         let startsDictation: Bool
         if case let .recording(recorder) = state {
             startsDictation = (recorder as? ChatRecordingAudioState)?.startsDictation == true
         } else {
             startsDictation = false
         }
-        let morphsGlass = animated && canMorphGlass && !isTranscribing && !startsDictation
+        let morphsGlass = animated && !isChannelBottomActionRowHidden && canMorphGlass && !isTranscribing && !startsDictation
         let isInputState = state == .normal || state == .editing
         var morphInSlots: ChatInputGlassSlots?
         if morphsGlass, isInputState {
@@ -1696,7 +1788,7 @@ public class ChatInputView: View, Notifable {
             morphGlassIn(from: morphInSlots)
         }
 
-        if animated {
+        if animated && !channelBottomActionRowVisibilityChanged {
             inputDidUpdateLayout(animated: animated)
         }
         if morphInSlots != nil {
@@ -1730,7 +1822,7 @@ public class ChatInputView: View, Notifable {
         } else {
             reusableActionView = nil
             if let view = stateView {
-                performSubviewRemoval(view, animated: animated)
+                performSubviewRemoval(view, animated: animated && !isChannelBottomActionRowHidden)
                 stateView = nil
             }
         }
@@ -1850,9 +1942,53 @@ public class ChatInputView: View, Notifable {
                 view.update(text: text, action: action, chatInteraction: chatInteraction, rightAdditionData: rightAddition, leftAdditionData: leftAddition, accent: accent)
                 installStateView(view)
             }
+        case let .channelBottomAction(control, right, left):
+            switch control {
+            case .hidden where isChannelBottomActionRowHidden:
+                contentView.isHidden = true
+                container.isHidden = true
+            case .hidden:
+                let view = ChatInputActionButtonView(frame: bounds)
+                view.updateLocalizationAndTheme(theme: currentChatTheme ?? theme)
+                view.updateAdditions(chatInteraction: chatInteraction, right: right, left: left)
+                installStateView(view)
+            case let .discussion(channelId, discussionId):
+                let view = ChatInputActionButtonView(frame: bounds)
+                view.updateLocalizationAndTheme(theme: currentChatTheme ?? theme)
+                view.update(text: strings().chatInputDiscuss, action: { [weak self] interaction in
+                    guard let self, self.chatInteraction === interaction,
+                          case let .channelBottomAction(current, _, _) = self.resolvedChatState, current == control else { return }
+                    interaction.openChannelDiscussion(channelId, discussionId)
+                }, chatInteraction: chatInteraction, rightAdditionData: right, leftAdditionData: left)
+                installStateView(view)
+            }
         case let .botStart(text, action):
+            let presentation = chatInteraction.presentation
+            let initialAction = presentation.initialAction
+            let location = presentation.chatLocation
+            let mode = presentation.chatMode
+            let matchesStartButton: (ChatInteraction) -> Bool = { [weak self] interaction in
+                let current = interaction.presentation
+                guard self?.chatInteraction === interaction, case .botStart = current.state else { return false }
+                return current.initialAction == initialAction && current.chatLocation == location && current.chatMode == mode
+            }
+
+            var title = text
+            var clearPayload: ((ChatInteraction) -> Bool)?
+            if case let .start(parameter, _) = initialAction, let preview = ChatBotForumControls.startPayloadPreview(parameter) {
+                title = String(format: localizedString("Gergram.Chat.BotStartWithPayload"), text, preview)
+                clearPayload = { interaction in
+                    guard matchesStartButton(interaction) else { return false }
+                    interaction.update { $0.withoutInitialAction() }
+                    return true
+                }
+            }
+
             let view = ChatInputActionButtonView(frame: bounds)
-            view.update(text: text, action: action, chatInteraction: chatInteraction, isBot: true)
+            view.update(text: title, action: { interaction in
+                guard matchesStartButton(interaction) else { return }
+                action(interaction)
+            }, chatInteraction: chatInteraction, isBot: true, clearBotStartPayload: clearPayload)
             installStateView(view)
         case let .channelWithDiscussion(discussionGroupId, leftAction, rightAction):
             let view = ChatInputDiscussionView(frame: bounds)
@@ -1913,6 +2049,9 @@ public class ChatInputView: View, Notifable {
         }
 
         CATransaction.commit()
+        if channelBottomActionRowVisibilityChanged {
+            inputDidUpdateLayout(animated: animated)
+        }
         dictationPanelToActivate?.startDictation()
     }
     
@@ -2011,7 +2150,8 @@ public class ChatInputView: View, Notifable {
     
     public func updateAttachments(_ inputState:ChatPresentationInterfaceState, _ animated:Bool = true) -> Void {
         var updated: Bool = false
-        if let botMenu = inputState.botMenu, !botMenu.isEmpty {
+        if let botMenu = inputState.botMenu,
+           botMenu.showsComposerButton(hidesBotCommands: ComposerBotCommandsPreferences.shared.hidesButton) {
             let current: ChatInputMenuView
             if let view = self.botMenuView {
                 current = view
@@ -2304,6 +2444,9 @@ public class ChatInputView: View, Notifable {
         self.slowModeUntilDisposable.dispose()
         self.richDraftDisposable.dispose()
         self.incomingTypingDraftDisposable.dispose()
+        self.channelBottomActionDisposable.dispose()
+        self.composerBotCommandsDisposable.dispose()
+        self.composerEditorControlsDisposable.dispose()
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Return)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Delete)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Z, modifierFlags: [.command], forceCheckFlags: true)

@@ -7,6 +7,7 @@ import InAppSettings
 import Localization
 import TelegramTheme
 import TelegramContext
+import TelegramLinks
 import TelegramUtils
 import AlertsUI
 import WallpaperUI
@@ -429,6 +430,18 @@ private func privacySearchableItems<Context: AccountContextProtocol>(context: Co
         }),
         SettingsSearchableItem(id: .privacy(15), title: strings().privacyAndSecurityClearCloudDrafts, alternate: synonyms(strings().settingsSearchSynonymsPrivacyDataDeleteDrafts), icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
             presentPrivacySettings(context, present, .cloudDraft)
+        }),
+        SettingsSearchableItem(id: .privacy(16), title: localizedString("Gergram.Archive.Title"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
+            guard let controller = gergramSettingsController(.localMessageArchive, context: context) else { return }
+            present(.push, controller)
+        }),
+        SettingsSearchableItem(id: .privacy(17), title: localizedString("Gergram.Chat.MessageFilters"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
+            guard let controller = gergramSettingsController(.messageFilters, context: context) else { return }
+            present(.push, controller)
+        }),
+        SettingsSearchableItem(id: .privacy(18), title: localizedString("Gergram.Chat.ShadowBannedSenders"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsPrivacyAndSecurity], present: { context, _, present in
+            guard let controller = gergramSettingsController(.locallyHiddenSenders, context: context) else { return }
+            present(.push, controller)
         })
     ]
 }
@@ -532,8 +545,89 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(6), title: strings().appearanceSettingsColorThemeHeader, alternate: synonyms(strings().settingsSearchSynonymsAppearanceColorTheme), icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .accentColor)
         }),
-        SettingsSearchableItem(id: .appearance(6), title: strings().appearanceSettingsChatViewHeader, alternate: synonyms(strings().settingsSearchSynonymsAppearanceChatMode), icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+        SettingsSearchableItem(id: .appearance(3), title: strings().appearanceSettingsChatViewHeader, alternate: synonyms(strings().settingsSearchSynonymsAppearanceChatMode), icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .chatMode)
+        }),
+        SettingsSearchableItem(id: .appearance(7), title: localizedString("Gergram.Chat.EditedIndicator"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .editedIndicator)
+        }),
+        SettingsSearchableItem(id: .appearance(8), title: localizedString("Gergram.Profile.ShowJoinDate"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .profileJoinDate)
+        }),
+        SettingsSearchableItem(id: .appearance(9), title: localizedString("Gergram.Chat.HideCustomWallpapers"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .customChatWallpapers)
+        }),
+        SettingsSearchableItem(id: .appearance(10), title: localizedString("Gergram.Composer.OpenEmojiOnHover"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .composerEmojiHover)
+        }),
+        SettingsSearchableItem(id: .appearance(13), title: localizedString("Gergram.Chat.SimpleQuotesAndReplies"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .simpleQuotesAndReplies)
+        }),
+        SettingsSearchableItem(id: .appearance(12), title: localizedString("Gergram.Chat.HidePremiumStatuses"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .premiumStatuses)
+        }),
+        SettingsSearchableItem(id: .appearance(11), title: localizedString("Gergram.Appearance.StreamerModeMenuBar"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .streamerModeMenuBar)
+        }),
+        SettingsSearchableItem(id: .appearance(31), title: localizedString("Gergram.Appearance.MyProfileMenuBar"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .myProfileMenuBar)
+        }),
+        SettingsSearchableItem(id: .appearance(32), title: localizedString("Gergram.Appearance.SavedMessagesMenuBar"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .savedMessagesMenuBar)
+        }),
+        SettingsSearchableItem(id: .appearance(14), title: localizedString("Gergram.Chat.HideMessageTails"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .messageTails)
+        }),
+        SettingsSearchableItem(id: .appearance(15), title: localizedString("Gergram.Chat.MessageWidth"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .messageWidth)
+        }),
+        SettingsSearchableItem(id: .appearance(16), title: localizedString("Gergram.Chat.RevealMediaSpoilers"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .mediaSpoilers)
+        }),
+        SettingsSearchableItem(id: .appearance(17), title: localizedString("Gergram.Chat.MonospaceFont"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .monospaceFont)
+        }),
+        SettingsSearchableItem(id: .appearance(18), title: localizedString("Gergram.Chat.BubbleRadius"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .messageBubbleRadius)
+        }),
+        SettingsSearchableItem(id: .appearance(19), title: localizedString("Gergram.Appearance.AnimateSwitches"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .switchAnimations)
+        }),
+        SettingsSearchableItem(id: .appearance(20), title: localizedString("Gergram.Chat.HideFastShare"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .fastShare)
+        }),
+        SettingsSearchableItem(id: .appearance(21), title: localizedString("Gergram.Chat.HideGreetingSticker"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .greetingSticker)
+        }),
+        SettingsSearchableItem(id: .appearance(22), title: localizedString("Gergram.Profile.AdaptiveMusicCover"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .adaptiveMusicCover)
+        }),
+        SettingsSearchableItem(id: .appearance(23), title: localizedString("Gergram.Appearance.AvatarRadius"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .avatarRadius)
+        }),
+        SettingsSearchableItem(id: .appearance(24), title: localizedString("Gergram.Appearance.SingleAvatarRadius"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .singleAvatarRadius)
+        }),
+        SettingsSearchableItem(id: .appearance(25), title: localizedString("Gergram.Appearance.Reset"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .resetGergramAppearance)
+        }),
+        SettingsSearchableItem(id: .appearance(26), title: localizedString("Gergram.Composer.HideBotCommands"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .botCommands)
+        }),
+        SettingsSearchableItem(id: .appearance(27), title: localizedString("Gergram.Composer.HideGift"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .giftButton)
+        }),
+        SettingsSearchableItem(id: .appearance(28), title: localizedString("Gergram.Chat.EditedIndicator.CustomText"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .editedIndicatorText)
+        }),
+        SettingsSearchableItem(id: .appearance(29), title: localizedString("Gergram.Composer.HideAITools"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .aiToolsButton)
+        }),
+        SettingsSearchableItem(id: .appearance(30), title: localizedString("Gergram.Composer.HideAutoDelete"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .autoDeleteButton)
+        }),
+        SettingsSearchableItem(id: .appearance(33), title: localizedString("Gergram.Composer.HideRichTextEditorShortcut"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .richTextEditorShortcut)
         }),
     ]
 }
@@ -660,7 +754,29 @@ func settingsSearchableItems<Context: AccountContextProtocol>(context: Context, 
             
             let appearanceItems = appearanceSearchableItems(context: context)
             allItems.append(contentsOf: appearanceItems)
-            
+            let generalRoutes: [(Int32, GergramSettingsRoute, String, SettingsSearchableItemIcon)] = [
+                (0, .filterZalgoText, "Gergram.Chat.FilterZalgoText", .appearance),
+                (1, .messageContextMenu, "Gergram.Chat.MenuSettings", .appearance),
+                (2, .miniAppWindowSize, "Gergram.MiniApp.WindowSize", .appearance),
+                (3, .hideChatListStories, "Gergram.Stories.HideInChatList", .appearance),
+                (4, .sendWithoutSound, "Gergram.Settings.SendWithoutSoundByDefault", .appearance),
+                (5, .hideProfileStories, "Gergram.Stories.HideInProfiles", .appearance),
+                (6, .channelBottomAction, "Gergram.Chat.ChannelBottomAction", .appearance),
+                (7, .transcriptionLanguage, "Gergram.Transcription.Language", .language)
+            ]
+            for (id, route, titleKey, icon) in generalRoutes {
+                allItems.append(SettingsSearchableItem(id: .general(id), title: localizedString(titleKey), alternate: [], icon: icon, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { context, _, present in
+                    guard let controller = gergramSettingsController(route, context: context) else { return }
+                    present(.push, controller)
+                }))
+            }
+            if #available(macOS 10.15, *) {
+                allItems.append(SettingsSearchableItem(id: .general(8), title: localizedString("Gergram.WhisperModels"), alternate: [], icon: .language, breadcrumbs: [strings().telegramGeneralSettingsViewController], present: { _, _, present in
+                    guard let controller = whisperModelSettingsController() else { return }
+                    present(.push, controller)
+                }))
+            }
+
             let languageItems = languageSearchableItems(context: context, localizations: localizations)
             allItems.append(contentsOf: languageItems)
             

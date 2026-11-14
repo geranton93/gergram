@@ -17,6 +17,7 @@ public final class ScopedImageCache {
     private struct Entry {
         let image: CGImage
         let sampleBuffer: CMSampleBuffer?
+        let identity: AnyHashable?
         let cost: Int
         var lastUsed: CFAbsoluteTime
         var scopes: Set<Int>
@@ -59,7 +60,7 @@ public final class ScopedImageCache {
         sweepTimer?.cancel()
     }
 
-    public func setImage(_ image: CGImage, sampleBuffer: CMSampleBuffer?, forKey key: Int) {
+    public func setImage(_ image: CGImage, sampleBuffer: CMSampleBuffer?, forKey key: Int, identity: AnyHashable? = nil) {
         let cost = image.bytesPerRow * image.height
         var released: [Entry] = []
 
@@ -67,7 +68,7 @@ public final class ScopedImageCache {
         if let previous = removeEntry(key) {
             released.append(previous)
         }
-        entries[key] = Entry(image: image, sampleBuffer: sampleBuffer, cost: cost, lastUsed: clock(), scopes: [], orphanedAt: nil)
+        entries[key] = Entry(image: image, sampleBuffer: sampleBuffer, identity: identity, cost: cost, lastUsed: clock(), scopes: [], orphanedAt: nil)
         keysByImage[ObjectIdentifier(image), default: []].append(key)
         totalCost += cost
         released.append(contentsOf: evictIfNeeded())
@@ -77,10 +78,10 @@ public final class ScopedImageCache {
         released.removeAll()
     }
 
-    public func image(forKey key: Int) -> (CGImage, CMSampleBuffer?)? {
+    public func image(forKey key: Int, identity: AnyHashable? = nil) -> (CGImage, CMSampleBuffer?)? {
         lock.lock()
         defer { lock.unlock() }
-        guard let entry = entries[key] else {
+        guard let entry = entries[key], entry.identity == identity else {
             return nil
         }
         entries[key]?.lastUsed = clock()

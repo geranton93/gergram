@@ -13,6 +13,7 @@ import TelegramMedia
 import InAppSettings
 import WalletContext
 import AppAnalytics
+import PeerInfoUI
 
 
 
@@ -452,7 +453,7 @@ private func analyticsLinkKind(_ inapp: inAppLink) -> AnalyticsEvents.LinkOpenLi
         return .proxy
     case .external:
         return .external
-    case .botCommand, .callback, .code, .hashtag, .logout, .nothing, .urlAuth, .oauth:
+    case .botCommand, .callback, .code, .hashtag, .logout, .nothing, .urlAuth, .oauth, .gergramPeer:
         return nil
     default:
         return .other
@@ -817,6 +818,27 @@ private func confirmExternalLink(window: Window, information: String, origin: In
     }
 }
 
+private func openSpotifyLink(_ link: SpotifyDesktopLink, completion: @escaping (Bool) -> Void) {
+    let workspace = NSWorkspace.shared
+    let openWeb = {
+        completion(workspace.open(link.webURL))
+    }
+    if #available(macOS 10.15, *), let spotify = workspace.urlForApplication(withBundleIdentifier: "com.spotify.client") {
+        workspace.open([link.appURL], withApplicationAt: spotify, configuration: NSWorkspace.OpenConfiguration()) { application, error in
+            let didOpen = application != nil && error == nil
+            DispatchQueue.main.async {
+                if didOpen {
+                    completion(true)
+                } else {
+                    openWeb()
+                }
+            }
+        }
+    } else {
+        openWeb()
+    }
+}
+
 private func executeInviteLink(hash: String, context: AccountContext, window: Window, origin inheritedOrigin: InAppLinkOrigin, interaction: @escaping (PeerId, Bool, MessageId?, ChatInitialAction?) -> Void) {
     let origin = InAppLinkOrigin(inheritedOrigin.context ?? Analytics.shared.unresolvedContext()).restricting(context: context, peerId: context.peerId)
     let openPeer: (Peer, ChatInitialAction?) -> Void = { peer, action in
@@ -909,6 +931,8 @@ private func analyticsLinkContext(_ inapp: inAppLink, inherited: AnalyticsContex
     switch inapp {
     case let .peerInfo(_, peerId, _, _, _, _):
         return origin.restricting(peerId: peerId)
+    case .gergramPeer:
+        return origin
     case let .stickerPack(_, _, context, peerId):
         return validated(context, peerId: peerId)
     case let .joinGroupCall(_, context, peerId, _):
@@ -1091,6 +1115,11 @@ func execute(inapp:inAppLink, window: Window? = nil, isExternal: Bool = false, a
                     let delivery = analyticsContext?.beginPresentation()
                     defer { delivery?.end() }
 
+                    if removePecentEncoding, let spotifyLink = SpotifyDesktopLink(url: urlValue) {
+                        openSpotifyLink(spotifyLink, completion: afterComplete)
+                        return
+                    }
+
                     var path = url.absoluteString
                     let supportSchemes:[String] = ["itunes.apple.com"]
                     for scheme in supportSchemes {
@@ -1135,6 +1164,49 @@ func execute(inapp:inAppLink, window: Window? = nil, isExternal: Bool = false, a
         }
         callback(peerId, openChat, messageId, action)
         afterComplete(true)
+    case let .gergramPeer(_, context, route):
+        let routeWindow = getWindow(context)
+        let signal = context.account.postbox.transaction { transaction -> Peer? in
+            guard let peer = transaction.getPeer(route.peerId) else { return nil }
+            switch peer {
+            case let user as TelegramUser:
+                return user.isDeleted ? nil : user
+            case let group as TelegramGroup:
+                return group.membership == .Member ? group : nil
+            case let channel as TelegramChannel:
+                if channel.participationStatus == .member {
+                    return channel
+                }
+                if channel.participationStatus == .left, let username = channel.addressName, !username.isEmpty {
+                    return channel
+                }
+                return nil
+            default:
+                return nil
+            }
+        }
+        _ = (signal |> deliverOnMainQueue).startStandalone(next: { [weak context, weak routeWindow] peer in
+            guard let context, let routeWindow, routeWindow.isVisible else {
+                afterComplete(false)
+                return
+            }
+            guard let peer else {
+                showModalText(for: routeWindow, text: strings().alertUserDoesntExists)
+                afterComplete(false)
+                return
+            }
+            switch route.destination {
+            case .peer:
+                PeerInfoController.push(navigation: context.bindings.rootNavigation(), context: context, peerId: peer.id)
+            case .chat:
+                if peer.isForum {
+                    ForumUI.open(peer.id, addition: true, context: context)
+                } else {
+                    context.bindings.rootNavigation().push(ChatController(context: context, chatLocation: .peer(peer.id)), true)
+                }
+            }
+            afterComplete(true)
+        })
     case let .comments(_, username, context, threadId, commentId):
         
         let origin = InAppLinkOrigin(analyticsContext).restricting(context: context, peerId: context.peerId)
@@ -2073,6 +2145,12 @@ func execute(inapp:inAppLink, window: Window? = nil, isExternal: Bool = false, a
         case .my_stories:
             let listContext = PeerStoryListContext(account: context.account, peerId: context.peerId, isArchived: false, folderId: nil)
             controller = StoryMediaController(context: context, peerId: context.peerId, listContext: listContext, standalone: true)
+        case let .gergram(route):
+            guard let destination = gergramSettingsController(route, context: context) else {
+                afterComplete(false)
+                return
+            }
+            controller = destination
         case .general:
             context.bindings.mainViewController.showPreferences()
             afterComplete(true)
@@ -2369,6 +2447,7 @@ enum inAppLink {
     
     case external(link:String, Bool) // link, confirm
     case tonsite(link: String, context: AccountContext)
+    case gergramPeer(link: String, context: AccountContext, route: GergramPeerRoute)
     case peerInfo(link: String, peerId:PeerId, action:ChatInitialAction?, openChat:Bool, postId:Int32?, callback:(PeerId, Bool, MessageId?, ChatInitialAction?)->Void)
     case followResolvedName(link: String, username:String, postId:Int32?, forceProfile: Bool, context: AccountContext, action:ChatInitialAction?, callback:(PeerId, Bool, MessageId?, ChatInitialAction?)->Void)
     case noPaidMessagesToken(link: String, username: String, token: String, context: AccountContext, callback:(PeerId, Bool, MessageId?, ChatInitialAction?)->Void)
@@ -2425,7 +2504,7 @@ enum inAppLink {
                 return link.replacingOccurrences(of: "mailto:", with: "")
             }
             return link
-        case let .peerInfo(link, _, _, _, _, _):
+        case let .peerInfo(link, _, _, _, _, _), let .gergramPeer(link, _, _):
             return link
         case let .comments(link, _, _, _, _):
             return link
@@ -2612,6 +2691,9 @@ func inApp(for url:NSString, context: AccountContext? = nil, peerId:PeerId? = ni
     case let .settings(link, section):
         guard let context else { return .nothing }
         return .settings(link: link, context: context, section: section)
+    case let .gergramPeer(link, route):
+        guard let context else { return .nothing }
+        return .gergramPeer(link: link, context: context, route: route)
     case let .invoice(link, slug):
         guard let context else { return .nothing }
         return .invoice(link: link, context: context, slug: slug)

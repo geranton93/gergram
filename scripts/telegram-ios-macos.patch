@@ -1922,3 +1922,355 @@ index b413951961c2040d6e18c233d2da558cca8a41f7..0e05c4924868260623c68ae6617c5e3c
  private func widgetBase64(_ value: String) throws -> String {
      var normalized = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
      while normalized.hasSuffix("=") {
+diff --git a/submodules/Postbox/Sources/LocalMessageArchive.swift b/submodules/Postbox/Sources/LocalMessageArchive.swift
+new file mode 100644
+index 0000000..eac7e93
+--- /dev/null
++++ b/submodules/Postbox/Sources/LocalMessageArchive.swift
+@@ -0,0 +1,308 @@
++import Foundation
++
++public struct LocalArchiveMessage: Equatable {
++    public enum Kind: UInt8 {
++        case deletion = 1
++        case edit = 2
++    }
++
++    public struct ID: Equatable {
++        public let message: MessageId
++        public let threadId: Int64?
++        public let kind: Kind
++        public let revision: Int64
++
++        public init(message: MessageId, threadId: Int64?, kind: Kind, revision: Int64) {
++            self.message = message
++            self.threadId = threadId
++            self.kind = kind
++            self.revision = revision
++        }
++    }
++
++    public let id: ID
++    public let capturedAt: Int64
++    public let snapshot: Data
++
++    public init(id: ID, capturedAt: Int64, snapshot: Data) {
++        self.id = id
++        self.capturedAt = capturedAt
++        self.snapshot = snapshot
++    }
++}
++
++public enum LocalArchiveScope: Equatable {
++    case account
++    case chat(PeerId)
++    case thread(PeerId, Int64?)
++}
++
++public struct LocalArchivePage {
++    public struct Cursor {
++        fileprivate let scope: LocalArchiveScope
++        fileprivate let accountId: Int64
++        fileprivate let key: Data
++    }
++
++    public let messages: [LocalArchiveMessage]
++    public let next: Cursor?
++}
++
++public enum LocalArchiveError: Error, Equatable {
++    case invalidAccount
++    case accountMismatch
++    case closed
++    case invalidMessage
++    case invalidLimit
++    case invalidCursor
++    case unsupportedSchema
++    case corrupted
++}
++
++struct LocalMessageArchive {
++    static let table = ValueBoxTable(id: 17830, keyType: .binary, compactValuesOnCreation: true)
++    static let maximumBatchSize = 128
++    static let maximumSnapshotSize = 32 * 1024
++    static let retentionSeconds: Int64 = 30 * 24 * 60 * 60
++    static let maximumRecords = 4096
++
++    private static let schemaVersion: UInt8 = 1
++    private static let header = ValueBoxKey("M")
++    private static let identityLength = 34
++    private static let primary = ValueBoxKey("P")
++    private static let chat = ValueBoxKey("C")
++    private static let thread = ValueBoxKey("T")
++    private static let identity = ValueBoxKey("I")
++
++    let valueBox: ValueBox
++    let accountId: Int64
++
++    func append(_ messages: [LocalArchiveMessage], now: Int64) throws {
++        guard now > 0, messages.count <= Self.maximumBatchSize else { throw LocalArchiveError.invalidLimit }
++        for message in messages {
++            guard self.isValidID(message.id), message.capturedAt > 0, message.capturedAt <= now,
++                  !message.snapshot.isEmpty, message.snapshot.count <= Self.maximumSnapshotSize
++            else {
++                throw LocalArchiveError.invalidMessage
++            }
++        }
++        let cutoff = self.cutoff(now: now)
++        let retained = messages.filter { $0.capturedAt >= cutoff }
++        try self.checkHeader(create: !retained.isEmpty)
++        for message in retained {
++            let identity = self.identityKey(message.id)
++            guard !self.valueBox.exists(Self.table, key: identity) else { continue }
++            let primary = self.indexKey(prefix: Self.primary, identity: identity, time: message.capturedAt)
++            self.valueBox.set(Self.table, key: primary, value: MemoryBuffer(data: message.snapshot))
++            let timestamp = ValueBoxKey(length: 8)
++            timestamp.setInt64(0, value: message.capturedAt)
++            self.valueBox.set(Self.table, key: identity, value: timestamp.toMemoryBuffer())
++            for scope in [LocalArchiveScope.chat(message.id.message.peerId), .thread(message.id.message.peerId, message.id.threadId)] {
++                let prefix = self.prefix(scope)
++                let index = self.indexKey(prefix: prefix, identity: identity, time: message.capturedAt)
++                self.valueBox.set(Self.table, key: index, value: MemoryBuffer())
++            }
++        }
++        try self.prune(now: now)
++    }
++
++    func page(_ scope: LocalArchiveScope, before cursor: LocalArchivePage.Cursor?, limit: Int, now: Int64) throws -> LocalArchivePage {
++        guard (1 ... Self.maximumBatchSize).contains(limit), now > 0 else { throw LocalArchiveError.invalidLimit }
++        try self.checkScope(scope)
++        if let cursor {
++            guard cursor.scope == scope, cursor.accountId == self.accountId else { throw LocalArchiveError.invalidCursor }
++        }
++        try self.checkHeader()
++        let prefix = self.prefix(scope)
++        let cutoff = ValueBoxKey(length: 8)
++        cutoff.setInt64(0, value: self.cutoff(now: now))
++        let lower = prefix + cutoff
++        let upper = cursor.map { ValueBoxKey(MemoryBuffer(data: $0.key)) } ?? prefix.successor
++        guard upper > lower else { return LocalArchivePage(messages: [], next: nil) }
++        let keys = self.keys(from: upper, to: lower, limit: limit + 1)
++        var messages: [LocalArchiveMessage] = []
++        for key in keys.prefix(limit) {
++            let index = try self.decodeIndex(key, prefix: prefix)
++            let primary = self.indexKey(prefix: Self.primary, identity: index.identity, time: index.time)
++            guard let buffer = self.valueBox.get(Self.table, key: primary),
++                  (1 ... Self.maximumSnapshotSize).contains(buffer.length)
++            else {
++                throw LocalArchiveError.corrupted
++            }
++            messages.append(LocalArchiveMessage(id: index.id, capturedAt: index.time, snapshot: buffer.makeData()))
++        }
++        let next: LocalArchivePage.Cursor?
++        if keys.count > limit {
++            let key = keys[limit - 1]
++            next = LocalArchivePage.Cursor(scope: scope, accountId: self.accountId, key: key.getData(0, length: key.length))
++        } else {
++            next = nil
++        }
++        return LocalArchivePage(messages: messages, next: next)
++    }
++
++    @discardableResult
++    func remove(_ id: LocalArchiveMessage.ID) throws -> Bool {
++        guard self.isValidID(id) else { throw LocalArchiveError.invalidMessage }
++        try self.checkHeader()
++        let key = self.identityKey(id)
++        guard let buffer = self.valueBox.get(Self.table, key: key) else { return false }
++        guard buffer.length == 8 else { throw LocalArchiveError.corrupted }
++        let timestamp = ValueBoxKey(buffer)
++        let index = self.indexKey(prefix: Self.primary, identity: key, time: timestamp.getInt64(0))
++        try self.removeIndexes([index], prefix: Self.primary)
++        return true
++    }
++
++    func clear(_ scope: LocalArchiveScope, limit: Int, close: Bool = false) throws -> Bool {
++        guard (1 ... Self.maximumBatchSize).contains(limit), !close || scope == .account else { throw LocalArchiveError.invalidLimit }
++        try self.checkScope(scope)
++        try self.checkHeader(allowClosed: close)
++        let prefix = self.prefix(scope)
++        let keys = self.keys(from: prefix, to: prefix.successor, limit: limit + 1)
++        try self.removeIndexes(keys.prefix(limit), prefix: prefix)
++        if close {
++            self.writeHeader(closed: true)
++        }
++        return keys.count > limit
++    }
++
++    @discardableResult
++    func prune(now: Int64) throws -> Bool {
++        guard now > 0 else { throw LocalArchiveError.invalidLimit }
++        try self.checkHeader()
++        let limit = Self.maximumBatchSize
++        let timestamp = ValueBoxKey(length: 8)
++        timestamp.setInt64(0, value: self.cutoff(now: now))
++        let expired = self.keys(from: Self.primary, to: Self.primary + timestamp, limit: limit + 1)
++        let total = self.valueBox.count(Self.table, start: Self.primary, end: Self.primary.successor)
++        let excess = max(0, total - Self.maximumRecords)
++        let removalCount = min(limit, max(expired.count, excess))
++        if removalCount > 0 {
++            let keys = expired.count >= removalCount ? Array(expired.prefix(removalCount))
++                : self.keys(from: Self.primary, to: Self.primary.successor, limit: removalCount)
++            try self.removeIndexes(keys, prefix: Self.primary)
++        }
++        return expired.count > limit || excess > limit
++    }
++
++    private func checkHeader(create: Bool = false, allowClosed: Bool = false) throws {
++        guard self.accountId != 0 else { throw LocalArchiveError.invalidAccount }
++        guard let buffer = self.valueBox.get(Self.table, key: Self.header) else {
++            guard self.keys(from: ValueBoxKey("A"), to: ValueBoxKey("Z"), limit: 1).isEmpty else {
++                throw LocalArchiveError.unsupportedSchema
++            }
++            if create {
++                self.writeHeader(closed: false)
++            }
++            return
++        }
++        let key = ValueBoxKey(buffer)
++        guard key.length > 0, key.getUInt8(0) == Self.schemaVersion else { throw LocalArchiveError.unsupportedSchema }
++        guard key.length == 10, key.getUInt8(9) <= 1 else { throw LocalArchiveError.corrupted }
++        guard key.getInt64(1) == self.accountId else { throw LocalArchiveError.accountMismatch }
++        guard allowClosed || key.getUInt8(9) == 0 else { throw LocalArchiveError.closed }
++    }
++
++    private func writeHeader(closed: Bool) {
++        let value = ValueBoxKey(length: 10)
++        value.setUInt8(0, value: Self.schemaVersion)
++        value.setInt64(1, value: self.accountId)
++        value.setUInt8(9, value: closed ? 1 : 0)
++        self.valueBox.set(Self.table, key: Self.header, value: value.toMemoryBuffer())
++    }
++
++    private func cutoff(now: Int64) -> Int64 {
++        return max(1, now - Self.retentionSeconds)
++    }
++
++    private func prefix(_ scope: LocalArchiveScope) -> ValueBoxKey {
++        switch scope {
++        case .account:
++            return Self.primary
++        case let .chat(peer):
++            let key = ValueBoxKey(length: 8)
++            key.setInt64(0, value: peer.toInt64())
++            return Self.chat + key
++        case let .thread(peer, thread):
++            let key = ValueBoxKey(length: 16)
++            key.setInt64(0, value: peer.toInt64())
++            key.setInt64(8, value: thread ?? 0)
++            return Self.thread + key
++        }
++    }
++
++    private func checkScope(_ scope: LocalArchiveScope) throws {
++        if case let .thread(_, threadId?) = scope, threadId <= 0 {
++            throw LocalArchiveError.invalidMessage
++        }
++    }
++
++    private func isValidID(_ id: LocalArchiveMessage.ID) -> Bool {
++        return id.message.peerId.id._internalGetInt64Value() > 0
++            && id.message.id > 0 && id.revision > 0
++            && id.threadId.map({ $0 > 0 }) != false
++    }
++
++    private func identityKey(_ id: LocalArchiveMessage.ID) -> ValueBoxKey {
++        let key = ValueBoxKey(length: Self.identityLength)
++        key.setUInt8(0, value: Self.identity.getUInt8(0))
++        key.setInt64(1, value: id.message.peerId.toInt64())
++        key.setInt64(9, value: id.threadId ?? 0)
++        key.setInt32(17, value: id.message.namespace)
++        key.setInt32(21, value: id.message.id)
++        key.setUInt8(25, value: id.kind.rawValue)
++        key.setInt64(26, value: id.revision)
++        return key
++    }
++
++    private func indexKey(prefix: ValueBoxKey, identity: ValueBoxKey, time: Int64) -> ValueBoxKey {
++        let timestamp = ValueBoxKey(length: 8)
++        timestamp.setInt64(0, value: time)
++        return prefix + timestamp + identity
++    }
++
++    private func keys(from: ValueBoxKey, to: ValueBoxKey, limit: Int) -> [ValueBoxKey] {
++        var keys: [ValueBoxKey] = []
++        self.valueBox.range(Self.table, start: from, end: to, keys: {
++            keys.append($0)
++            return true
++        }, limit: limit)
++        return keys
++    }
++
++    private func decodeIndex(_ key: ValueBoxKey, prefix: ValueBoxKey) throws -> (id: LocalArchiveMessage.ID, identity: ValueBoxKey, time: Int64) {
++        guard key.length == prefix.length + 8 + Self.identityLength, prefix.isPrefix(to: key) else {
++            throw LocalArchiveError.corrupted
++        }
++        let time = key.getInt64(prefix.length)
++        let identity = ValueBoxKey(length: Self.identityLength)
++        identity.setData(0, value: key.getData(prefix.length + 8, length: Self.identityLength))
++        let peer = identity.getInt64(1)
++        let threadId = identity.getInt64(9)
++        let messageId = identity.getInt32(21)
++        let revision = identity.getInt64(26)
++        guard time > 0, Self.identity.isPrefix(to: identity), peer != 0, threadId >= 0, messageId > 0, revision > 0,
++              let kind = LocalArchiveMessage.Kind(rawValue: identity.getUInt8(25))
++        else {
++            throw LocalArchiveError.corrupted
++        }
++        let bits = UInt64(bitPattern: peer)
++        guard bits >> 59 == 0 else { throw LocalArchiveError.corrupted }
++        let id = LocalArchiveMessage.ID(message: MessageId(peerId: PeerId(peer), namespace: identity.getInt32(17), id: messageId), threadId: threadId == 0 ? nil : threadId, kind: kind, revision: revision)
++        guard self.isValidID(id) else { throw LocalArchiveError.corrupted }
++        return (id, identity, time)
++    }
++
++    private func removeIndexes<Keys: Sequence>(_ keys: Keys, prefix: ValueBoxKey) throws where Keys.Element == ValueBoxKey {
++        let indexes = try keys.map { try self.decodeIndex($0, prefix: prefix) }
++        for index in indexes {
++            let peer = index.id.message.peerId
++            for scope in [LocalArchiveScope.account, .chat(peer), .thread(peer, index.id.threadId)] {
++                let key = self.indexKey(prefix: self.prefix(scope), identity: index.identity, time: index.time)
++                self.valueBox.remove(Self.table, key: key, secure: true)
++            }
++            self.valueBox.remove(Self.table, key: index.identity, secure: true)
++        }
++    }
++}
+diff --git a/submodules/Postbox/Sources/Postbox.swift b/submodules/Postbox/Sources/Postbox.swift
+index 72585b3..98735b2 100644
+--- a/submodules/Postbox/Sources/Postbox.swift
++++ b/submodules/Postbox/Sources/Postbox.swift
+@@ -22,2 +22,33 @@ public protocol StoreOrUpdateMessageAction: AnyObject {
+ public final class Transaction {
++    public func appendLocalArchiveMessages(accountId: Int64, messages: [LocalArchiveMessage], now: Int64) throws {
++        try self.localMessageArchive(accountId: accountId).append(messages, now: now)
++    }
++
++    public func localArchivePage(accountId: Int64, scope: LocalArchiveScope, before cursor: LocalArchivePage.Cursor? = nil, limit: Int, now: Int64) throws -> LocalArchivePage {
++        return try self.localMessageArchive(accountId: accountId).page(scope, before: cursor, limit: limit, now: now)
++    }
++
++    @discardableResult
++    public func removeLocalArchiveMessage(accountId: Int64, id: LocalArchiveMessage.ID) throws -> Bool {
++        return try self.localMessageArchive(accountId: accountId).remove(id)
++    }
++
++    public func clearLocalArchive(accountId: Int64, scope: LocalArchiveScope, limit: Int) throws -> Bool {
++        return try self.localMessageArchive(accountId: accountId).clear(scope, limit: limit)
++    }
++
++    public func pruneLocalArchive(accountId: Int64, now: Int64) throws -> Bool {
++        return try self.localMessageArchive(accountId: accountId).prune(now: now)
++    }
++
++    public func closeAndClearLocalArchive(accountId: Int64, limit: Int) throws -> Bool {
++        return try self.localMessageArchive(accountId: accountId).clear(.account, limit: limit, close: true)
++    }
++
++    private func localMessageArchive(accountId: Int64) throws -> LocalMessageArchive {
++        precondition(self.queue.isCurrent() && !self.disposed)
++        guard let postbox = self.postbox else { throw LocalArchiveError.closed }
++        return LocalMessageArchive(valueBox: postbox.valueBox, accountId: accountId)
++    }
++
+     private let queue: Queue

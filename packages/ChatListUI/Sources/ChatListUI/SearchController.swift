@@ -19,6 +19,7 @@ import ChatHistoryModel
 import ChatUI
 import ChatModeTypes
 import AppAnalytics
+import MessageUtils
 
 extension SearchMessagesLocation {
     public func withUpdatedSouce(_ source: SearchController.MessaagesSourceValue) -> SearchMessagesLocation {
@@ -146,7 +147,7 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
     case recentlySearch(RenderedPeer, Int, SearchSecretChatWrapper?, PeerStatusStringResult, UnreadSearchBadge, Bool, PeerStoryStats?, Bool, isGrossingApp: Bool, isRecentApp: Bool)
     case globalPeer(FoundPeer, UnreadSearchBadge, Int, AdPeer?)
     case savedMessages(Peer)
-    case message(Message, String, CombinedPeerReadState?, MessageHistoryThreadData?, Int)
+    case message(Message, String, CombinedPeerReadState?, MessageHistoryThreadData?, Int, filtersZalgoPreview: Bool = false, hidesSenderPreview: Bool = false)
     case separator(text: String, index:Int, state:SeparatorBlockState)
     case topPeers(Int, articlesEnabled: Bool, unreadArticles: Int32, selfPeer: Peer, peers: [Peer], unread: [PeerId: UnreadSearchBadge], online: [PeerId : Bool])
     case foundStories(StoryListContext.State, index: Int, query: String)
@@ -154,6 +155,32 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
     case loadingPlaceholder
     case emptyList(listType: SearchTags.ListType, postState: TelegramGlobalPostSearchState?, isPremium: Bool, query: String)
     case disclaimer(String)
+
+    func withStoryIndicatorsHidden(_ hidden: Bool) -> ChatListSearchEntry {
+        guard hidden else { return self }
+        switch self {
+        case let .localPeer(peer, index, secretChat, badge, drawBorder, canAddAsTag, _):
+            return .localPeer(peer, index, secretChat, badge, drawBorder, canAddAsTag, nil)
+        case let .recentlySearch(peer, index, secretChat, status, badge, drawBorder, _, canRemoveRecent, isGrossingApp, isRecentApp):
+            return .recentlySearch(peer, index, secretChat, status, badge, drawBorder, nil, canRemoveRecent, isGrossingApp: isGrossingApp, isRecentApp: isRecentApp)
+        default:
+            return self
+        }
+    }
+
+    var previewMessage: Message? {
+        guard case let .message(message, _, _, _, _, _, _) = self else { return nil }
+        return message
+    }
+
+    func withMessagePreview(filtersZalgo: Bool, senderVisibility: SearchSenderPreviewVisibility, revealed: Set<PeerId>, hidden: Set<PeerId>) -> ChatListSearchEntry {
+        guard case let .message(message, query, readState, threadInfo, index, previousZalgo, previousSender) = self else { return self }
+        let hidesSenderPreview = senderVisibility.hidesPreview(message.id, revealed: revealed, hidden: hidden)
+        let filtersZalgoPreview = !hidesSenderPreview && filtersZalgo && message.storyAttribute == nil && ChatListZalgoPreview.isEligible(message)
+        guard filtersZalgoPreview != previousZalgo || hidesSenderPreview != previousSender else { return self }
+        return .message(message, query, readState, threadInfo, index, filtersZalgoPreview: filtersZalgoPreview, hidesSenderPreview: hidesSenderPreview)
+    }
+
     var stableId: ChatListSearchEntryStableId {
         switch self {
         case let .localPeer(peer, _, secretChat, _, _, _, _):
@@ -165,7 +192,7 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
             return .topic(item.index)
         case let .globalPeer(found, _, _, _):
             return .globalPeerId(found.peer.id)
-        case let .message(message, _, _, _, _):
+        case let .message(message, _, _, _, _, _, _):
             return .messageId(message.id)
         case .savedMessages:
             return .savedMessages
@@ -199,7 +226,7 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
             return index
         case let .globalPeer(_, _,index, _):
             return index
-        case let .message(_, _, _, _, index):
+        case let .message(_, _, _, _, index, _, _):
             return index
         case .savedMessages:
             return -1
@@ -254,8 +281,8 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
             } else {
                 return false
             }
-        case let .message(lhsMessage, text, combinedState, threadInfo, index):
-            if case .message(let rhsMessage, text, combinedState, threadInfo, index) = rhs {
+        case let .message(lhsMessage, text, combinedState, threadInfo, index, filtersZalgoPreview, hidesSenderPreview):
+            if case .message(let rhsMessage, text, combinedState, threadInfo, index, filtersZalgoPreview, hidesSenderPreview) = rhs {
 
                 if lhsMessage.id != rhsMessage.id {
                     return false
@@ -376,7 +403,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ChatListSearchEntry
     
     let (deleted, inserted, updated) = proccessEntriesWithoutReverse(from, right: to, { entry -> TableRowItem in
         switch entry.entry {
-        case let .message(message, query, combinedState, threadInfo, _):
+        case let .message(message, query, combinedState, threadInfo, _, filtersZalgoPreview, hidesSenderPreview):
             var peer = RenderedPeer(message: message)
             if let group = message.peers[message.id.peerId] as? TelegramGroup, let migrationReference = group.migrationReference {
                 if let channelPeer = message.peers[migrationReference.peerId] {
@@ -409,7 +436,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ChatListSearchEntry
             case .common, .community:
                 titleMode = .forumInfo
             }
-            let item = ChatListMessageRowItem(initialSize, context: arguments.context, message: message, id: id, query: query, renderedPeer: peer, readState: combinedState, mode: mode, titleMode: titleMode)
+            let item = ChatListMessageRowItem(initialSize, context: arguments.context, message: message, id: id, query: query, renderedPeer: peer, readState: combinedState, mode: mode, titleMode: titleMode, filtersZalgoPreview: filtersZalgoPreview, hidesSenderPreview: hidesSenderPreview)
             return item
         case let .globalPeer(foundPeer, badge, _, adPeer):
             var status: String? = nil
@@ -857,8 +884,18 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
         let querySignal: Signal<String?, NoError> = searchQuery.get()
         let viewOnStageSignal: Signal<Bool, NoError> = viewOnStage |> filter { $0 } |> distinctUntilChanged
         let approvedSignal: Signal<ApprovedGlobalPostQueryState?, NoError> = approvedGlobalPostQueryState
-        let combinedInput: Signal<(SearchTags, String?, Bool, ApprovedGlobalPostQueryState?), NoError> = combineLatest(tagsSignal, querySignal, viewOnStageSignal, approvedSignal)
-        let searchItems = combinedInput |> mapToSignal { globalTags, query, _, approveGlobalPostState -> Signal<([ChatListSearchEntry], Bool, Bool, SearchMessagesState?, SearchMessagesResult?), NoError> in
+        let searchInput = combineLatest(tagsSignal, querySignal, viewOnStageSignal, approvedSignal)
+        let settings = additionalSettings(accountManager: context.sharedContext.accountManager)
+        let hideStoryIndicators = settings |> map { $0.hideChatListStories } |> distinctUntilChanged
+        let disableGlobalPeerSearch = settings |> map { $0.disableGlobalPeerSearch } |> distinctUntilChanged
+        let combinedInput = searchInput |> mapToSignal { tags, query, isVisible, approved -> Signal<(SearchTags, String?, Bool, ApprovedGlobalPostQueryState?, Bool), NoError> in
+            if case .common(.root) = target, options.contains(.chats), tags.isEmpty,
+               let query, !query.isEmpty, !query.hasPrefix("#"), !query.hasPrefix("$") {
+                return disableGlobalPeerSearch |> map { (tags, query, isVisible, approved, $0) }
+            }
+            return .single((tags, query, isVisible, approved, false))
+        }
+        let searchItems = combinedInput |> mapToSignal { globalTags, query, _, approveGlobalPostState, disableGlobalPeerSearch -> Signal<([ChatListSearchEntry], Bool, Bool, SearchMessagesState?, SearchMessagesResult?), NoError> in
             let query = query ?? ""
             var ids:[PeerId:PeerId] = [:]
             if !query.isEmpty || !globalTags.isEmpty, globalTags.listType != .globalPosts {
@@ -983,7 +1020,7 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
                         foundRemotePeers = .single(([], [], false))
                     } else {
                         location = globalTags.location(.allChats, communityId: communityId)
-                        if globalTags.isEmpty {
+                        if globalTags.isEmpty && !disableGlobalPeerSearch {
                         
                             let adPeers: Signal<[AdPeer], NoError>
                             
@@ -1757,17 +1794,42 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
         }
         
         
-        let transition = combineLatest(queue: prepareQueue, searchItems, appearanceSignal, context.globalPeerHandler.get() |> distinctUntilChanged) |> map { value, appearance, location in
-            return (value.0.map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}, value.1, value.2 ? nil : location, value.2, value.3, value.4)
+        let searchPreviews = searchItems |> deliverOn(prepareQueue) |> map { value in
+            let senderVisibility = SearchSenderPreviewVisibility(messages: value.0.compactMap(\.previewMessage), accountPeerId: context.peerId)
+            return (id: UUID(), value: value, senderVisibility: senderVisibility)
         }
-        |> map { entries, loading, location, animated, searchMessagesState, searchMessagesResult -> (TableUpdateTransition, Bool, ChatLocation?, SearchMessagesState?, SearchMessagesResult?) in
+        let visibleSearchPreviews = ChatParticipantVisibility.observeHistoryPreviews(
+            searchPreviews,
+            context: context,
+            queue: prepareQueue,
+            participants: { $0.senderVisibility.participatingSenders(revealed: $1) }
+        )
+        |> distinctUntilChanged(isEqual: { $0.0.id == $1.0.id && $0.1 == $1.1 && $0.2 == $1.2 })
+
+        let transition = combineLatest(queue: prepareQueue, visibleSearchPreviews, appearanceSignal, context.globalPeerHandler.get() |> distinctUntilChanged, hideStoryIndicators, FastSettings.filterZalgoTextSignal)
+        |> map { previews, appearance, location, hideStoryIndicators, filtersZalgoPreview in
+            let (snapshot, revealed, hidden) = previews
+            let value = snapshot.value
+            let entries = value.0.map {
+                let entry = $0.withStoryIndicatorsHidden(hideStoryIndicators).withMessagePreview(filtersZalgo: filtersZalgoPreview, senderVisibility: snapshot.senderVisibility, revealed: revealed, hidden: hidden)
+                return AppearanceWrapperEntry(entry: entry, appearance: appearance)
+            }
+            return (entries, value.1, value.2 ? nil : location, value.2, value.3, value.4, snapshot.id)
+        }
+        |> map { entries, loading, location, animated, searchMessagesState, searchMessagesResult, snapshotId -> (TableUpdateTransition, Bool, ChatLocation?, SearchMessagesState?, SearchMessagesResult?, UUID) in
             let transition = prepareEntries(from: previousSearchItems.swap(entries) , to: entries, arguments: arguments, initialSize: atomicSize.modify { $0 }, animated: animated, target: target)
-            return (transition, loading, location, searchMessagesState, searchMessagesResult)
+            return (transition, loading, location, searchMessagesState, searchMessagesResult, snapshotId)
         } |> deliverOnMainQueue
         
-        
-        disposable.set(transition.start(next: { [weak self] (transition, loading, location, searchMessagesState, searchMessagesResult) in
+        var previousSnapshotId: UUID?
+        var previousLocation: ChatLocation?
+        var previousMessagesPage: CachedSearchMessages?
+        disposable.set(transition.start(next: { [weak self] (transition, loading, location, searchMessagesState, searchMessagesResult, snapshotId) in
             guard let `self` = self else {return}
+            let hasNewResults = previousSnapshotId != snapshotId
+            let updatesSelection = hasNewResults || previousLocation != location
+            previousSnapshotId = snapshotId
+            previousLocation = location
             var previousShimmerFrame: NSRect?
             if let item = self.genericView.item(stableId: ChatListSearchEntryStableId.emptySearch) as? SearchShimmerRowItem, item.view != nil {
                 previousShimmerFrame = self.genericView.rectOf(index: item.index)
@@ -1781,39 +1843,42 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
             if let previousShimmerFrame, previousShimmerFrame != shimmerFrame {
                 self.fadeOutShimmer(frame: previousShimmerFrame)
             }
-            self.isLoading.set(.single(loading))
-            if self.scrollupOnNextTransition {
-                self.scrollup()
-            }
-            
-            
-            self.scrollupOnNextTransition = false
-            if let searchMessagesResult, let searchMessagesState {
-                _ = searchMessagesStateValue.swap(.init(result: searchMessagesResult, state: searchMessagesState))
-            }
-            
-            if let searchMessagesState, let searchMessagesResult {
-                self.currentMessagesSearchState = (searchMessagesResult, searchMessagesState)
-            } else {
-                self.currentMessagesSearchState = nil
-            }
-            
-            self._messagesValue.set(.single((ExternalSearchMessages(messages: searchMessagesResult?.messages ?? [], count: searchMessagesResult?.totalCount ?? 0), searchMessagesResult != nil)))
-            
-            if let location = location {
-                if !(self.genericView.selectedItem() is ChatListMessageRowItem) {
-                    switch location {
-                    case let .peer(peerId):
-                        let item = self.genericView.item(stableId: ChatListSearchEntryStableId.globalPeerId(peerId)) ?? self.genericView.item(stableId: ChatListSearchEntryStableId.localPeerId(peerId))
-                        if let item = item {
-                            _ = self.genericView.select(item: item, notify: false, byClick: false)
-                        }
-                    case .thread:
-                        break
-                    }
+            if hasNewResults {
+                self.isLoading.set(.single(loading))
+                if self.scrollupOnNextTransition {
+                    self.scrollup()
                 }
-            } else if self.searchTags?.listType == nil || self.searchTags == nil {
-                self.genericView.cancelSelection()
+                self.scrollupOnNextTransition = false
+                if let searchMessagesResult, let searchMessagesState {
+                    let page = CachedSearchMessages(result: searchMessagesResult, state: searchMessagesState)
+                    if previousMessagesPage != page {
+                        _ = searchMessagesStateValue.swap(page)
+                    }
+                    previousMessagesPage = page
+                    self.currentMessagesSearchState = (searchMessagesResult, searchMessagesState)
+                } else {
+                    previousMessagesPage = nil
+                    self.currentMessagesSearchState = nil
+                }
+                self._messagesValue.set(.single((ExternalSearchMessages(messages: searchMessagesResult?.messages ?? [], count: searchMessagesResult?.totalCount ?? 0), searchMessagesResult != nil)))
+            }
+            
+            if updatesSelection {
+                if let location {
+                    if !(self.genericView.selectedItem() is ChatListMessageRowItem) {
+                        switch location {
+                        case let .peer(peerId):
+                            let item = self.genericView.item(stableId: ChatListSearchEntryStableId.globalPeerId(peerId)) ?? self.genericView.item(stableId: ChatListSearchEntryStableId.localPeerId(peerId))
+                            if let item {
+                                _ = self.genericView.select(item: item, notify: false, byClick: false)
+                            }
+                        case .thread:
+                            break
+                        }
+                    }
+                } else if self.searchTags?.listType == nil {
+                    self.genericView.cancelSelection()
+                }
             }
             self.readyOnce()
         }))
@@ -1822,8 +1887,8 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
         genericView.setScrollHandler { position in
             switch position.direction {
             case .bottom:
-                if !target.isForum {
-                    searchMessagesState.set(searchMessagesStateValue.swap(nil))
+                if !target.isForum, let page = searchMessagesStateValue.swap(nil), !page.result.completed {
+                    searchMessagesState.set(page)
                 }
             default:
                 break

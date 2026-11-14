@@ -1,83 +1,65 @@
-<div align="center">
-  <img src="Telegram-Mac/Assets.xcassets/AppIcon.appiconset/Logo_1024.png"
-      width="125" 
-      height="125">
-  
-  <h2 align="center">Telegram for macOS</h2>
-</div>
+# gergram
 
-![Telegram macOS screenshot](images/tg.png)
+gergram is an unofficial native macOS client for Telegram. It extends the Swift and AppKit codebase of [Telegram for macOS](https://github.com/TelegramMessenger/telegram-macos).
 
-[**Telegram**](https://telegram.org) is a messaging app with a focus on speed and security. It’s superfast, simple, and free! This repo contains the official source code for [Telegram for macOS](https://macos.telegram.org/).
+The development branch contains the changes below. The integrated macOS build and app-level verification are pending.
 
-## Get it
+## Changes in gergram
 
-[![Download on the Mac App Store](images/mas_badge.png)](https://itunes.apple.com/us/app/telegram/id747648890?mt=12)
+| Area | What gergram adds to Telegram for macOS |
+| --- | --- |
+| App identity | A gergram name and icon, its own bundle and app-group defaults, local configuration for API credentials and signing, and independent update settings. |
+| Profile IDs and dates | The existing profile ID option can display and copy the Bot API format for users, groups, and channels. User profiles show the registration month and year when Telegram supplies it. Appearance can show the current member's join date in channel and supergroup profiles. |
+| Chat folders | Account-local controls to hide and restore folders, show or hide All Chats, and show or hide folder unread badges. Visible folders can be reordered while hidden folders retain their positions in the saved order. A reachable default folder remains available. |
+| Local message visibility | Hide an individual message or album for the current session and restore it from the chat menu. Privacy and Security includes account-local hidden sender rules. The blocked and hidden sender filters cover incoming messages in the transcript, including known forwarded and inline bot sources. Eligible group activity, read and reaction menus, reaction avatars, group chat-list previews and forum sidebar previews use those sender rules. Filtered list previews retain their date, position, draft and unread counters. Each chat can temporarily show its filtered messages. |
+| Message filters | Configure shared and chat-specific regex rules in Privacy and Security. Add a literal rule from selected message text, and import or export a validated JSON filter file for the current account. Shared rules can be copied as an offline link or saved as a portable JSON file. Paste the link in Message Filters or click an exact standalone link in an eligible chat message. Both paths preview the rules and destination account and require confirmation before merging. |
+| Message text and details | Turn on **Filter Zalgo Text in Messages** in General settings to remove excessive combining marks and explicit direction controls from ordinary message text, captions, author names and signatures, eligible list and forum previews, search snippets, read-only profile titles and contact names. A collapsed archive with one chat filters its message body. **Message Details** shows and copies IDs, timestamps, available view and forward counts, and eligible cloud attachment metadata, with an individual submenu for each attachment when a message has several. |
+| Message Shot | Copy or save a single message or a selection as a PNG from the message menu. Exports include author labels, styled ordinary text, verified local reply excerpts and available cached photo or video previews. Replies to messages in another chat use a generic placeholder. Text spoilers are masked before rendering, and spoiler or sensitive media use placeholders. **Show Timestamps** controls dates and times. Turn off **Show Background** for a transparent canvas around the message cards. Choose the current chat palette or one of four built-in themes, and optionally include reaction totals. A separate option controls eligible Channel badges, current cached group ranks, eligible topic authorship and boost counts. The export preferences are saved locally. gergram checks chat and message export permissions before rendering. |
+| Local message archive | Opt in under Privacy and Security to keep eligible incoming deleted text and previous message versions on this Mac. Browse by account, chat or topic, open it directly from supported chat and topic menus, remove an entry or clear the current scope. Capture defaults off. Customize the mark shown beside deleted records in the archive. Records are visible for up to 30 days and limited to 4,096 per account. |
+| Notifications | Choose immediate message delivery, a minimum delay, or a grace period for other devices. Delayed alerts recheck current privacy and message state. |
+| Streamer Mode | A persistent app and menu-bar control requests capture exclusion across gergram windows and suppresses new chat and story notifications while active. Appearance controls whether the menu bar shows Streamer Mode, My Profile or Saved Messages. Actual capture coverage depends on macOS and the sharing method. |
+| Discovery | Disable remote peer discovery in the main chat-list search while keeping local and message results. Hide the Similar Channels profile tab, start post-join recommendations collapsed, or independently hide stories and avatar story indicators in the chat list, its search results and other profiles. Choose whether the bottom action in a subscribed broadcast channel shows Mute, opens the linked discussion or is hidden. Open the linked broadcast channel from the discussion group’s chat and profile menus. |
+| Bot button inspection | View or copy inline callback data from the message menu without activating the button. Binary payloads use Base64. |
+| Context menu and bot Start | Configure which message commands appear in the regular or extended menu. Search by sender from an eligible message. Enable Repeat Message in the menu settings to confirm and resend eligible outgoing text or a cloud photo with its original caption in the original chat or topic. Mark an eligible ordinary chat or forum topic read through a selected incoming message or album. Review your loaded messages by date and media type, then select the matching messages for the native Delete action. A bot Start button can preview and clear its pending parameter locally. |
+| Settings and composer | gergram settings links open searchable General preferences, account privacy tools, bubble and avatar corners, and the edited-message label. Mini Apps can open wider or taller. Canceling an attachment preview can return the edited caption to the originating draft. Reordering files or album tiles uses the same attachment order as sending. Choose silent sending per account and override it for an individual send. Enable independent confirmation prompts for file-backed stickers, GIFs including inline results, voice messages and round videos, or turn off emoji picker activation on hover. Appearance can hide Quick Share, suggested greeting stickers, the bot Commands button or the Gift button where the recipient’s profile offers **Send Gift**. Hide AI Tools, Auto-Delete or the Rich Text Editor shortcut when the same action is available from a native menu. An active rich draft keeps its expand control. Appearance offers a confirmed reset for gergram’s preferences on that screen. |
+| Plugin attachment metadata | Open the metadata for an eligible downloaded `.plugin` attachment. The viewer reads a bounded local file and displays the declared fields as plain text. |
+| Pack identifiers and profiles | Copy sticker pack and emoji pack IDs, and copy custom emoji IDs from the pack, recent emoji or picker search. Profile ID rows label a statistics DC or profile-photo DC when available. The profile music strip can match its colors to available cached cover artwork. |
+| Translation and links | Select Google Translate for eligible messages with confirmation in the translation window. Telegram is the default provider. Eligible Spotify links can open in the installed app. Supported social posts can use a wide preview when Telegram supplies suitable media. The compose menu offers a compact choice for those posts. gergram peer and chat links accept typed numeric IDs for peers known to the current account. |
+| On-device transcription | Choose **Transcribe on This Mac** for an eligible incoming voice message or round video. Apple Speech processes supported audio locally, up to 60 seconds and 24 MB. Choose Automatic or an installed on-device transcription language. Use the arrow keys and Enter to make a choice from the searchable list. |
+| Chat appearance | A compact unread divider surrounds its label. Message, service, receipt and reaction timestamps can show seconds in the current locale. Appearance can use the global wallpaper, simplify reply and quote fills, hide decorative author status or reaction chips by chat type, hide bubble tails and set the corner radius and width of ordinary text bubbles. Set the corner radius for eligible peer avatars and optionally apply that shape to forum avatars. Switch animation is optional and follows macOS Reduce Motion. Choose the monospace font for code in messages and captions. Eligible image and video spoilers can show a preview in chat history. Choose text, a pencil icon or no edited indicator, and customize the text label. Direct broadcast-channel authors in supergroups use the Channel badge, and Contacts marks mutual contacts. Choose Preview Media as the Force Click action. Preview custom emoji through the picker with a hold, context menu or VoiceOver action. |
+| Stickers | Enable **Show All Recent Stickers** to show eligible stickers from the full synced recent list when available. The default picker displays up to 20. Pack discovery can show only added packs. Sticker artwork in the picker and pack preview has rounded corners. Prepare an eligible PNG or JPEG as a sticker from the attachment preview, or send the original file. |
+| Playback and sessions | Direct playback replenishes a bounded read-ahead window, supports relative and absolute FFmpeg seeks, avoids duplicate cache reads after range completion, and releases its demand on cancellation or terminal read failure. Click or drag the waveform of the active voice message to seek while preserving its playback state. Drag the progress ring of an active locally available round video to preview the position and seek on release. Use Space or K to pause or resume an eligible gallery GIF, and J or L to seek by ten seconds. GIF picker previews stay attached to the pressed tile, and interrupted canvas drags cancel. Media speed notices respect the server-configured cooldown and show in the active chat. A download notice can appear when its exact file is visible in the source message or album, including after scrolling to it within five minutes. Speculative story video downloads use a bounded prefix when metadata is missing and prioritize the next story's media ahead of its reactions. Session details show whether Telegram identifies the session as an official app. |
 
-### Using `mas-cli`
+### Numeric peer and chat links
 
+Use `gergram://peer/user/42` to open a profile and `gergram://chat/channel/42` to open a chat. The raw ID path takes `user`, `group` or `channel`. The `bot-api` path takes a signed Bot API dialog ID, for example `gergram://chat/bot-api/-1000000000042`. The selected account needs the target in its local peer data.
+
+Use `gergram://settings/general/filter-zalgo-text` to open and focus the Zalgo filter in General settings. The [settings links reference](docs/fork-development.md#settings-links) lists the supported destinations.
+
+## Planned additions
+
+| Area | What gergram adds |
+| --- | --- |
+| Message filters | Extend sender filtering to remaining chat surfaces and add scoped backups and direct opening of shared-rule links. |
+| Message images | Extend Message Shot with additional reply formats, richer media and message layouts. |
+| Local message history | Add inline archive markers and local reply links. |
+| Composer controls | Choose visible composer actions and media send confirmations. Extend keyboard reordering controls. |
+| Speech models | Integrate locally installed Whisper models. The source catalog and verified local cache cover pinned Tiny, Base and Small model artifacts. An optional CPU runtime builds and tests separately from the app. |
+| Message and bot tools | Extend message details to additional attachment types and look up sticker and emoji pack authors where available. |
+
+## Build from source
+
+Use a Mac with full Xcode, Homebrew, and a Rust toolchain. Initialize the pinned Git submodules from a checkout of gergram.
+
+```sh
+git submodule sync --recursive
+git submodule update --init --recursive
 ```
-mas install 747648890
-```
 
-### Manual download
+The build requires native framework preparation and a `Local.xcconfig` with the fork's API identity and signing team. Open `Telegram-Mac.xcworkspace` and select the `Telegram` scheme after preparation. [Development guide](docs/fork-development.md)
 
-If you would like, you can [download the non-MAS version](https://telegram.org/dl/macos).
+The implementation plan tracks each phase. The verification register records the remaining acceptance checks for every audited item. [Implementation plan](docs/development-plan.md) · [Verification register](docs/feature-verification.md)
 
-You can also [download the beta version](https://telegram.org/dl/macos/beta) if you want to try the latest features and you are prepared for bugs and crashes. If you are running the beta, join the [beta testing chat on Telegram](https://t.me/macswift) to report bugs.
+## Upstream and license
 
-## Contributors
-
-### Contributors on GitHub
-See [this repository’s contributors graph](https://github.com/macosswift/telegram/graphs/contributors).
-
-### Bugs and Suggestions
-You can report bug or suggestions feature for Telegram for macOS on [Telegram’s Bugs & Suggestions platform](https://bugs.telegram.org). Read [the platform tip](https://bugs.telegram.org/c/746) before creating first card.
-
-### Translations
-You can help translate Telegram for macOS on [Telegram’s translations platform](https://translations.telegram.org). Pick your language, then look for the macOS translation set.
-
-<!--### Third-party libraries-->
-<!--See [LIBRARIES](LIBRARIES.md).-->
-
-## Permissions
-Telegram strives to protect your privacy.  This app asks for as few permissions as possible:
-
-* **Microphone**: You can send voice messages and make audio calls with Telegram.
-* **Camera**: You can set your profile picture using your Mac’s iSight camera.
-* **Location**: You can send your location to friends.
-* **Outgoing network connections**: Telegram needs to connect to the internet to send your messages to your friends.
-* **Incoming network connections**: Telegram needs to accept incoming connections for peer-to-peer voice calls.
-* **User-selected files**: You can save files or images to your Mac.
-* **Downloads folder**: Telegram can automatically download files or images you receive.
-
-## Shortcuts
-With [Shortcuts](https://github.com/macosswift/telegram/wiki) you can learn how easy is navigate using your devices.
-
-## License
-Telegram for macOS is licensed under the GNU Public License, version 2.0. See [LICENSE](LICENSE) for more information.
-
-## Forking
-You can fork this application and make something awesome! Make sure that your fork follows these five requirements:
-
-1. **Do** [get your own API ID](https://core.telegram.org/api/obtaining_api_id).
-2. **Don’t** call your fork **Telegram** — or at least make sure your users understand that yours is unofficial.
-3. **Don’t** use our standard logo (white paper plane in a blue circle) for your fork.
-3. **Do** read and follow our [security guidelines](https://core.telegram.org/mtproto/security_guidelines) to make sure you take good care of your users’ data and protect their privacy.
-4. **Do** publish your code. The [GPL license](LICENSE) requires it!
-
-## How to Build
-
-Quick start (full details, requirements and troubleshooting are in [INSTALL.md](INSTALL.md)):
-
-1. Install Xcode 16 or newer, Homebrew and a Rust toolchain (rustup). On Xcode 27, apply the local changes in
-   [XCODE27.md](XCODE27.md) first: it supports macOS 12.0 and newer only, and the project targets 10.13.
-2. Clone with submodules:
-   ```
-   git clone --recurse-submodules https://github.com/macosswift/telegram.git
-   ```
-3. Prepare the machine and build the native libraries once:
-   ```
-   sh scripts/setup_build_env.sh --build
-   ```
-4. Open `Telegram-Mac.xcworkspace` in Xcode and build the `Telegram` scheme.
+The initial upstream revision is [`ec221d8560ca`](https://github.com/TelegramMessenger/telegram-macos/commit/ec221d8560ca693cb921b4e8c576da9b87dff9ef). The upstream project and this fork are licensed under the GNU General Public License, version 2. Upstream copyright and third-party license notices apply to the corresponding code. [License](LICENSE)

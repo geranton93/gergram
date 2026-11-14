@@ -1,0 +1,120 @@
+diff --git a/submodules/TelegramCore/Sources/Account/Account.swift b/submodules/TelegramCore/Sources/Account/Account.swift
+index 510cb79..8864fa1 100644
+--- a/submodules/TelegramCore/Sources/Account/Account.swift
++++ b/submodules/TelegramCore/Sources/Account/Account.swift
+@@ -1638,2 +1638,7 @@ public class Account {
+         }
++        #if os(macOS)
++        if !supplementary {
++            self.managedOperationsDisposable.add(managedLocalArchiveRetention(postbox: postbox, accountPeerId: peerId).start())
++        }
++        #endif
+         self.restartConfigurationUpdates()
+diff --git a/submodules/TelegramCore/Sources/Account/AccountManager.swift b/submodules/TelegramCore/Sources/Account/AccountManager.swift
+index c3c37c5..1a90596 100644
+--- a/submodules/TelegramCore/Sources/Account/AccountManager.swift
++++ b/submodules/TelegramCore/Sources/Account/AccountManager.swift
+@@ -506,23 +506,31 @@ private func cleanupAccount(networkArguments: NetworkInitializationArguments, ac
+             case let .authorized(account):
+-                account.shouldBeServiceTaskMaster.set(.single(.always))
+-                return account.network.request(Api.functions.auth.logOut())
+-                |> map(Optional.init)
+-                |> `catch` { _ -> Signal<Api.auth.LoggedOut?, NoError> in
+-                    return .single(nil)
+-                }
+-                |> mapToSignal { result -> Signal<Void, NoError> in
+-                    switch result {
+-                    case let .loggedOut(loggedOutData):
+-                        let futureAuthToken = loggedOutData.futureAuthToken
+-                        if let futureAuthToken = futureAuthToken {
+-                            storeFutureLoginToken(accountManager: accountManager, token: futureAuthToken.makeData())
+-                        }
+-                    default:
+-                        break
++                #if os(macOS)
++                let beforeLogout = closeLocalMessageArchive(postbox: account.postbox, accountPeerId: account.peerId)
++                #else
++                let beforeLogout = Signal<Void, NoError>.single(())
++                #endif
++                return beforeLogout
++                |> mapToSignal { _ -> Signal<Void, NoError> in
++                    account.shouldBeServiceTaskMaster.set(.single(.always))
++                    return account.network.request(Api.functions.auth.logOut())
++                    |> map(Optional.init)
++                    |> `catch` { _ -> Signal<Api.auth.LoggedOut?, NoError> in
++                        return .single(nil)
+                     }
+-                    account.shouldBeServiceTaskMaster.set(.single(.never))
+-                    return accountManager.transaction { transaction -> Void in
+-                        transaction.updateRecord(id, { _ in
+-                            return nil
+-                        })
++                    |> mapToSignal { result -> Signal<Void, NoError> in
++                        switch result {
++                        case let .loggedOut(loggedOutData):
++                            let futureAuthToken = loggedOutData.futureAuthToken
++                            if let futureAuthToken = futureAuthToken {
++                                storeFutureLoginToken(accountManager: accountManager, token: futureAuthToken.makeData())
++                            }
++                        default:
++                            break
++                        }
++                        account.shouldBeServiceTaskMaster.set(.single(.never))
++                        return accountManager.transaction { transaction -> Void in
++                            transaction.updateRecord(id, { _ in
++                                return nil
++                            })
++                        }
+                     }
+diff --git a/submodules/TelegramCore/Sources/Account/LocalArchiveMaintenance.swift b/submodules/TelegramCore/Sources/Account/LocalArchiveMaintenance.swift
+new file mode 100644
+index 0000000..617e8bb
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/Account/LocalArchiveMaintenance.swift
+@@ -0,0 +1,46 @@
++#if os(macOS)
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++func closeLocalMessageArchive(postbox: Postbox, accountPeerId: PeerId) -> Signal<Void, NoError> {
++    let accountId = accountPeerId.toInt64()
++    return drainLocalArchiveBatches(postbox: postbox) { transaction in
++        try transaction.closeAndClearLocalArchive(accountId: accountId, limit: 128)
++    }
++}
++
++func managedLocalArchiveRetention(postbox: Postbox, accountPeerId: PeerId) -> Signal<Never, NoError> {
++    let accountId = accountPeerId.toInt64()
++    let prune = deferred {
++        pruneLocalMessageArchive(postbox: postbox, accountId: accountId, now: Int64(Date().timeIntervalSince1970))
++        |> ignoreValues
++    }
++    return (prune |> then(.complete() |> suspendAwareDelay(60.0 * 60.0, granularity: 60.0, queue: .concurrentDefaultQueue())))
++    |> restart
++}
++
++func pruneLocalMessageArchive(postbox: Postbox, accountId: Int64, now: Int64) -> Signal<Void, NoError> {
++    return drainLocalArchiveBatches(postbox: postbox) { transaction in
++        try transaction.pruneLocalArchive(accountId: accountId, now: now)
++    }
++}
++
++private func drainLocalArchiveBatches(postbox: Postbox, batch: @escaping (Transaction) throws -> Bool) -> Signal<Void, NoError> {
++    return postbox.transaction { transaction -> Bool in
++        do {
++            return try batch(transaction)
++        } catch LocalArchiveError.closed {
++            return false
++        } catch {
++            Logger.shared.log("LocalArchive", "Maintenance failed: \(error)")
++            return false
++        }
++    }
++    |> restart
++    |> take(until: { hasMore in
++        SignalTakeAction(passthrough: !hasMore, complete: !hasMore)
++    })
++    |> map { _ in () }
++}
++#endif

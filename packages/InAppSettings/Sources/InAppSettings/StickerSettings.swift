@@ -13,20 +13,26 @@ public struct StickerSettings: Codable, Equatable {
     public var emojiStickerSuggestionMode: EmojiStickerSuggestionMode
     public var trendingClosedOn: Int64?
     public var dynamicPackOrder: Bool
+    public var showsAllRecentStickers: Bool
+    public var showsOnlyAddedPacks: Bool
     public static var defaultSettings: StickerSettings {
         return StickerSettings(emojiStickerSuggestionMode: .all, trendingClosedOn: nil, dynamicPackOrder: true)
     }
     
-    public init(emojiStickerSuggestionMode: EmojiStickerSuggestionMode, trendingClosedOn: Int64?, dynamicPackOrder: Bool) {
+    public init(emojiStickerSuggestionMode: EmojiStickerSuggestionMode, trendingClosedOn: Int64?, dynamicPackOrder: Bool, showsAllRecentStickers: Bool = false, showsOnlyAddedPacks: Bool = false) {
         self.emojiStickerSuggestionMode = emojiStickerSuggestionMode
         self.trendingClosedOn = trendingClosedOn
         self.dynamicPackOrder = dynamicPackOrder
+        self.showsAllRecentStickers = showsAllRecentStickers
+        self.showsOnlyAddedPacks = showsOnlyAddedPacks
     }
     
     public init(decoder: PostboxDecoder) {
         self.emojiStickerSuggestionMode = EmojiStickerSuggestionMode(rawValue: decoder.decodeInt32ForKey("emojiStickerSuggestionMode", orElse: 0))!
         self.trendingClosedOn = decoder.decodeOptionalInt64ForKey("t.c.o")
         self.dynamicPackOrder = decoder.decodeOptionalBoolForKey("dpo") ?? true
+        self.showsAllRecentStickers = decoder.decodeBoolForKey("sars", orElse: false)
+        self.showsOnlyAddedPacks = decoder.decodeBoolForKey("soap", orElse: false)
     }
     
     public func encode(_ encoder: PostboxEncoder) {
@@ -35,6 +41,8 @@ public struct StickerSettings: Codable, Equatable {
             encoder.encodeInt64(trendingClosedOn, forKey: "t.c.o")
         }
         encoder.encodeBool(dynamicPackOrder, forKey: "dpo")
+        encoder.encodeBool(showsAllRecentStickers, forKey: "sars")
+        encoder.encodeBool(showsOnlyAddedPacks, forKey: "soap")
 
     }
     
@@ -45,6 +53,8 @@ public struct StickerSettings: Codable, Equatable {
         self.emojiStickerSuggestionMode = EmojiStickerSuggestionMode(rawValue: emoji)!
         self.trendingClosedOn = try container.decodeIfPresent(Int64.self, forKey: "t.c.o")
         self.dynamicPackOrder = try container.decodeIfPresent(Bool.self, forKey: "dpo") ?? true
+        self.showsAllRecentStickers = try container.decodeIfPresent(Bool.self, forKey: "sars") ?? false
+        self.showsOnlyAddedPacks = try container.decodeIfPresent(Bool.self, forKey: "soap") ?? false
 
     }
     
@@ -53,16 +63,26 @@ public struct StickerSettings: Codable, Equatable {
         try container.encode(emojiStickerSuggestionMode.rawValue, forKey: "emojiStickerSuggestionMode")
         try container.encodeIfPresent(self.trendingClosedOn, forKey: "t.c.o")
         try container.encodeIfPresent(self.dynamicPackOrder, forKey: "dpo")
+        try container.encode(self.showsAllRecentStickers, forKey: "sars")
+        try container.encode(self.showsOnlyAddedPacks, forKey: "soap")
     }
     
     public func withUpdatedEmojiStickerSuggestionMode(_ emojiStickerSuggestionMode: EmojiStickerSuggestionMode) -> StickerSettings {
-        return StickerSettings(emojiStickerSuggestionMode: emojiStickerSuggestionMode, trendingClosedOn: self.trendingClosedOn, dynamicPackOrder: self.dynamicPackOrder)
+        var settings = self
+        settings.emojiStickerSuggestionMode = emojiStickerSuggestionMode
+        return settings
     }
+
     public func withUpdatedTrendingClosedOn(_ trendingClosedOn: Int64?) -> StickerSettings {
-        return StickerSettings(emojiStickerSuggestionMode: self.emojiStickerSuggestionMode, trendingClosedOn: trendingClosedOn, dynamicPackOrder: self.dynamicPackOrder)
+        var settings = self
+        settings.trendingClosedOn = trendingClosedOn
+        return settings
     }
+
     public func withUpdatedDynamicPackOrder(_ dynamicPackOrder: Bool) -> StickerSettings {
-        return StickerSettings(emojiStickerSuggestionMode: self.emojiStickerSuggestionMode, trendingClosedOn: self.trendingClosedOn, dynamicPackOrder: dynamicPackOrder)
+        var settings = self
+        settings.dynamicPackOrder = dynamicPackOrder
+        return settings
     }
 }
 

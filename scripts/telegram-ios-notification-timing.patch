@@ -1,0 +1,68 @@
+diff --git a/submodules/TelegramCore/Sources/State/AccountStateEventHub.swift b/submodules/TelegramCore/Sources/State/AccountStateEventHub.swift
+index f8bdba4..f38c58e 100644
+--- a/submodules/TelegramCore/Sources/State/AccountStateEventHub.swift
++++ b/submodules/TelegramCore/Sources/State/AccountStateEventHub.swift
+@@ -58,1 +58,6 @@ final class AccountStateEventHub {
++    private let notificationPresenceDeadlinePromise = ValuePromise<Int32>(0, ignoreRepeated: true)
++    var notificationPresenceDeadline: Signal<Int32, NoError> {
++        return self.notificationPresenceDeadlinePromise.get()
++    }
++
+     private let notificationMessagesPipe = ValuePipe<[([Message], PeerGroupId, Bool, MessageHistoryThreadData?)]>()
+@@ -230,2 +235,5 @@ final class AccountStateEventHub {
+     func dispatch(_ events: AccountFinalStateEvents, completed: @escaping () -> Void) {
++        if let deadline = events.delayNotificatonsUntil {
++            self.notificationPresenceDeadlinePromise.set(deadline)
++        }
+         let signal = self.postbox.transaction { transaction -> [([Message], PeerGroupId, Bool, MessageHistoryThreadData?)] in
+diff --git a/submodules/TelegramCore/Sources/State/AccountStateManager.swift b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
+index 74ca392..deed4f3 100644
+--- a/submodules/TelegramCore/Sources/State/AccountStateManager.swift
++++ b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
+@@ -216,1 +216,5 @@ public final class AccountStateManager {
++        var notificationPresenceDeadline: Signal<Int32, NoError> {
++            return self.eventHub.notificationPresenceDeadline
++        }
++
+         public var notificationMessages: Signal<[([Message], PeerGroupId, Bool, MessageHistoryThreadData?)], NoError> {
+@@ -961,1 +965,7 @@ public final class AccountStateManager {
++    public var notificationPresenceDeadline: Signal<Int32, NoError> {
++        return self.impl.signalWith { impl, subscriber in
++            return impl.notificationPresenceDeadline.start(next: subscriber.putNext, error: subscriber.putError, completed: subscriber.putCompletion)
++        }
++    }
++
+     public var notificationMessages: Signal<[([Message], PeerGroupId, Bool, MessageHistoryThreadData?)], NoError> {
+diff --git a/submodules/TelegramCore/Sources/State/ManagedConfigurationUpdates.swift b/submodules/TelegramCore/Sources/State/ManagedConfigurationUpdates.swift
+index 23c298d..5e4e281 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedConfigurationUpdates.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedConfigurationUpdates.swift
+@@ -17,2 +17,6 @@ func managedConfigurationUpdates(accountManager: AccountManager<TelegramAccountM
+                 case let .config(configData):
++                    let notificationTiming = NotificationDeliveryTiming(cloudDelayMilliseconds: configData.notifyCloudDelayMs, defaultDelayMilliseconds: configData.notifyDefaultDelayMs)
++                    transaction.updatePreferencesEntry(key: notificationDeliveryTimingKey) { current in
++                        return current?.get(NotificationDeliveryTiming.self) == notificationTiming ? current : PreferencesEntry(notificationTiming)
++                    }
+                     let (flags, dcOptions, chatSizeMax, megagroupSizeMax, forwardedCountMax, editTimeLimit, revokeTimeLimit, revokePmTimeLimit, stickersRecentLimit, autoupdateUrlPrefix, gifSearchUsername, venueSearchUsername, imgSearchUsername, webfileDcId, suggestedLangCode, langPackVersion, baseLangPackVersion, reactionsDefault, autologinToken) = (configData.flags, configData.dcOptions, configData.chatSizeMax, configData.megagroupSizeMax, configData.forwardedCountMax, configData.editTimeLimit, configData.revokeTimeLimit, configData.revokePmTimeLimit, configData.stickersRecentLimit, configData.autoupdateUrlPrefix, configData.gifSearchUsername, configData.venueSearchUsername, configData.imgSearchUsername, configData.webfileDcId, configData.suggestedLangCode, configData.langPackVersion, configData.baseLangPackVersion, configData.reactionsDefault, configData.autologinToken)
+diff --git a/submodules/TelegramCore/Sources/State/NotificationDeliveryTiming.swift b/submodules/TelegramCore/Sources/State/NotificationDeliveryTiming.swift
+new file mode 100644
+index 0000000..06b2ffb
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/State/NotificationDeliveryTiming.swift
+@@ -0,0 +1,16 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++let notificationDeliveryTimingKey = ValueBoxKey("gergram.notification-delivery-timing")
++
++public struct NotificationDeliveryTiming: Codable, Equatable {
++    public let cloudDelayMilliseconds: Int32
++    public let defaultDelayMilliseconds: Int32
++}
++
++public func notificationDeliveryTiming(postbox: Postbox) -> Signal<NotificationDeliveryTiming?, NoError> {
++    return postbox.preferencesView(keys: [notificationDeliveryTimingKey])
++    |> map { $0.values[notificationDeliveryTimingKey]?.get(NotificationDeliveryTiming.self) }
++    |> distinctUntilChanged
++}

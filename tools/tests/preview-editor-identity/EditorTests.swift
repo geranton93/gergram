@@ -82,6 +82,7 @@ final class EditImageModalController {
 }
 func showModal(with editor: EditImageModalController, for window: Int, animationType: Animation) { XCTAssertNotNil(editor.analyticsContext) }
 final class Controller {
+    var isRenderingEdit = false
     let pendingActions = PreviewSenderPendingActions()
     let attachmentEdits = PreviewSenderAttachmentEdits()
     let chatInteraction = ChatInteraction()

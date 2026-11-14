@@ -672,6 +672,14 @@ final class AppMenuController : NSObject  {
     
 
     
+    static func invokeMenuAction(_ item: ContextMenuItem, close: () -> Void) {
+        guard let handler = item.handler else { return }
+        handler()
+        if item.closesMenuOnAction {
+            close()
+        }
+    }
+
     private func getView(for menu: ContextMenu, screen: NSScreen, parentView: Window?, submenuId: Int64?) -> Window {
         let panel = Window(contentRect: .zero, styleMask: [.fullSizeContentView], backing: .buffered, defer: false)
         panel._canBecomeMain = false
@@ -698,10 +706,7 @@ final class AppMenuController : NSObject  {
         let presentation = self.presentation
         
         let interaction = AppMenuBasicItem.Interaction(action: { [weak self] item in
-            if let handler = item.handler {
-                handler()
-                self?.closeAll()
-            }
+            Self.invokeMenuAction(item) { self?.closeAll() }
         }, presentSubmenu: { [weak self, weak panel, weak menu] item in
             if let submenu = item.submenu as? ContextMenu, let parentView = panel, self?.findSubmenu(item.id) == nil {
                 self?.presentSubmenu(submenu, parentView: parentView, for: item.id)

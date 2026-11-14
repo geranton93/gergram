@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import Localization
 @testable import ChatUI
 
 final class ChatMessageAccessibilityTests: XCTestCase {
@@ -18,6 +19,11 @@ final class ChatMessageAccessibilityTests: XCTestCase {
         XCTAssertEqual(message.label, "Bob")
         XCTAssertEqual(message.value, "Hello\nOct 10, 2026 at 10:00")
         XCTAssertNil(message.help)
+    }
+
+    func testEditedMessageAnnouncesTheMarkerAlongsideItsTimestamp() {
+        let message = ChatMessageAccessibility(kind: .text("Updated"), isIncoming: true, authorName: nil, announceAuthor: false, caption: nil, date: "Oct 10, 2026 at 10:00", status: .none, isEdited: true)
+        XCTAssertEqual(message.value, "Updated\nOct 10, 2026 at 10:00\n\(strings().chatMessageEdited)")
     }
 
     func testOutgoingTextIsYourMessageWithStatus() {

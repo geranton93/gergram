@@ -757,6 +757,22 @@ public func StickerPackPreviewModalController(_ context: any AccountContextProto
             arguments.share(shareText.trimmed)
         }, itemImage: MenuAnimation.menu_share.value))
 
+        let copyPackItems = collections.compactMap { collection in
+            let title = collections.count > 1 ? collection.info.title : nil
+            return StickerPackIdentifier(packId: collection.info.id)?.copyMenuItem(context: context, title: title)
+        }
+        if collections.count > 1, !copyPackItems.isEmpty {
+            let copyPack = ContextMenuItem(localizedString("Gergram.StickerPack.CopyPackID"), itemImage: MenuAnimation.menu_copy.value)
+            let submenu = ContextMenu()
+            for item in copyPackItems {
+                submenu.addItem(item)
+            }
+            copyPack.submenu = submenu
+            items.append(copyPack)
+        } else {
+            items.append(contentsOf: copyPackItems)
+        }
+
         if controllerSource == .install, collections.count == 1 {
             let collection = collections[0]
             let isInstalled: Bool = {

@@ -297,6 +297,7 @@ public func ==(lhs:ChatRecordingState, rhs:ChatRecordingState) -> Bool {
 
 public final class ChatRecordingVideoState : ChatRecordingState {
     public let pipeline: VideoRecorderPipeline
+    public private(set) var hasReachedDurationLimit = false
     public let previewCommands: Promise<VideoRecorderPreviewCommand> = Promise()
     public init(context: (any AccountContextProtocol), liveUpload:Bool, autohold: Bool) {
         let id:Int64 = arc4random64()
@@ -363,7 +364,13 @@ public final class ChatRecordingVideoState : ChatRecordingState {
     public override func pause() {
         pipeline.pause()
     }
+    public func pauseAtDurationLimit() {
+        guard !hasReachedDurationLimit else { return }
+        hasReachedDurationLimit = true
+        pipeline.pause()
+    }
     public override func resume() {
+        guard !hasReachedDurationLimit else { return }
         pipeline.resume()
     }
     public override func performTrim(_ range: Range<Double>) -> Signal<Bool, NoError> {

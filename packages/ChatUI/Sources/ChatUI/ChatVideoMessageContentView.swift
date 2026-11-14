@@ -101,6 +101,12 @@ public class ChatVideoMessageContentView: ChatMediaContentView, APDelegate {
     private var player:GIFPlayerView = GIFPlayerView()
     private var progressView:RadialProgressView?
     private let playingProgressView: RadialProgressView = RadialProgressView(theme:RadialProgressTheme(backgroundColor: .clear, foregroundColor: NSColor.white.withAlphaComponent(0.8), lineWidth: 3), twist: false)
+    private struct RoundVideoSeek {
+        weak var controller: APController?
+        weak var song: APSongItem?
+        var previewProgress: Float
+    }
+    private var roundVideoSeek: RoundVideoSeek?
     private let statusDisposable = MetaDisposable()
     private let fetchDisposable = MetaDisposable()
     private let playerDisposable = MetaDisposable()
@@ -123,6 +129,7 @@ public class ChatVideoMessageContentView: ChatMediaContentView, APDelegate {
         addSubview(player)
         videoCorner.userInteractionEnabled = false
         playingProgressView.userInteractionEnabled = false
+        playingProgressView.isEventLess = true
         stateThumbView.isAccessibilityDecorative = true
         stateThumbView.image = instantVideoMutedThumb
         stateThumbView.sizeToFit()
@@ -151,6 +158,7 @@ public class ChatVideoMessageContentView: ChatMediaContentView, APDelegate {
     
     
     public override func clean() {
+        cancelRoundVideoSeek()
         statusDisposable.dispose()
         playerDisposable.dispose()
         removeNotificationListeners()
@@ -190,6 +198,93 @@ public class ChatVideoMessageContentView: ChatMediaContentView, APDelegate {
             }
         }
     }
+
+    public override func mouseDown(with event: NSEvent) {
+        roundVideoSeek = nil
+        let point = convert(event.locationInWindow, from: nil)
+        guard !event.modifierFlags.contains(.control),
+              let (controller, song) = roundVideoSeekTarget(),
+              !durationView.frame.contains(point),
+              transcribeControl?.frame.contains(point) != true,
+              let progress = roundVideoProgress(at: event, requireRing: true) else {
+            super.mouseDown(with: event)
+            return
+        }
+        roundVideoSeek = RoundVideoSeek(controller: controller, song: song, previewProgress: progress)
+        playingProgressView.state = .ImpossibleFetching(progress: progress, force: true)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        guard let gesture = roundVideoSeek else {
+            super.mouseDragged(with: event)
+            return
+        }
+        guard isCurrentRoundVideoSeek(gesture),
+              let progress = roundVideoProgress(at: event, requireRing: false),
+              progress != gesture.previewProgress else { return }
+        roundVideoSeek?.previewProgress = progress
+        playingProgressView.state = .ImpossibleFetching(progress: progress, force: true)
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        guard let gesture = roundVideoSeek else {
+            super.mouseUp(with: event)
+            return
+        }
+        roundVideoSeek = nil
+        if isCurrentRoundVideoSeek(gesture) {
+            let progress = roundVideoProgress(at: event, requireRing: false) ?? gesture.previewProgress
+            gesture.controller?.set(trackProgress: progress)
+        }
+        updateSongState()
+    }
+
+    private func roundVideoSeekTarget() -> (APController, APSongItem)? {
+        guard userInteractionEnabled, isEnabled, hasFetchStatusForCurrentMedia, fetchStatus == .Local,
+              progressView == nil, inkView == nil, let parent, parent.autoclearTimeout == nil,
+              let file = media as? TelegramMediaFile, file.isInstantVideo,
+              let controller = ChatMediaUIHooks.shared.getAudioPlayer(context), let song = controller.currentSong,
+              case let .song(message) = song.entry, message.id == parent.id, song.resource.id == file.resource.id,
+              song.status.duration.isFinite, song.status.duration > 0 else { return nil }
+        switch song.state {
+        case .playing, .paused:
+            return (controller, song)
+        case .waiting, .fetching, .stoped:
+            return nil
+        }
+    }
+
+    private func isCurrentRoundVideoSeek(_ gesture: RoundVideoSeek) -> Bool {
+        guard let (controller, song) = roundVideoSeekTarget() else { return false }
+        return gesture.controller === controller && gesture.song === song
+    }
+
+    private func roundVideoProgress(at event: NSEvent, requireRing: Bool) -> Float? {
+        let ring = playingProgressView.bounds
+        let point = playingProgressView.convert(event.locationInWindow, from: nil)
+        let dx = point.x - ring.midX
+        let dy = (point.y - ring.midY) * (playingProgressView.isFlipped ? 1 : -1)
+        let distance = hypot(dx, dy)
+        let outerRadius = min(ring.width, ring.height) / 2
+        let lineWidth = playingProgressView.theme.lineWidth
+        guard distance.isFinite, outerRadius.isFinite, outerRadius > lineWidth * 2, distance > lineWidth else { return nil }
+        if requireRing {
+            guard distance >= outerRadius - lineWidth * 2, distance <= outerRadius + lineWidth / 2 else { return nil }
+        }
+        let fraction = atan2(dx, -dy) / (2 * .pi)
+        return Float(fraction < 0 ? fraction + 1 : fraction)
+    }
+
+    private func cancelRoundVideoSeek() {
+        // Consume the matching mouse-up even if the row has been rebound.
+        roundVideoSeek?.controller = nil
+        roundVideoSeek?.song = nil
+    }
+
+    public override func willRemove() {
+        cancelRoundVideoSeek()
+        super.willRemove()
+    }
     
     public func songDidChanged(song: APSongItem, for controller: APController, animated: Bool) {
         updateSongState()
@@ -205,9 +300,10 @@ public class ChatVideoMessageContentView: ChatMediaContentView, APDelegate {
                 singleEqual = song.entry.isEqual(to: single)
             }
             if song.entry.isEqual(to: parent) || singleEqual {
+                let seekPreview = roundVideoSeek.flatMap { isCurrentRoundVideoSeek($0) ? $0.previewProgress : nil }
                 switch song.state {
                 case let .playing(current, _, progress):
-                    playingProgressView.state = .ImpossibleFetching(progress: Float(progress), force: false)
+                    playingProgressView.state = .ImpossibleFetching(progress: seekPreview ?? Float(progress), force: seekPreview != nil)
                     durationView.updateText(String.durationTransformed(elapsed: Int(current)), maxWidth: 50, status: nil, isStreamable: false, isUnread: !isIncomingConsumed, animated: true, isVideoMessage: true)
                     stateThumbView.isHidden = true
                 case .stoped, .waiting, .fetching:
@@ -215,7 +311,7 @@ public class ChatVideoMessageContentView: ChatMediaContentView, APDelegate {
                     durationView.updateText(String.durationTransformed(elapsed: parameters.duration), maxWidth: 50, status: nil, isStreamable: false, isUnread: !isIncomingConsumed, animated: true, isVideoMessage: true)
                     stateThumbView.isHidden = false
                 case let .paused(current, _, progress):
-                    playingProgressView.state = .ImpossibleFetching(progress: Float(progress), force: true)
+                    playingProgressView.state = .ImpossibleFetching(progress: seekPreview ?? Float(progress), force: true)
                     durationView.updateText(String.durationTransformed(elapsed: Int(current)), maxWidth: 50, status: nil, isStreamable: false, isUnread: !isIncomingConsumed, animated: true, isVideoMessage: true)
                     stateThumbView.isHidden = false
                 }
@@ -359,6 +455,9 @@ public class ChatVideoMessageContentView: ChatMediaContentView, APDelegate {
     }
     
     public override func viewDidMoveToWindow() {
+        if window == nil {
+            cancelRoundVideoSeek()
+        }
         updateListeners()
         updatePlayerIfNeeded()
     }
@@ -370,6 +469,10 @@ public class ChatVideoMessageContentView: ChatMediaContentView, APDelegate {
     }
     
     public override func update(with media: Media, size: NSSize, context: any AccountContextProtocol, parent: Message?, table: TableView?, parameters:ChatMediaLayoutParameters? = nil, animated: Bool = false, positionFlags: LayoutPositionFlags? = nil, approximateSynchronousValue: Bool = false) {
+        if self.parent?.id != parent?.id || self.context !== context
+            || (self.media as? TelegramMediaFile)?.resource.id != (media as? TelegramMediaFile)?.resource.id {
+            cancelRoundVideoSeek()
+        }
         let mediaUpdated = self.media == nil || !self.media!.isSemanticallyEqual(to: media)
         
         

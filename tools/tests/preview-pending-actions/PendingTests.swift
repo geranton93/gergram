@@ -29,7 +29,17 @@ final class Analytics {
 }
 struct ChatState {
     var alwaysPaid = false
-    func withUpdatedAlwaysPaidMessage(_ value: Bool) -> ChatState { ChatState(alwaysPaid: value) }
+    var interfaceState = ComposerState()
+    func withUpdatedAlwaysPaidMessage(_ value: Bool) -> ChatState {
+        var state = self
+        state.alwaysPaid = value
+        return state
+    }
+    func updatedInterfaceState(_ transform: (ComposerState) -> ComposerState) -> ChatState {
+        var state = self
+        state.interfaceState = transform(state.interfaceState)
+        return state
+    }
 }
 final class ChatInteraction {
     struct Schedule { let date: Int32; let repeatPeriod: Int32? }
@@ -37,14 +47,21 @@ final class ChatInteraction {
     var preferenceWrites = 0
     var state = ChatState()
     var onUpdate: (() -> Void)?
+    var presentation: ChatState { state }
     func captureDeferredSendAction() -> ChatDeferredSendAction {
         let revision = self.revision
         return ChatDeferredSendAction { [weak self] in self?.revision == revision }
     }
-    func update(_ transform: (ChatState) -> ChatState) { state = transform(state); preferenceWrites += 1; onUpdate?() }
+    func update(_ transform: (ChatState) -> ChatState) {
+        let updated = transform(state)
+        if updated.interfaceState != state.interfaceState { revision += 1 }
+        state = updated
+        preferenceWrites += 1
+        onUpdate?()
+    }
 }
 final class Journey {
-    enum Step { case cancelSchedule, openPrice, applyPrice, cancelPrice, removePrice, openEffectPremium }
+    enum Step { case cancelSchedule, openPrice, applyPrice, cancelPrice, removePrice, openEffectPremium, openConfirmation, cancelConfirmation }
     var steps: [Step] = []
     var cancelled = 0
     var discarded = 0
@@ -88,16 +105,26 @@ final class Controller: Base {
     let pasteDisposable = PasteSubscriptionFixture()
     let pendingActions = PreviewSenderPendingActions()
     let chatInteraction = ChatInteraction()
+    let contextChatInteraction = ChatInteraction()
+    private var borrowedComposerDraft: (input: ChatTextInputState, restoreAction: ChatDeferredSendAction)?
+    private var keepEditedCaptionOnCancel = false
     var analyticsMediaJourney: Journey? = Journey()
     var analyticsContext: Context? = Context()
     var sent = false
     var window: Window? = Window()
-    var sendCurrentMedia: ((Bool, ChatInteraction.Schedule?, Bool?, Via) -> Void)?
+    var sendCurrentMedia: ((ChatSendSound, ChatInteraction.Schedule?, Bool?, Via) -> Void)?
     var onSend: (() -> Void)?
+    var pendingRenderSend: (() -> Void)?
+    var stickerConfirmation: UUID?
+    var canSendPreviewSticker = true
+    let state = SubmissionState()
+    func discardStickerPreparation() {}
 __EFFECT_PREMIUM__
 __PRICE__
 __CAPTURE__
+__STICKER_CONFIRMATION__
 __CLOSE__
+__CAPTION__
 __DISAPPEAR__
     func sendBatches(_ count: Int, onBatch: (Int) -> Void) {
         let submission = analyticsMediaJourney
@@ -135,15 +162,72 @@ __SUBMIT_PREFIX__
         let peer = Peer()
         let analyticsContext = self.analyticsContext!
         let scheduleAction = capturePendingAction()
-        let silent = false
+        let sound = ChatSendSound.audible
         let asSpoiler: Bool? = nil
         let via = Via.sendControl
 __SCHEDULE__
     }
 }
 
+struct SubmissionState {
+    enum Mode { case sticker, file }
+    let state = Mode.file
+}
+
+struct StickerConfirmationCallbacks {
+    static var presented: [Self] = []
+    let accept: (Bool) -> Void
+    let cancel: () -> Void
+    let dismiss: () -> Void
+}
+
+func localizedString(_ key: String) -> String { key }
+
+func verifyAlert(for window: Window, header: String, ok: String, cancel: String, successHandler: @escaping (Bool) -> Void, cancelHandler: @escaping () -> Void, onDeinit: @escaping () -> Void) {
+    StickerConfirmationCallbacks.presented.append(.init(accept: successHandler, cancel: cancelHandler, dismiss: onDeinit))
+}
+
 final class PendingTests: XCTestCase {
-    override func setUp() { FeatureNavigationHooks.shared.dates = [] }
+    override func setUp() {
+        FeatureNavigationHooks.shared.dates = []
+        StickerConfirmationCallbacks.presented = []
+    }
+
+    func testStickerConfirmationCancelsWithoutSendingAndAcceptsOnlyOnce() {
+        let controller = Controller()
+        var sends = 0
+        controller.confirmStickerSend { sends += 1 }
+        controller.confirmStickerSend { sends += 1 }
+        XCTAssertEqual(StickerConfirmationCallbacks.presented.count, 1)
+        let first = StickerConfirmationCallbacks.presented[0]
+        first.cancel()
+        first.accept(true)
+        XCTAssertEqual(sends, 0)
+
+        controller.confirmStickerSend { sends += 1 }
+        let second = StickerConfirmationCallbacks.presented[1]
+        first.dismiss()
+        controller.confirmStickerSend { sends += 1 }
+        XCTAssertEqual(StickerConfirmationCallbacks.presented.count, 2)
+        second.accept(true)
+        second.accept(true)
+        XCTAssertEqual(sends, 1)
+    }
+
+    func testStickerConfirmationRejectsStaleChatAndClosedPreview() {
+        for close in [false, true] {
+            let controller = Controller()
+            var sends = 0
+            controller.confirmStickerSend { sends += 1 }
+            if close {
+                controller.closeModal()
+            } else {
+                controller.chatInteraction.revision += 1
+            }
+            StickerConfirmationCallbacks.presented.last?.accept(true)
+            XCTAssertEqual(sends, 0)
+        }
+    }
     func testTokenInspectionDoesNotConsumeAndTakingIsOnceOnly() {
         let state = PreviewSenderPendingActions()
         let token = state.captureToken()

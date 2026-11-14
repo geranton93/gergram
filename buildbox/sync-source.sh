@@ -11,6 +11,7 @@ rsync -a --delete \
     --exclude='/packages/WalletEngine/wallet_engineFFI.xcframework/' \
     --exclude='/submodules/telegram-ios/submodules/MTProtoRustEngine/MTProtoEngineFFI.xcframework/' \
     --exclude='/submodules/**/SharedHeaders/' \
+    --exclude='/.build/flatbuffers-24.12.23/' \
     --exclude='/.build/telegram-api-generation/' \
     --exclude='/submodules/telegram-ios/build-system/SwiftTL/.build/' \
     --exclude='/submodules/telegram-ios/submodules/TelegramApi/Sources/SwiftPMGenerated/' \

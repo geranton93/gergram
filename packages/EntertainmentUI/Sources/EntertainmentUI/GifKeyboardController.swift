@@ -593,7 +593,7 @@ public final class GifKeyboardController<Context: AccountContextProtocol> : Tele
             if let slowMode = self?.chatInteraction?.presentationSlowMode, slowMode.hasLocked {
                 showSlowModeTimeoutTooltip(slowMode, for: view)
             } else {
-                if let chatInteraction = self?.chatInteraction {
+                if let chatInteraction = self?.chatInteraction, !chatInteraction.shouldDeferInlineResultSendFlight(result) {
                     EntertainmentUIHooks.shared.launchSendFlight(chatInteraction, view, view.bounds, view.layer)
                 }
                 self?.chatInteraction?.sendInlineResult(results, result)
@@ -604,7 +604,7 @@ public final class GifKeyboardController<Context: AccountContextProtocol> : Tele
             if let slowMode = self?.chatInteraction?.presentationSlowMode, slowMode.hasLocked {
                 showSlowModeTimeoutTooltip(slowMode, for: view)
             } else {
-                if !schedule, let chatInteraction = self?.chatInteraction {
+                if !schedule, let chatInteraction = self?.chatInteraction, !chatInteraction.shouldDeferFileSendFlight(file) {
                     EntertainmentUIHooks.shared.launchSendFlight(chatInteraction, view, view.bounds, view.layer)
                 }
                 self?.interactions?.sendGIF(file, silent, schedule)
@@ -680,12 +680,18 @@ public final class GifKeyboardController<Context: AccountContextProtocol> : Tele
         }, messageMenuItems: { message, view in
             return .single([])
         })
-        mediaArguments.drag = { [weak self] result, point, ended in
-            guard let dragItem = self?.interactions?.dragItem, case let .internalReference(values) = result, let file = values.file else {
-                return false
+        mediaArguments.beginDrag = { [weak self] result, point in
+            guard let interactions = self?.interactions, let dragItem = interactions.dragItem,
+                  case let .internalReference(values) = result, let file = values.file else {
+                return nil
             }
-            dragItem(.file(file), nil, ended ? .ended(point) : .moved(point))
-            return true
+            let cancel = interactions.cancelItemDrag
+            dragItem(.file(file), nil, .moved(point))
+            return (update: { point, ended in
+                dragItem(.file(file), nil, ended ? .ended(point) : .moved(point))
+            }, cancel: {
+                cancel?()
+            })
         }
 
         self.updateState = { f in

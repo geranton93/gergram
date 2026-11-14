@@ -23,7 +23,8 @@ final class TextQuoteAttributeTests: XCTestCase {
             TextViewBlockQuoteData(id: 1, colors: .init(main: .blue), isCode: true, space: 8, header: title, collapsable: true),
             TextViewBlockQuoteData(id: 1, colors: .init(main: .blue), isCode: true, header: nil, collapsable: true),
             TextViewBlockQuoteData(id: 1, colors: .init(main: .blue), isCode: true, header: header("Python"), collapsable: true),
-            TextViewBlockQuoteData(id: 1, colors: .init(main: .blue), isCode: true, header: title, collapsable: false)
+            TextViewBlockQuoteData(id: 1, colors: .init(main: .blue), isCode: true, header: title, collapsable: false),
+            TextViewBlockQuoteData(id: 1, colors: .init(main: .blue), isCode: true, header: title, collapsable: true, fillsBackground: false)
         ] {
             XCTAssertNotEqual(original, different)
             XCTAssertEqual(NSSet(array: [original, different]).count, 2)
@@ -62,4 +63,41 @@ final class TextQuoteAttributeTests: XCTestCase {
         XCTAssertFalse(other.blockCollapsable)
         XCTAssertNil(other.blockQuotes.first?.header)
     }
+
+    func testSimplifiedQuoteKeepsTextAndOutlineWithoutColoredFill() throws {
+        func render(fillsBackground: Bool) throws -> (TextViewLayout, Data) {
+            let quote = TextViewBlockQuoteData(id: 1, colors: .init(main: .blue), fillsBackground: fillsBackground)
+            let string = NSAttributedString(string: "A quoted passage", attributes: [
+                .font: NSFont.systemFont(ofSize: 14),
+                .foregroundColor: NSColor.black,
+                TextInputAttributes.quote: quote
+            ])
+            let layout = TextViewLayout(string)
+            layout.measure(width: 180)
+            let view = TextView(frame: NSRect(origin: .zero, size: layout.layoutSize))
+            view.update(layout)
+            view.layout()
+            let context = try XCTUnwrap(CGContext(
+                data: nil, width: 360, height: 200, bitsPerComponent: 8, bytesPerRow: 1440,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.scaleBy(x: 2, y: 2)
+            view.draw(view.drawingLayer, in: context)
+            return (layout, Data(bytes: try XCTUnwrap(context.data), count: context.bytesPerRow * context.height))
+        }
+
+        let (regular, regularPixels) = try render(fillsBackground: true)
+        let (simple, simplePixels) = try render(fillsBackground: false)
+        let regularQuote = try XCTUnwrap(regular.blockQuotes.first)
+        let simpleQuote = try XCTUnwrap(simple.blockQuotes.first)
+        XCTAssertTrue(regularQuote.fillsBackground)
+        XCTAssertFalse(simpleQuote.fillsBackground)
+        XCTAssertEqual(simpleQuote.frame, regularQuote.frame)
+        XCTAssertEqual(simpleQuote.colors, regularQuote.colors)
+        XCTAssertEqual(simple.attributedString.string, regular.attributedString.string)
+        let regularAlpha = stride(from: 3, to: regularPixels.count, by: 4)
+        XCTAssertTrue(regularAlpha.contains { regularPixels[$0] > 0 && simplePixels[$0] == 0 })
+        XCTAssertTrue(regularAlpha.contains { regularPixels[$0] == 255 && simplePixels[$0] == 255 })
+    }
+
 }

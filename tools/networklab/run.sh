@@ -1,60 +1,156 @@
 #!/bin/bash
-set -e
-DIR=$(cd "$(dirname "$0")" && pwd)
-ROOT=$(cd "$DIR/../.." && pwd)
-LABEL=$1; ACCOUNT=$2; ENGINE=$3; PROFILE=$4; shift 4 || true
-if [ -z "$LABEL" ] || [ -z "$ACCOUNT" ] || [ -z "$ENGINE" ] || [ -z "$PROFILE" ]; then
+set -eo pipefail
+
+DIR=$(cd "$(dirname "$0")" && pwd -P)
+ROOT=$(cd "$DIR/../.." && pwd -P)
+
+usage() {
     echo "usage: tools/networklab/run.sh <label> <test|main> <rust|mtProtoKit> <direct|netsim-profile> [-PerfLabScenarios a,b ...]"
+    echo "Set NETWORKLAB_APP to a Debug gergram app bundle or use this checkout's DerivedData build."
+    echo "Use -PerfLabOutput <directory> to override the fork's app-group output directory."
+}
+
+fail() {
+    echo "NetworkLab: $*" >&2
+    exit 1
+}
+
+if [[ "$1" == --help ]]; then
+    usage
+    exit 0
+fi
+if [[ $# -lt 4 ]]; then
+    usage >&2
     exit 1
 fi
-if [ -z "$NETWORKLAB_APP" ]; then
-    for data in ~/Library/Developer/Xcode/DerivedData/Telegram-Mac-*; do
-        if /usr/libexec/PlistBuddy -c "Print :WorkspacePath" "$data/info.plist" 2>/dev/null | grep -q "$ROOT/"; then
-            NETWORKLAB_APP="$data/Build/Products/Debug/Telegram.app"
-        fi
+
+label=$1
+account=$2
+engine=$3
+profile=$4
+shift 4
+case "$label" in ""|*/*|*$'\n'*|*$'\r'*) fail "Use a nonempty label without path separators or line breaks." ;; esac
+case "$account" in test|main) ;; *) fail "Choose test or main as the account." ;; esac
+case "$engine" in rust|mtProtoKit) ;; *) fail "Choose rust or mtProtoKit as the engine." ;; esac
+[[ -n "$profile" ]] || fail "Specify a network profile."
+
+plist_value() {
+    /usr/libexec/PlistBuddy -c "Print :$1" "$2" 2>/dev/null
+}
+
+app=${NETWORKLAB_APP:-}
+if [[ -z "$app" ]]; then
+    for data in "$HOME/Library/Developer/Xcode/DerivedData"/*; do
+        workspace_path=$(plist_value WorkspacePath "$data/info.plist") || continue
+        case "$workspace_path" in "$ROOT"/*) ;; *) continue ;; esac
+        for candidate in "$data/Build/Products/Debug"/*.app; do
+            candidate_plist="$candidate/Contents/Info.plist"
+            [[ -f "$candidate_plist" ]] || continue
+            [[ $(plist_value SOURCE "$candidate_plist") == DEBUG ]] || continue
+            [[ -n $(plist_value GergramTeamID "$candidate_plist") ]] || continue
+            candidate_id=$(plist_value GergramBundleID "$candidate_plist") || continue
+            [[ -n "$candidate_id" && "$candidate_id" == "$(plist_value CFBundleIdentifier "$candidate_plist")" ]] || continue
+            if [[ -z "$app" || "$candidate_plist" -nt "$app/Contents/Info.plist" ]]; then
+                app=$candidate
+            fi
+        done
     done
 fi
-APP=$NETWORKLAB_APP
-OUT="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/debug/perf-lab"
-RESULTS=${NETWORKLAB_RESULTS:-$DIR/results}
-BENCH="$ROOT/submodules/telegram-ios/third-party/mtproto-engine/target/release/mtproto-bench"
-mkdir -p "$RESULTS" "$OUT"
-if pgrep -f "Debug/Telegram.app/Contents/MacOS/Telegram" >/dev/null; then
-    echo "a Debug Telegram is already running; quit it first"
-    exit 1
+
+[[ -d "$app" ]] || fail "Debug gergram app bundle missing. Set NETWORKLAB_APP to the built app."
+app=$(cd "$app" && pwd -P)
+plist="$app/Contents/Info.plist"
+bundle_id=$(plist_value CFBundleIdentifier "$plist") || fail "Cannot read CFBundleIdentifier from $plist."
+gergram_id=$(plist_value GergramBundleID "$plist") || fail "Missing GergramBundleID in $plist."
+team_id=$(plist_value GergramTeamID "$plist") || fail "Missing GergramTeamID in $plist."
+executable=$(plist_value CFBundleExecutable "$plist") || fail "Missing CFBundleExecutable in $plist."
+case "$bundle_id" in ""|*[!a-zA-Z0-9.-]*) fail "Invalid app bundle identifier." ;; esac
+case "$team_id" in ""|*[!a-zA-Z0-9]*) fail "Invalid gergram team identifier." ;; esac
+case "$executable" in ""|*/*) fail "Invalid app executable name." ;; esac
+[[ "$bundle_id" == "$gergram_id" && $(plist_value SOURCE "$plist") == DEBUG ]] || fail "Select a configured Debug gergram bundle."
+[[ -f "$app/Contents/MacOS/$executable" && -x "$app/Contents/MacOS/$executable" ]] || fail "The executable named by $plist is missing."
+if [[ $(lsappinfo find "bundleID=$bundle_id" 2>/dev/null || true) == ASN:* ]]; then
+    fail "$bundle_id is already running. Quit it before launching the benchmark."
 fi
-PROXY_ARGS=()
-PROXY_LOG="$RESULTS/network-$LABEL-proxy.log"
-rm -f "$PROXY_LOG"
-if [ "$PROFILE" != "direct" ]; then
-    "$BENCH" proxy --profile "$PROFILE" --bind 127.0.0.1:1081 ${NETWORKLAB_OUTAGES:+--outage-every $NETWORKLAB_OUTAGES} 2> "$PROXY_LOG" &
-    PROXY=$!
-    trap 'kill $PROXY 2>/dev/null' EXIT
-    sleep 1
-    PROXY_ARGS=(-PerfLabProxy 127.0.0.1:1081)
-fi
-run_app() {
-    open -n "$APP" --args -PerfLab network -PerfLabLabel "$LABEL" -PerfLabQuit -PerfLabAccount "$ACCOUNT" -PerfLabNetworkEngine "$ENGINE" "${PROXY_ARGS[@]}" "$@"
-    sleep 3
-    local pid
-    pid=$(pgrep -f "Debug/Telegram.app/Contents/MacOS/Telegram" | head -1)
-    while [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; do sleep 1; done
+
+output="$HOME/Library/Group Containers/$team_id.$bundle_id/debug/perf-lab"
+app_args=()
+while [[ $# -gt 0 ]]; do
+    if [[ "$1" == -PerfLabOutput ]]; then
+        [[ -n "$2" && "$2" != -PerfLab* ]] || fail "-PerfLabOutput requires a directory."
+        output=$2
+        shift 2
+    else
+        app_args+=("$1")
+        shift
+    fi
+done
+
+results=${NETWORKLAB_RESULTS:-$DIR/results}
+mkdir -p -- "$results" "$output"
+results=$(cd "$results" && pwd -P)
+output=$(cd "$output" && pwd -P)
+started=$(mktemp "$output/.network-lab-start.XXXXXX")
+proxy_pid=
+
+cleanup() {
+    if [[ -n "$proxy_pid" ]]; then
+        kill "$proxy_pid" 2>/dev/null || true
+        wait "$proxy_pid" 2>/dev/null || true
+    fi
+    rm -f -- "$started"
 }
-BEFORE=$(ls "$OUT" 2>/dev/null | sort)
-rm -f "$OUT/network-lab-engine-switched"
-run_app "$@"
-if [ -f "$OUT/network-lab-engine-switched" ]; then
-    rm -f "$OUT/network-lab-engine-switched"
-    echo "engine switched to $ENGINE, relaunching"
-    run_app "$@"
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+proxy_args=()
+proxy_log="$results/network-$label-proxy.log"
+if [[ "$profile" != direct ]]; then
+    bench="$ROOT/submodules/telegram-ios/third-party/mtproto-engine/target/release/mtproto-bench"
+    [[ -x "$bench" ]] || fail "Build mtproto-bench before using a network simulator profile."
+    bench_args=(proxy --profile "$profile" --bind 127.0.0.1:1081)
+    if [[ -n "$NETWORKLAB_OUTAGES" ]]; then
+        bench_args+=(--outage-every "$NETWORKLAB_OUTAGES")
+    fi
+    "$bench" "${bench_args[@]}" 2> "$proxy_log" &
+    proxy_pid=$!
+    sleep 1
+    kill -0 "$proxy_pid" 2>/dev/null || fail "The simulator exited. See $proxy_log."
+    proxy_args=(-PerfLabProxy 127.0.0.1:1081)
 fi
-AFTER=$(ls "$OUT" | sort)
-REPORT=$(comm -13 <(echo "$BEFORE") <(echo "$AFTER") | grep "^network-$LABEL-.*\.json$" | tail -1)
-if [ -z "$REPORT" ]; then
-    echo "no report written"
-    exit 1
+
+run_app() {
+    open -n -W -a "$app" --args -PerfLab network -PerfLabLabel "$label" -PerfLabQuit \
+        -PerfLabAccount "$account" -PerfLabNetworkEngine "$engine" \
+        "${proxy_args[@]}" "${app_args[@]}" -PerfLabOutput "$output"
+}
+
+switch_marker="$output/network-lab-engine-switched"
+rm -f -- "$switch_marker"
+run_app
+if [[ -f "$switch_marker" ]]; then
+    rm -f -- "$switch_marker"
+    echo "Engine switched to $engine, relaunching."
+    run_app
+    [[ ! -f "$switch_marker" ]] || fail "The requested engine did not activate after relaunch."
 fi
-cp "$OUT/$REPORT" "$RESULTS/"
-echo "$RESULTS/$REPORT"
-cat "$RESULTS/$REPORT"
-[ -f "$PROXY_LOG" ] && tail -2 "$PROXY_LOG"
+
+matching_reports() {
+    local file
+    while IFS= read -r file; do
+        case "${file##*/}" in "network-$label-"*.json) printf '%s\n' "$file" ;; esac
+    done
+}
+
+report=$(find "$output" -maxdepth 1 -type f -newer "$started" -print | matching_reports | LC_ALL=C sort | tail -1)
+[[ -n "$report" ]] || fail "No new report in $output. See network-lab-log.txt in that directory."
+destination="$results/${report##*/}"
+if [[ "$report" != "$destination" ]]; then
+    cp -- "$report" "$destination"
+fi
+echo "$destination"
+cat -- "$destination"
+if [[ "$profile" != direct ]]; then
+    tail -2 "$proxy_log"
+fi

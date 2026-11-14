@@ -7,12 +7,14 @@ struct PricePreviewState {
 final class PriceSendButton { var shakes = 0; func shake(beep: Bool) { shakes += 1 } }
 final class PricePreviewView {
     let sendButton = PriceSendButton()
+    let textView = CaptionTextView()
     var state = PricePreviewState()
     var writes = 0
     var stateValueInteractiveUpdate: ((PricePreviewState) -> Void)?
     init() {
         stateValueInteractiveUpdate = { [weak self] state in self?.state = state; self?.writes += 1 }
     }
+    func updateMessageEffect(_ effect: Int?, interactions: ChatInteraction, animated: Bool) {}
 }
 enum PriceValidation {
     enum Failure { case none, fields([String: Action]) }

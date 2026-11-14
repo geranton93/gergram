@@ -17,6 +17,7 @@ PROJECTS=(
     core-xprojects/webrtc/webrtc.xcodeproj/project.pbxproj
     core-xprojects/tde2e/tde2e.xcodeproj/project.pbxproj
     core-xprojects/wallet-engine/WalletEngine.xcodeproj/project.pbxproj
+    core-xprojects/mtproto-engine/MTProtoEngine.xcodeproj/project.pbxproj
 )
 TELEGRAM_CORE_MANIFEST=submodules/telegram-ios/submodules/TelegramCore/Package.swift
 SHADER_MANIFESTS=(
@@ -26,6 +27,7 @@ SHADER_MANIFESTS=(
 )
 SHADER_RESOURCES='(,\s*resources:\s*\[\s*\.copy\("[^"]+\.metal"\)(?:\s*,\s*\.copy\("[^"]+\.metal"\))*\s*\])'
 BUILD_CONFIGURATION='^\t\t([0-9A-Fa-f]{24}) (?:/\*[^\n]*?\*/ )?= \{\n\t\t\tisa = XCBuildConfiguration;\n.*?^\t\t\};\n'
+OLD_DEPLOYMENT_TARGET='(?:10|11)(?:\.\d+)*'
 failed=0
 
 usage() {
@@ -49,8 +51,8 @@ head_version() {
 
 update() {
     local action="$1" path="$2" file="$ROOT/$2" before
-    if [[ ! -f "$file" ]]; then
-        fail "missing: $path"
+    if [[ ! -f "$file" || -L "$file" || ! -w "$file" ]]; then
+        fail "missing or unwritable: $path"
         return
     fi
     before="$(shasum "$file")"
@@ -62,24 +64,41 @@ update() {
     fi
 }
 
+stage() {
+    local action="$1" path="$2" input="$ROOT/$2" output="$scratch/after/$2" original="$scratch/before/$2"
+    if [[ ! -f "$input" || -L "$input" || ! -w "$input" ]]; then
+        fail "missing or unwritable: $path"
+        return
+    fi
+    mkdir -p "$(dirname "$output")" "$(dirname "$original")"
+    cp "$input" "$original"
+    cp "$original" "$output"
+    "$action" "$path" "$output"
+}
+
 raise_deployment_target() {
-    perl -pi -e 's/(MACOSX_DEPLOYMENT_TARGET = )(?:10|11)(?:\.\d+)*;/${1}12.0;/g' "$2"
-    if grep -qE 'MACOSX_DEPLOYMENT_TARGET = "?1[01]\.' "$2"; then
+    update_deployment_target apply "$1" "$2"
+    if grep -qE 'MACOSX_DEPLOYMENT_TARGET[[:space:]]*=[[:space:]]*"?1[01]([.;"]|[[:space:]])' "$2"; then
         fail "unexpected layout, set 12.0 by hand: $1"
     fi
 }
 
 restore_deployment_target() {
+    update_deployment_target revert "$1" "$2"
+}
+
+update_deployment_target() {
     local head
-    head="$(head_version "$2")" || { fail "not in HEAD: $1"; return; }
-    BUILD_CONFIGURATION="$BUILD_CONFIGURATION" perl -e '
-        my ($file) = @ARGV;
+    head="$(head_version "$ROOT/$2")" || { fail "not in HEAD: $2"; return; }
+    BUILD_CONFIGURATION="$BUILD_CONFIGURATION" OLD_DEPLOYMENT_TARGET="$OLD_DEPLOYMENT_TARGET" perl -e '
+        my ($action, $file) = @ARGV;
         local $/;
         my $head = <STDIN>;
         my %original;
+        my $oldTarget = qr/"$ENV{OLD_DEPLOYMENT_TARGET}"|$ENV{OLD_DEPLOYMENT_TARGET}/;
         while ($head =~ /$ENV{BUILD_CONFIGURATION}/gms) {
             my ($id, $entry) = ($1, $&);
-            $original{$id} = $1 if $entry =~ /MACOSX_DEPLOYMENT_TARGET = ([^;]+);/;
+            $original{$id} = $1 if $entry =~ /MACOSX_DEPLOYMENT_TARGET = ($oldTarget);/;
         }
         open my $in, "<", $file or die "$file: $!\n";
         my $text = <$in>;
@@ -88,14 +107,20 @@ restore_deployment_target() {
         $restored =~ s{$ENV{BUILD_CONFIGURATION}}{
             my ($id, $entry) = ($1, $&);
             my $value = $original{$id};
-            $entry =~ s/(MACOSX_DEPLOYMENT_TARGET = )12\.0;/$1$value;/ if defined $value;
+            if ($action eq "apply" && $entry =~ /MACOSX_DEPLOYMENT_TARGET = ($oldTarget);/) {
+                die "local deployment target differs from HEAD in configuration $id\n" if !defined($value) || $value ne $1;
+                my $target = substr($value, 0, 1) eq q{"} ? q{"12.0"} : "12.0";
+                $entry =~ s/(MACOSX_DEPLOYMENT_TARGET = )\Q$value\E;/$1$target;/;
+            } elsif ($action eq "revert" && defined $value) {
+                $entry =~ s/(MACOSX_DEPLOYMENT_TARGET = )(?:12\.0|"12\.0");/$1$value;/;
+            }
             $entry;
         }gmse;
         exit 0 if $restored eq $text;
         open my $out, ">", $file or die "$file: $!\n";
         print $out $restored;
         close $out;
-    ' "$2" <<< "$head" || fail "restore by hand: $1"
+    ' "$1" "$3" <<< "$head" || fail "Could not $1 deployment target: $2"
 }
 
 relax_telegram_core_warnings() {
@@ -145,15 +170,39 @@ restore_shader_resources() {
 
 apply() {
     local path
+    scratch=$(mktemp -d)
+    trap 'rm -rf "$scratch"' EXIT
     for path in "${PROJECTS[@]}"; do
-        update raise_deployment_target "$path"
+        stage raise_deployment_target "$path"
     done
-    update relax_telegram_core_warnings "$TELEGRAM_CORE_MANIFEST"
+    stage relax_telegram_core_warnings "$TELEGRAM_CORE_MANIFEST"
     for path in "${SHADER_MANIFESTS[@]}"; do
-        update remove_shader_resources "$path"
+        stage remove_shader_resources "$path"
     done
-    if [[ "$(xcodebuild -showComponent MetalToolchain 2>/dev/null || true)" != *"Status: installed"* ]]; then
-        echo "Metal toolchain is not installed, run: xcodebuild -downloadComponent MetalToolchain"
+    if (( failed )); then
+        return
+    fi
+
+    local paths=("${PROJECTS[@]}" "$TELEGRAM_CORE_MANIFEST" "${SHADER_MANIFESTS[@]}")
+    for path in "${paths[@]}"; do
+        if [[ -L "$ROOT/$path" || ! -w "$ROOT/$path" ]] || ! cmp -s "$scratch/before/$path" "$ROOT/$path"; then
+            fail "changed during preparation: $path"
+        fi
+    done
+    if (( failed )); then
+        return
+    fi
+    for path in "${paths[@]}"; do
+        if cmp -s "$scratch/before/$path" "$scratch/after/$path"; then
+            echo "unchanged: $path"
+        else
+            cat "$scratch/after/$path" > "$ROOT/$path"
+            echo "changed:   $path"
+        fi
+    done
+    if ! xcodebuild -showComponent MetalToolchain >/dev/null 2>&1; then
+        echo "Could not verify the Metal toolchain. Check with: xcodebuild -showComponent MetalToolchain" >&2
+        echo "If Xcode reports no installed asset, run: xcodebuild -downloadComponent MetalToolchain" >&2
     fi
 }
 

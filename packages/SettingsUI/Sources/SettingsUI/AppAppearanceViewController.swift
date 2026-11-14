@@ -247,6 +247,33 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
     case autoNight
     case chatMode
     case accentColor
+    case editedIndicator
+    case editedIndicatorText
+    case profileJoinDate
+    case customChatWallpapers
+    case composerEmojiHover
+    case streamerModeMenuBar
+    case myProfileMenuBar
+    case savedMessagesMenuBar
+    case premiumStatuses
+    case simpleQuotesAndReplies
+    case messageTails
+    case messageWidth
+    case mediaSpoilers
+    case monospaceFont
+    case messageBubbleRadius
+    case switchAnimations
+    case fastShare
+    case greetingSticker
+    case botCommands
+    case giftButton
+    case aiToolsButton
+    case autoDeleteButton
+    case richTextEditorShortcut
+    case adaptiveMusicCover
+    case avatarRadius
+    case singleAvatarRadius
+    case resetGergramAppearance
     public func isEqual(to other: ItemListItemTag) -> Bool {
         if let other = other as? ThemeSettingsEntryTag, self == other {
             return true
@@ -265,6 +292,60 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
             return .general(_id_theme_auto_night)
         case .chatMode:
             return .general(_id_theme_chat_mode)
+        case .editedIndicator:
+            return .general(_id_edited_indicator)
+        case .editedIndicatorText:
+            return .general(_id_edited_indicator_text)
+        case .profileJoinDate:
+            return .general(_id_profile_join_date)
+        case .customChatWallpapers:
+            return .general(_id_custom_chat_wallpapers)
+        case .composerEmojiHover:
+            return .general(_id_composer_emoji_hover)
+        case .streamerModeMenuBar:
+            return .general(_id_streamer_mode_menu_bar)
+        case .myProfileMenuBar:
+            return .general(_id_my_profile_menu_bar)
+        case .savedMessagesMenuBar:
+            return .general(_id_saved_messages_menu_bar)
+        case .premiumStatuses:
+            return .general(_id_premium_statuses)
+        case .simpleQuotesAndReplies:
+            return .general(_id_simple_quotes_and_replies)
+        case .messageTails:
+            return .general(_id_message_tails)
+        case .messageWidth:
+            return .general(_id_message_width)
+        case .mediaSpoilers:
+            return .general(_id_media_spoilers)
+        case .monospaceFont:
+            return .general(_id_monospace_font)
+        case .messageBubbleRadius:
+            return .general(_id_bubble_radius)
+        case .switchAnimations:
+            return .general(_id_switch_animations)
+        case .fastShare:
+            return .general(_id_fast_share)
+        case .greetingSticker:
+            return .general(_id_greeting_sticker)
+        case .botCommands:
+            return .general(_id_bot_commands)
+        case .giftButton:
+            return .general(_id_gift_button)
+        case .aiToolsButton:
+            return .general(_id_ai_tools_button)
+        case .autoDeleteButton:
+            return .general(_id_auto_delete_button)
+        case .richTextEditorShortcut:
+            return .general(_id_rich_text_editor_shortcut)
+        case .adaptiveMusicCover:
+            return .general(_id_adaptive_music_cover)
+        case .avatarRadius:
+            return .general(_id_avatar_radius)
+        case .singleAvatarRadius:
+            return .general(_id_single_avatar_radius)
+        case .resetGergramAppearance:
+            return .general(_id_reset_gergram_appearance)
         case .accentColor:
             return .custom(_id_theme_accent_list)
         }
@@ -339,7 +420,71 @@ private let _id_name_color = InputDataIdentifier("_id_name_color")
 
 private let _id_dock_icon = InputDataIdentifier("_id_dock_icon")
 
-private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
+private let _id_edited_indicator = InputDataIdentifier("_id_edited_indicator")
+private let _id_edited_indicator_text = InputDataIdentifier("_id_edited_indicator_text")
+private let _id_streamer_mode_menu_bar = InputDataIdentifier("_id_streamer_mode_menu_bar")
+private let _id_my_profile_menu_bar = InputDataIdentifier("_id_my_profile_menu_bar")
+private let _id_saved_messages_menu_bar = InputDataIdentifier("_id_saved_messages_menu_bar")
+private let _id_premium_statuses = InputDataIdentifier("_id_premium_statuses")
+private let _id_message_tails = InputDataIdentifier("_id_message_tails")
+private let _id_message_width = InputDataIdentifier("_id_message_width")
+private let _id_media_spoilers = InputDataIdentifier("_id_media_spoilers")
+private let _id_monospace_font = InputDataIdentifier("_id_monospace_font")
+private let _id_bubble_radius = InputDataIdentifier("_id_bubble_radius")
+private let _id_switch_animations = InputDataIdentifier("_id_switch_animations")
+private let _id_fast_share = InputDataIdentifier("_id_fast_share")
+private let _id_greeting_sticker = InputDataIdentifier("_id_greeting_sticker")
+private let _id_bot_commands = InputDataIdentifier("_id_bot_commands")
+private let _id_gift_button = InputDataIdentifier("_id_gift_button")
+private let _id_ai_tools_button = InputDataIdentifier("_id_ai_tools_button")
+private let _id_auto_delete_button = InputDataIdentifier("_id_auto_delete_button")
+private let _id_rich_text_editor_shortcut = InputDataIdentifier("_id_rich_text_editor_shortcut")
+private let _id_adaptive_music_cover = InputDataIdentifier("_id_adaptive_music_cover")
+private let _id_avatar_radius = InputDataIdentifier("_id_avatar_radius")
+private let _id_single_avatar_radius = InputDataIdentifier("_id_single_avatar_radius")
+private let _id_reset_gergram_appearance = InputDataIdentifier("_id_reset_gergram_appearance")
+private let _id_simple_quotes_and_replies = InputDataIdentifier("_id_simple_quotes_and_replies")
+private let _id_composer_emoji_hover = InputDataIdentifier("_id_composer_emoji_hover")
+private let _id_custom_chat_wallpapers = InputDataIdentifier("_id_custom_chat_wallpapers")
+private let _id_profile_join_date = InputDataIdentifier("_id_profile_join_date")
+
+private func editedIndicatorTitle(_ style: ChatEditedIndicatorStyle) -> String {
+    switch style {
+    case .text:
+        return localizedString("Gergram.Chat.EditedIndicator.Text")
+    case .icon:
+        return localizedString("Gergram.Chat.EditedIndicator.Icon")
+    case .hidden:
+        return localizedString("Gergram.Chat.EditedIndicator.Hidden")
+    }
+}
+
+private func editedIndicatorTextController(context: any AccountContextProtocol) -> InputDataController {
+    let preferences = ChatEditedIndicatorPreferences.shared
+    let title = localizedString("Gergram.Chat.EditedIndicator.CustomText")
+    let entries: [InputDataEntry] = [
+        .sectionId(0, type: .normal),
+        .input(sectionId: 1, index: 0, value: .string(preferences.appearance.customText ?? ""), error: nil,
+               identifier: _id_edited_indicator_text, mode: .plain, data: .init(viewType: .singleItem),
+               placeholder: nil, inputPlaceholder: strings().chatMessageEdited, filter: { $0 },
+               limit: Int32(ChatEditedIndicatorPreferences.maximumCustomTextUTF16Length)),
+        .desc(sectionId: 1, index: 1, text: .plain(localizedString("Gergram.Chat.EditedIndicator.CustomTextHelp")),
+              data: .init(viewType: .textBottomItem))
+    ]
+    let controller = InputDataController(dataSignal: .single(InputDataSignalValue(entries: entries)), title: title)
+    controller.validateData = { [weak controller, weak context] data in
+        guard let controller, let context, controller.navigationController?.controller === controller,
+              controller.window === context.window, context.window.isVisible, (context.isCurrent || context.isExternal),
+              !context.isFrozen, let value = data[_id_edited_indicator_text]?.stringValue else { return .none }
+        guard preferences.setCustomText(value) else {
+            return .fail(.alert(localizedString("Gergram.Chat.EditedIndicator.InvalidCustomText")))
+        }
+        return .success(.navigationBack)
+    }
+    return controller
+}
+
+private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, editedIndicator: ChatEditedIndicatorAppearance, showsProfileJoinDate: Bool, hidesCustomChatWallpapers: Bool, opensComposerEmojiOnHover: Bool, statusMenuActions: Set<StreamerModeMenuBarPreferences.Action>, hidesPremiumStatuses: Bool, simplifiesQuotesAndReplies: Bool, hiddenReactionKinds: Set<ChatReactionVisibilityPreferences.ChatKind>, hidesMessageTails: Bool, messageWidth: ChatMessageWidth, revealsMediaSpoilers: Bool, monospaceFont: ChatMonospaceFont, messageBubbleRadius: Int, animatesSwitches: Bool, hidesFastShare: Bool, hidesGreetingSticker: Bool, hidesBotCommands: Bool, hidesGiftButton: Bool, hidesAIToolsButton: Bool, hidesAutoDeleteButton: Bool, hidesRichTextEditorShortcut: Bool, adaptiveMusicCover: Bool, avatarCorners: AvatarCornerAppearance, requestAppearanceReset: @escaping () -> Void, editIndicatorText: @escaping () -> Void, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
     
     var entries:[InputDataEntry] = []
     var sectionId: Int32 = 0
@@ -354,8 +499,12 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
     struct Tuple: Equatable {
         let peer: PeerEquatable?
         let appearance: Appearance
+        let messageWidth: ChatMessageWidth
+        let hidesMessageTails: Bool
+        let monospaceFont: ChatMonospaceFont
+        let messageBubbleRadius: Int
     }
-    let tuple = Tuple(peer: .init(state.myPeer), appearance: appearance)
+    let tuple = Tuple(peer: .init(state.myPeer), appearance: appearance, messageWidth: messageWidth, hidesMessageTails: hidesMessageTails, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius)
 
     entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_preview, equatable: InputDataEquatable(tuple), comparable: nil, item: { initialSize, stableId in
         return ThemePreviewRowItem(initialSize, stableId: stableId, context: arguments.context, theme: appearance.presentation, viewType: .firstItem)
@@ -507,6 +656,146 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
         index += 1
     }
     
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_custom_chat_wallpapers,
+                            data: .init(name: localizedString("Gergram.Chat.HideCustomWallpapers"), color: appearance.presentation.colors.text,
+                                        type: .switchable(hidesCustomChatWallpapers), viewType: .lastItem, action: {
+                                            ChatWallpaperVisibilityPreferences.shared.setHidden(!hidesCustomChatWallpapers)
+                                        })))
+    index += 1
+
+    func beginSection(_ title: String) {
+        entries.append(.sectionId(sectionId, type: .normal))
+        sectionId += 1
+        entries.append(.desc(sectionId: sectionId, index: index, text: .plain(title), data: .init(viewType: .textTopItem)))
+        index += 1
+    }
+
+    func addToggle(_ identifier: InputDataIdentifier, _ key: String, _ enabled: Bool, _ viewType: GeneralViewType, _ update: @escaping (Bool) -> Void) {
+        entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: identifier,
+                                data: .init(name: localizedString(key), color: appearance.presentation.colors.text,
+                                            type: .switchable(enabled), viewType: viewType, action: { update(!enabled) })))
+        index += 1
+    }
+
+    beginSection(localizedString("Gergram.Appearance.ChatLayout"))
+    addToggle(_id_message_tails, "Gergram.Chat.HideMessageTails", hidesMessageTails, .firstItem, MessageBubbleTailPreferences.shared.setHidden)
+
+    let widthTitle: (ChatMessageWidth) -> String = { localizedString("Gergram.Chat.MessageWidth.\($0.rawValue)") }
+    let widthOptions = ChatMessageWidth.allCases.map { width in
+        ContextMenuItem(widthTitle(width), handler: {
+            ChatMessageWidthPreferences.shared.set(width)
+        }, itemImage: width == messageWidth ? MenuAnimation.menu_check_selected.value : nil)
+    }
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_message_width,
+                            data: .init(name: localizedString("Gergram.Chat.MessageWidth"), color: appearance.presentation.colors.text,
+                                        type: .contextSelector(widthTitle(messageWidth), widthOptions), viewType: .innerItem)))
+    index += 1
+
+    let radiusTitle: (Int) -> String = { radius in
+        if radius == MessageBubbleRadiusPreferences.defaultRadius {
+            return localizedString("Gergram.Chat.BubbleRadius.Default")
+        }
+        if radius == 0 {
+            return localizedString("Gergram.Chat.BubbleRadius.Square")
+        }
+        return translate(key: "Gergram.Chat.BubbleRadius.Points", [radius])
+    }
+    let radiusOptions = MessageBubbleRadiusPreferences.allowedRadii.map { radius in
+        ContextMenuItem(radiusTitle(radius), handler: {
+            MessageBubbleRadiusPreferences.shared.setRadius(radius)
+        }, itemImage: radius == messageBubbleRadius ? MenuAnimation.menu_check_selected.value : nil)
+    }
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_bubble_radius,
+                            data: .init(name: localizedString("Gergram.Chat.BubbleRadius"), color: appearance.presentation.colors.text,
+                                        type: .contextSelector(radiusTitle(messageBubbleRadius), radiusOptions), viewType: .innerItem)))
+    index += 1
+
+    let fontTitle: (ChatMonospaceFont) -> String = { font in
+        switch font {
+        case .system: return localizedString("Gergram.Chat.MonospaceFont.System")
+        case .menlo: return "Menlo"
+        case .monaco: return "Monaco"
+        }
+    }
+    let fontOptions = ChatMonospaceFont.allCases.map { font in
+        ContextMenuItem(fontTitle(font), handler: {
+            ChatMonospaceFontPreferences.shared.set(font)
+        }, itemImage: font == monospaceFont ? MenuAnimation.menu_check_selected.value : nil)
+    }
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_monospace_font,
+                            data: .init(name: localizedString("Gergram.Chat.MonospaceFont"), color: appearance.presentation.colors.text,
+                                        type: .contextSelector(fontTitle(monospaceFont), fontOptions), viewType: .innerItem)))
+    index += 1
+
+    let editedIndicatorOptions = ChatEditedIndicatorStyle.allCases.map { style in
+        ContextMenuItem(editedIndicatorTitle(style), handler: {
+            ChatEditedIndicatorPreferences.shared.set(style)
+        }, itemImage: style == editedIndicator.style ? MenuAnimation.menu_check_selected.value : nil)
+    }
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_edited_indicator,
+                            data: .init(name: localizedString("Gergram.Chat.EditedIndicator"), color: appearance.presentation.colors.text,
+                                        type: .contextSelector(editedIndicatorTitle(editedIndicator.style), editedIndicatorOptions), viewType: .innerItem)))
+    index += 1
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_edited_indicator_text,
+                            data: .init(name: localizedString("Gergram.Chat.EditedIndicator.CustomText"), color: appearance.presentation.colors.text,
+                                        type: .nextContext(editedIndicator.customText ?? localizedString("Gergram.Chat.EditedIndicator.DefaultText")),
+                                        viewType: .lastItem, action: editIndicatorText)))
+    index += 1
+
+    beginSection(localizedString("Gergram.Appearance.ChatContent"))
+    addToggle(_id_premium_statuses, "Gergram.Chat.HidePremiumStatuses", hidesPremiumStatuses, .firstItem, PremiumStatusVisibilityPreferences.shared.setHidden)
+    addToggle(_id_simple_quotes_and_replies, "Gergram.Chat.SimpleQuotesAndReplies", simplifiesQuotesAndReplies, .innerItem, ChatReplyAppearancePreferences.shared.setSimplified)
+    addToggle(_id_media_spoilers, "Gergram.Chat.RevealMediaSpoilers", revealsMediaSpoilers, .innerItem, ChatMediaSpoilerPreferences.shared.setEnabled)
+    for kind in ChatReactionVisibilityPreferences.ChatKind.allCases {
+        addToggle(.init("chat-reactions-\(kind.rawValue)"), "Gergram.Chat.HideReactions.\(kind.rawValue)", hiddenReactionKinds.contains(kind), kind == .channel ? .lastItem : .innerItem) { hidden in
+            ChatReactionVisibilityPreferences.shared.setHidden(hidden, for: kind)
+        }
+    }
+
+    beginSection(localizedString("Gergram.Appearance.ChatControls"))
+    addToggle(_id_composer_emoji_hover, "Gergram.Composer.OpenEmojiOnHover", opensComposerEmojiOnHover, .firstItem, ComposerEmojiHoverPreferences.shared.setEnabled)
+    addToggle(_id_fast_share, "Gergram.Chat.HideFastShare", hidesFastShare, .innerItem, ChatAffordancePreferences.shared.setHidesFastShare)
+    addToggle(_id_greeting_sticker, "Gergram.Chat.HideGreetingSticker", hidesGreetingSticker, .innerItem, ChatAffordancePreferences.shared.setHidesGreetingSticker)
+    addToggle(_id_bot_commands, "Gergram.Composer.HideBotCommands", hidesBotCommands, .innerItem, ComposerBotCommandsPreferences.shared.setHidden)
+    addToggle(_id_gift_button, "Gergram.Composer.HideGift", hidesGiftButton, .innerItem, ComposerGiftButtonPreferences.shared.setHidden)
+    addToggle(_id_ai_tools_button, "Gergram.Composer.HideAITools", hidesAIToolsButton, .innerItem, ComposerAIToolsButtonPreferences.shared.setHidden)
+    addToggle(_id_auto_delete_button, "Gergram.Composer.HideAutoDelete", hidesAutoDeleteButton, .innerItem, ComposerAutoDeleteButtonPreferences.shared.setHidden)
+    addToggle(_id_rich_text_editor_shortcut, "Gergram.Composer.HideRichTextEditorShortcut", hidesRichTextEditorShortcut, .lastItem, ComposerRichTextEditorPreferences.shared.setHidden)
+
+    beginSection(localizedString("Gergram.Appearance.AppControls"))
+    addToggle(_id_switch_animations, "Gergram.Appearance.AnimateSwitches", animatesSwitches, .firstItem, SwitchAnimationPreferences.shared.setEnabled)
+    let menuBarPreferences = StreamerModeMenuBarPreferences.shared
+    addToggle(_id_streamer_mode_menu_bar, "Gergram.Appearance.StreamerModeMenuBar", statusMenuActions.contains(.streamerMode), .innerItem, menuBarPreferences.setVisible)
+    addToggle(_id_my_profile_menu_bar, "Gergram.Appearance.MyProfileMenuBar", statusMenuActions.contains(.myProfile), .innerItem) { visible in
+        menuBarPreferences.setVisible(visible, for: .myProfile)
+    }
+    addToggle(_id_saved_messages_menu_bar, "Gergram.Appearance.SavedMessagesMenuBar", statusMenuActions.contains(.savedMessages), .lastItem) { visible in
+        menuBarPreferences.setVisible(visible, for: .savedMessages)
+    }
+
+    beginSection(localizedString("Gergram.Appearance.Avatars"))
+    let avatarRadiusTitle: (Int) -> String = { radius in
+        switch radius {
+        case 0: return localizedString("Gergram.Appearance.AvatarRadius.Square")
+        case AvatarCornerPreferences.defaultRadius: return localizedString("Gergram.Appearance.AvatarRadius.Default")
+        default: return translate(key: "Gergram.Appearance.AvatarRadius.Level", [radius])
+        }
+    }
+    let avatarRadiusOptions = AvatarCornerPreferences.allowedRadii.map { radius in
+        ContextMenuItem(avatarRadiusTitle(radius), handler: {
+            AvatarCornerPreferences.shared.setRadius(radius)
+        }, itemImage: radius == avatarCorners.radius ? MenuAnimation.menu_check_selected.value : nil)
+    }
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_avatar_radius,
+                            data: .init(name: localizedString("Gergram.Appearance.AvatarRadius"), color: appearance.presentation.colors.text,
+                                        type: .contextSelector(avatarRadiusTitle(avatarCorners.radius), avatarRadiusOptions), viewType: .firstItem)))
+    index += 1
+    addToggle(_id_single_avatar_radius, "Gergram.Appearance.SingleAvatarRadius", avatarCorners.usesSingleRadius, .lastItem, AvatarCornerPreferences.shared.setUsesSingleRadius)
+
+    beginSection(localizedString("Gergram.Appearance.Profile"))
+    addToggle(_id_adaptive_music_cover, "Gergram.Profile.AdaptiveMusicCover", adaptiveMusicCover, .firstItem, ProfileMusicCoverPreferences.shared.setAdaptive)
+    addToggle(_id_profile_join_date, "Gergram.Profile.ShowJoinDate", showsProfileJoinDate, .innerItem, ProfileJoinDatePreferences.shared.setVisible)
+
     let icon = generateSettingsMenuPeerColorsLabelIcon(peer: state.myPeer, context: arguments.context, isDark: appearance.presentation.colors.isDark)
     
     entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_name_color, data: InputDataGeneralData(name: strings().appearanceYourNameColor, color: appearance.presentation.colors.text, type: .imageContext(icon, ""), viewType: .lastItem, action: arguments.userNameColor)))
@@ -575,7 +864,11 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
     }
     
     #endif
-    
+
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_reset_gergram_appearance,
+                            data: .init(name: localizedString("Gergram.Appearance.Reset"), color: appearance.presentation.colors.redUI,
+                                        viewType: .singleItem, action: requestAppearanceReset)))
+
     return entries
 }
 
@@ -591,6 +884,8 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
     
     
     let actionsDisposable = DisposableSet()
+    let resetRequests = ValuePipe<Void>()
+    let requestAppearanceReset = { resetRequests.putNext(()) }
     
     
     let initialState = State(revealed: false)
@@ -657,6 +952,12 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
     
     
     var getController:(()->InputDataController?)? = nil
+    let editIndicatorText = {
+        guard let controller = getController?(), let navigation = controller.navigationController,
+              navigation.controller === controller, controller.window === context.window, context.window.isVisible,
+              (context.isCurrent || context.isExternal), !context.isFrozen, !hasModals(context.window) else { return }
+        navigation.push(editedIndicatorTextController(context: context))
+    }
 
     let arguments = AppAppearanceViewArguments(context: context, togglePalette: { source in
         
@@ -795,8 +1096,15 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
             }
     } |> deliverOnMainQueue
     
-    let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager)) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings in
-        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, arguments: arguments)
+    let chatAffordances = combineLatest(
+        ChatAffordancePreferences.shared.hidesFastShareSignal, ChatAffordancePreferences.shared.hidesGreetingStickerSignal,
+        ComposerBotCommandsPreferences.shared.signal, ComposerGiftButtonPreferences.shared.signal,
+        ComposerAIToolsButtonPreferences.shared.signal, ComposerAutoDeleteButtonPreferences.shared.signal,
+        ComposerRichTextEditorPreferences.shared.signal
+    )
+    let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager), ChatEditedIndicatorPreferences.shared.appearanceSignal, ProfileJoinDatePreferences.shared.signal, ChatWallpaperVisibilityPreferences.shared.signal, ComposerEmojiHoverPreferences.shared.signal, StreamerModeMenuBarPreferences.shared.actionsSignal, PremiumStatusVisibilityPreferences.shared.signal, ChatReplyAppearancePreferences.shared.signal, ChatReactionVisibilityPreferences.shared.signal, MessageBubbleTailPreferences.shared.signal, ChatMessageWidthPreferences.shared.signal, ChatMediaSpoilerPreferences.shared.signal, ChatMonospaceFontPreferences.shared.signal, MessageBubbleRadiusPreferences.shared.signal, SwitchAnimationPreferences.shared.signal, chatAffordances, ProfileMusicCoverPreferences.shared.signal, AvatarCornerPreferences.shared.signal) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings, editedIndicator, showsProfileJoinDate, hidesCustomChatWallpapers, opensComposerEmojiOnHover, statusMenuActions, hidesPremiumStatuses, simplifiesQuotesAndReplies, hiddenReactionKinds, hidesMessageTails, messageWidth, revealsMediaSpoilers, monospaceFont, messageBubbleRadius, animatesSwitches, chatAffordances, adaptiveMusicCover, avatarCorners in
+        let (hidesFastShare, hidesGreetingSticker, hidesBotCommands, hidesGiftButton, hidesAIToolsButton, hidesAutoDeleteButton, hidesRichTextEditorShortcut) = chatAffordances
+        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, editedIndicator: editedIndicator, showsProfileJoinDate: showsProfileJoinDate, hidesCustomChatWallpapers: hidesCustomChatWallpapers, opensComposerEmojiOnHover: opensComposerEmojiOnHover, statusMenuActions: statusMenuActions, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hiddenReactionKinds: hiddenReactionKinds, hidesMessageTails: hidesMessageTails, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius, animatesSwitches: animatesSwitches, hidesFastShare: hidesFastShare, hidesGreetingSticker: hidesGreetingSticker, hidesBotCommands: hidesBotCommands, hidesGiftButton: hidesGiftButton, hidesAIToolsButton: hidesAIToolsButton, hidesAutoDeleteButton: hidesAutoDeleteButton, hidesRichTextEditorShortcut: hidesRichTextEditorShortcut, adaptiveMusicCover: adaptiveMusicCover, avatarCorners: avatarCorners, requestAppearanceReset: requestAppearanceReset, editIndicatorText: editIndicatorText, arguments: arguments)
     }
     |> map { entries in
          return InputDataSignalValue(entries: entries, animated: true)
@@ -856,6 +1164,19 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
         
     })
     controller.analyticsScreen = .settingsAppearance
+    actionsDisposable.add((resetRequests.signal() |> deliverOnMainQueue).start(next: { [weak controller] _ in
+        guard let controller, let window = controller.window,
+              controller.navigationController?.controller === controller, context.window === window,
+              window.isVisible, (context.isCurrent || context.isExternal), !context.isFrozen, !hasModals(window) else { return }
+        let title = localizedString("Gergram.Appearance.Reset")
+        verifyAlert_button(for: window, header: title, information: localizedString("Gergram.Appearance.ResetDescription"),
+                           ok: localizedString("Gergram.Appearance.ResetConfirm"), successHandler: { [weak controller, weak window] _ in
+            guard let controller, let window, controller.window === window,
+                  controller.navigationController?.controller === controller, context.window === window,
+                  window.isVisible, (context.isCurrent || context.isExternal), !context.isFrozen else { return }
+            resetGergramAppearance()
+        })
+    }))
     
     controller.updateRightBarView = { view in
         if let view = view as? ImageBarView {

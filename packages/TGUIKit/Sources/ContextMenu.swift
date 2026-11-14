@@ -53,6 +53,7 @@ open class ContextMenuItem : NSMenuItem {
     }
     
     public var handler:(()->Void)?
+    public var closesMenuOnAction = true
     private let dynamicTitle:(()->String)?
     
     var customTextView: (()->NSView?)?

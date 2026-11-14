@@ -82,6 +82,12 @@ public class ChatFileContentView: ChatMediaContentView {
     
     public override func open() {
         if let context = context, let media = media as? TelegramMediaFile, let parent = parent  {
+            if PluginAttachmentMetadata.matchesFileName(media.fileName), fetchStatus == .Local,
+               parameters?.isProtected != true, Self.canInspectPlugin(parent),
+               !(media.resource is LocalFileReferenceMediaResource), let window = _window {
+                openPluginMetadata(file: media, messageId: parent.id, context: context, window: window)
+                return
+            }
             if media.isGraphicFile || media.isVideoFile {
                 parameters?.showMedia(parent)
             } else {
@@ -97,6 +103,93 @@ public class ChatFileContentView: ChatMediaContentView {
                 ChatMediaUIHooks.shared.showQuickLookPreview(context, media, parent.chatStableId, self.table)
             }
         }
+    }
+
+    private static func canInspectPlugin(_ message: Message, cachedData: CachedPeerData? = nil) -> Bool {
+        return message.id.namespace == Namespaces.Message.Cloud && message.id.peerId.namespace != Namespaces.Peer.SecretChat
+            && message.adAttribute == nil && !message.flags.contains(.Sending) && !message.flags.contains(.Unsent)
+            && !message.isCopyProtected(cachedData: cachedData) && !message.containsSecretMedia
+            && message.autoclearTimeout == nil && message.autoremoveAttribute == nil
+            && message.activeEphemeralReplacementMessage == nil && message.paidContent == nil
+            && !message.attributes.contains { $0 is EphemeralMessageAttribute || $0 is RestrictedContentMessageAttribute }
+    }
+
+    private func openPluginMetadata(file: TelegramMediaFile, messageId: MessageId, context: any AccountContextProtocol, window: Window) {
+        let account = context.account
+        let resource = file.resource
+        let allowed = account.postbox.transaction { transaction -> Bool in
+            guard let message = transaction.getMessage(messageId), let peer = transaction.getPeer(messageId.peerId),
+                  !peer.isCopyProtectionEnabled else { return false }
+            let cachedData = transaction.getPeerCachedData(peerId: messageId.peerId)
+            return Self.canInspectPlugin(message, cachedData: cachedData) && !peer.isCopyProtected(cachedData: cachedData)
+                && message.media.contains { media in
+                    guard let current = media as? TelegramMediaFile else { return false }
+                    return current.id == file.id && current.resource.id == resource.id && PluginAttachmentMetadata.matchesFileName(current.fileName)
+                }
+        }
+        let result = allowed |> mapToSignal { allowed -> Signal<Result<PluginAttachmentMetadata, PluginAttachmentMetadata.ReadError>?, NoError> in
+            guard allowed else { return .single(nil) }
+            return account.postbox.mediaBox.resourceData(resource) |> take(1) |> deliverOn(Queue.concurrentDefaultQueue()) |> map { data in
+                guard data.complete else { return .failure(.unavailable) }
+                return PluginAttachmentMetadata.read(from: URL(fileURLWithPath: data.path))
+            }
+        } |> mapToSignal { result -> Signal<Result<PluginAttachmentMetadata, PluginAttachmentMetadata.ReadError>?, NoError> in
+            guard let result else { return .single(nil) }
+            return allowed |> map { $0 ? result : nil }
+        }
+
+        openFileDisposable.set((result |> deliverOnMainQueue).start(next: { [weak self, weak window] result in
+            guard let self, let window, let result, self._window === window, window.attachedSheet == nil,
+                  self.context?.account === account, self.fetchStatus == .Local, self.parameters?.isProtected != true,
+                  let current = self.parent, current.id == messageId, Self.canInspectPlugin(current),
+                  let currentFile = self.media as? TelegramMediaFile, currentFile.id == file.id, currentFile.resource.id == resource.id,
+                  PluginAttachmentMetadata.matchesFileName(currentFile.fileName) else { return }
+            Self.showPluginMetadata(result, in: window)
+        }))
+    }
+
+    private static func showPluginMetadata(_ result: Result<PluginAttachmentMetadata, PluginAttachmentMetadata.ReadError>, in window: Window) {
+        let alert = NSAlert()
+        alert.messageText = localizedString("Chat.PluginAttachment.Title")
+        alert.addButton(withTitle: strings().modalOK)
+        switch result {
+        case let .success(metadata):
+            alert.informativeText = metadata.name
+            let fields: [(String, String?)] = [
+                (localizedString("Chat.PluginAttachment.Identifier"), metadata.identifier),
+                (localizedString("Chat.PluginAttachment.Author"), metadata.author),
+                (localizedString("Chat.PluginAttachment.Version"), metadata.version),
+                (localizedString("Chat.PluginAttachment.MinimumVersion"), metadata.minimumVersion),
+                (localizedString("Chat.PluginAttachment.Requirements"), metadata.requirements.isEmpty ? nil : metadata.requirements.joined(separator: ", ")),
+                (localizedString("Chat.PluginAttachment.Icon"), metadata.icon),
+                (localizedString("Chat.PluginAttachment.Description"), metadata.description),
+            ]
+            let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 180))
+            scrollView.borderType = .bezelBorder
+            scrollView.hasVerticalScroller = true
+            scrollView.autohidesScrollers = true
+            let textView = NSTextView(frame: NSRect(origin: .zero, size: scrollView.contentSize))
+            textView.isEditable = false
+            textView.isSelectable = false
+            textView.isRichText = false
+            textView.isAutomaticLinkDetectionEnabled = false
+            textView.isHorizontallyResizable = false
+            textView.isVerticallyResizable = true
+            textView.autoresizingMask = [.width]
+            textView.textContainer?.widthTracksTextView = true
+            textView.textContainerInset = NSSize(width: 6, height: 6)
+            textView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            textView.string = fields.compactMap { label, value in value.map { "\(label)\n\($0)" } }.joined(separator: "\n\n")
+            scrollView.documentView = textView
+            alert.accessoryView = scrollView
+        case .failure(.unavailable):
+            alert.informativeText = localizedString("Chat.PluginAttachment.Unavailable")
+        case .failure(.tooLarge):
+            alert.informativeText = localizedString("Chat.PluginAttachment.TooLarge")
+        case .failure(.invalid):
+            alert.informativeText = localizedString("Chat.PluginAttachment.Invalid")
+        }
+        alert.beginSheetModal(for: window, completionHandler: nil)
     }
 
     
@@ -205,6 +298,9 @@ public class ChatFileContentView: ChatMediaContentView {
         
         if parent == nil {
             semanticMedia = file.id == self.media?.id
+        }
+        if self.parent?.id != parent?.id || (self.media as? TelegramMediaFile)?.resource.id != file.resource.id || parameters?.isProtected == true {
+            openFileDisposable.set(nil)
         }
         let presentation: ChatMediaPresentation = parameters?.presentation ?? .Empty
         
@@ -479,6 +575,7 @@ public class ChatFileContentView: ChatMediaContentView {
     
 
     public override func cancel() {
+        openFileDisposable.set(nil)
         fetchDisposable.set(nil)
         statusDisposable.set(nil)
     }

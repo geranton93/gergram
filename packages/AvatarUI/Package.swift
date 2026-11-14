@@ -26,6 +26,7 @@ let package = Package(
         .package(name: "TelegramUtils", path: "../TelegramUtils"),
         .package(name: "TelegramTheme", path: "../TelegramTheme"),
         .package(name: "TelegramContext", path: "../TelegramContext"),
+        .package(name: "InAppSettings", path: "../InAppSettings"),
     ],
     targets: [
         .target(
@@ -34,6 +35,7 @@ let package = Package(
                 .product(name: "TelegramTheme", package: "TelegramTheme"),
                 .product(name: "TelegramContext", package: "TelegramContext"),
                 .product(name: "TelegramUtils", package: "TelegramUtils"),
+                .product(name: "InAppSettings", package: "InAppSettings"),
             ]),
         .target(
             name: "AvatarUIShare",
@@ -49,6 +51,8 @@ let package = Package(
             .product(name: "ColorPalette", package: "ColorPalette"),
             .product(name: "Postbox", package: "Postbox"),
             .product(name: "TelegramCore", package: "TelegramCore"),
+            .product(name: "InAppSettings", package: "InAppSettings"),
+            .product(name: "TelegramTheme", package: "TelegramTheme"),
         ]),
     ]
 )

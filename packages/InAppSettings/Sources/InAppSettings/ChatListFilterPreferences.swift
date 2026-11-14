@@ -41,43 +41,94 @@ public extension ChatListFilter {
 
 
 
+public struct ChatListFolderPresentation: Codable, Equatable {
+    public var hideAllChats = false
+    public var hideUnreadCounters = false
+    public var hiddenFolderIds: Set<Int32> = []
+
+    public init() {}
+
+    public func visibleFilters(_ filters: [ChatListFilter]) -> [ChatListFilter] {
+        let visible = filters.filter { filter in
+            switch filter {
+            case .allChats:
+                return !hideAllChats
+            case let .filter(id, _, _, _):
+                return !hiddenFolderIds.contains(id)
+            }
+        }
+        return visible.isEmpty ? filters.filter { $0 == .allChats } : visible
+    }
+}
+
+public func reorderingVisibleChatListFilters(_ filters: [ChatListFilter], visible: [ChatListFilter], from: Int, to: Int) -> [ChatListFilter] {
+    guard visible.indices.contains(from), visible.indices.contains(to), from != to else {
+        return filters
+    }
+
+    let visibleIds = visible.map { $0.id }
+    let visibleIdSet = Set(visibleIds)
+    let positions = filters.indices.filter { visibleIdSet.contains(filters[$0].id) }
+    let currentVisibleIds = positions.map { filters[$0].id }
+    guard currentVisibleIds == visibleIds else {
+        return filters
+    }
+
+    var ordered = positions.map { filters[$0] }
+    let moved = ordered.remove(at: from)
+    ordered.insert(moved, at: to)
+
+    var updated = filters
+    for (position, filter) in zip(positions, ordered) {
+        updated[position] = filter
+    }
+    return updated
+}
+
 public struct ChatListFoldersSettings: Codable {
-    
+
     public let sidebar: Bool
     public let interacted: Bool
+    public let presentation: ChatListFolderPresentation
+
     public static var defaultValue: ChatListFoldersSettings {
         return ChatListFoldersSettings(sidebar: false, interacted: false)
     }
-    
-    public init(sidebar: Bool, interacted: Bool) {
+
+    public init(sidebar: Bool, interacted: Bool, presentation: ChatListFolderPresentation = ChatListFolderPresentation()) {
         self.sidebar = sidebar
         self.interacted = interacted
+        self.presentation = presentation
     }
-    
-    
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: StringCodingKey.self)
 
         self.sidebar = try container.decode(Int32.self, forKey: "t") == 1
         self.interacted = try container.decodeIfPresent(Int32.self, forKey: "i") == 1
+        self.presentation = try container.decodeIfPresent(ChatListFolderPresentation.self, forKey: "fp") ?? ChatListFolderPresentation()
     }
-    
+
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: StringCodingKey.self)
 
         try container.encode(Int32(self.sidebar ? 1 : 0), forKey: "t")
         try container.encode(Int32(self.interacted ? 1 : 0), forKey: "i")
+        try container.encode(presentation, forKey: "fp")
     }
-    
+
     public func withUpdatedSidebar(_ sidebar: Bool) -> ChatListFoldersSettings {
-        return ChatListFoldersSettings(sidebar: sidebar, interacted: self.interacted)
+        return ChatListFoldersSettings(sidebar: sidebar, interacted: self.interacted, presentation: presentation)
     }
     public func withUpdatedSidebarInteracted(_ interacted: Bool) -> ChatListFoldersSettings {
-        return ChatListFoldersSettings(sidebar: self.sidebar, interacted: interacted)
+        return ChatListFoldersSettings(sidebar: self.sidebar, interacted: interacted, presentation: presentation)
+    }
+    public func withUpdatedPresentation(_ update: (inout ChatListFolderPresentation) -> Void) -> ChatListFoldersSettings {
+        var presentation = self.presentation
+        update(&presentation)
+        return ChatListFoldersSettings(sidebar: sidebar, interacted: interacted, presentation: presentation)
     }
 }
-
-
 
 public func chatListFolderSettings(_ postbox: Postbox) -> Signal<ChatListFoldersSettings, NoError> {
     return postbox.preferencesView(keys:  [ApplicationSpecificPreferencesKeys.chatListSettings]) |> map { view in
@@ -101,10 +152,20 @@ public struct ChatListFolders : Equatable {
     public let list: [ChatListFilter]
     public let sidebar: Bool
     public let showTags: Bool
-    public init(list: [ChatListFilter], sidebar: Bool, showTags: Bool) {
+    public let presentation: ChatListFolderPresentation
+    public init(list: [ChatListFilter], sidebar: Bool, showTags: Bool, presentation: ChatListFolderPresentation = ChatListFolderPresentation()) {
         self.list = list
         self.sidebar = sidebar
         self.showTags = showTags
+        self.presentation = presentation
+    }
+
+    public var visibleList: [ChatListFilter] {
+        return presentation.visibleFilters(list)
+    }
+
+    public var hasVisibleFolders: Bool {
+        return visibleList.contains { $0 != .allChats }
     }
     
     public var isEmpty: Bool {
@@ -116,7 +177,7 @@ public func chatListFilterPreferences(engine: TelegramEngine) -> Signal<ChatList
     let showTags = engine.data.subscribe(TelegramEngine.EngineData.Item.ChatList.FiltersDisplayTags())
 
     return combineLatest(engine.peers.updatedChatListFilters(), chatListFolderSettings(engine.account.postbox), showTags) |> map {
-        return ChatListFolders(list: $0, sidebar: $1.sidebar, showTags: $2)
+        return ChatListFolders(list: $0, sidebar: $1.sidebar, showTags: $2, presentation: $1.presentation)
     }
 }
 

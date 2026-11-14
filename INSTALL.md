@@ -68,6 +68,12 @@ Run it with `--build` to continue straight into step 3.
 
 ## 3. Build the native libraries (once)
 
+Framework preparation builds FlatBuffers 24.12.23 from its pinned source revision when
+the compiler is absent from the ignored `.build` directory. Run
+`bash scripts/build-flatc.sh /path/to/flatbuffers` to use a local source checkout.
+Set `GERGRAM_FLATC` to an absolute path if your build host already provides a trusted
+compiler of that version.
+
 ```
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 CMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -77,7 +83,7 @@ sh scripts/configure_frameworks.sh
 This takes a while, mostly because of WebRTC. The script:
 
 1. Generates TelegramApi's SwiftPM sources with SwiftTL, then the FlatSerialization
-   sources for TelegramCore with the bundled `scripts/flatc`.
+   sources for TelegramCore with the locally built FlatBuffers compiler.
 2. Builds, in order, `OpenH264`, `OpenSSLEncryption`, `libopus`, `libvpx`, `Mozjpeg`,
    `libwebp`, `dav1d`, `ffmpeg`, `webrtc` (tg_owt), `tde2e` and `WalletEngine` through
    their projects in `core-xprojects/<lib>/`. Outputs land in `core-xprojects/<lib>/build`,
@@ -144,11 +150,11 @@ resolved from the local paths in the workspace; no network access is needed.
 ### Telegram-iOS compatibility
 
 The Telegram-iOS submodule points to the official upstream commit. The framework
-preparation applies `scripts/telegram-ios-macos.patch` to keep the Mac app's
-shared-core changes. If the frameworks are already built, run
+preparation applies the macOS shared-core patches through
+`scripts/prepare-telegram-ios.sh`. If the frameworks are already built, run
 `sh scripts/prepare-telegram-ios.sh` before opening Xcode or resolving packages.
 Run `sh scripts/prepare-telegram-ios.sh --reverse` before checking out a different
-Telegram-iOS revision if the patch is applied.
+Telegram-iOS revision if the patches are applied.
 
 ### Generated TelegramApi sources
 

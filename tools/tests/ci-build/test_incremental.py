@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import os
@@ -6,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -34,47 +36,94 @@ class TemporaryTest(unittest.TestCase):
 class FlatSerializationTests(TemporaryTest):
     def setUp(self):
         super().setUp()
-        (self.root / "scripts").mkdir()
-        (self.root / "scripts/flatc").symlink_to(ROOT / "scripts/flatc")
+        self.compiler = self.root / ".build/flatbuffers-24.12.23/flatc"
+        self.write_compiler("""#!/usr/bin/env python3
+from pathlib import Path
+import sys
+
+arguments = sys.argv[1:]
+if arguments == ["--version"]:
+    print("flatc version 24.12.23")
+    sys.exit(0)
+assert arguments[:3] == ["--require-explicit-ids", "--swift", "-o"]
+directory = Path(arguments[3])
+for argument in arguments[4:]:
+    model = Path(argument)
+    contents = model.read_text()
+    if not contents.startswith("namespace Test;"):
+        sys.exit(1)
+    (directory / (model.stem + "_generated.swift")).write_text(contents)
+""")
         base = self.root / "submodules/telegram-ios/submodules/TelegramCore/FlatSerialization"
         self.model = write(base / "Models/Sample.fbs", "namespace Test;\ntable Sample { value:int (id: 0); }\n")
         self.output = base / "Sources/Sample_generated.swift"
 
+    def write_compiler(self, source):
+        write(self.compiler, source).chmod(0o755)
+
     def test_unchanged_generation_preserves_timestamps_and_removes_obsolete_files(self):
-        flat_generation.prepare(self.root)
+        flat_generation.prepare(self.root, self.compiler)
         before = self.output.stat().st_mtime_ns
         obsolete = write(self.output.parent / "Obsolete.swift", "obsolete")
-        flat_generation.prepare(self.root)
+        flat_generation.prepare(self.root, self.compiler)
         self.assertEqual(before, self.output.stat().st_mtime_ns)
         self.assertFalse(obsolete.exists())
 
     def test_changed_model_and_missing_output_are_regenerated(self):
-        flat_generation.prepare(self.root)
+        flat_generation.prepare(self.root, self.compiler)
         before = self.output.read_bytes()
         self.model.write_text("namespace Test;\ntable Sample { value:long (id: 0); }\n")
-        flat_generation.prepare(self.root)
+        flat_generation.prepare(self.root, self.compiler)
         self.assertNotEqual(before, self.output.read_bytes())
         self.output.unlink()
-        flat_generation.prepare(self.root)
+        flat_generation.prepare(self.root, self.compiler)
         self.assertTrue(self.output.is_file())
 
     def test_failed_generation_keeps_previous_output(self):
-        flat_generation.prepare(self.root)
+        flat_generation.prepare(self.root, self.compiler)
         before = self.output.read_bytes()
         self.model.write_text("invalid schema")
         with self.assertRaises(subprocess.CalledProcessError):
-            flat_generation.prepare(self.root)
+            flat_generation.prepare(self.root, self.compiler)
         self.assertEqual(before, self.output.read_bytes())
 
     def test_successful_but_incomplete_generator_does_not_publish(self):
-        flat_generation.prepare(self.root)
+        flat_generation.prepare(self.root, self.compiler)
         before = self.output.read_bytes()
-        (self.root / "scripts/flatc").unlink()
-        executable = write(self.root / "scripts/flatc", "#!/bin/sh\nexit 0\n")
-        executable.chmod(0o755)
+        self.write_compiler('#!/bin/sh\nif [ "$1" = --version ]; then echo "flatc version 24.12.23"; fi\n')
         with self.assertRaises(RuntimeError):
-            flat_generation.prepare(self.root)
+            flat_generation.prepare(self.root, self.compiler)
         self.assertEqual(before, self.output.read_bytes())
+
+    def test_wrong_compiler_version_is_rejected_before_generation(self):
+        self.write_compiler("#!/bin/sh\nprintf 'flatc version 25.12.19\\n'\n")
+        with self.assertRaisesRegex(RuntimeError, "flatc 24.12.23 required"):
+            flat_generation.prepare(self.root, self.compiler)
+        self.assertFalse(self.output.exists())
+
+    def test_bundled_compiler_is_rejected_even_through_a_symlink(self):
+        bundled = write(self.root / "scripts/flatc", "#!/bin/sh\nexit 1\n")
+        bundled.chmod(0o755)
+        alias = self.root / "alias"
+        alias.symlink_to(bundled)
+        with self.assertRaisesRegex(RuntimeError, "bundled flatc is unsupported"):
+            flat_generation.prepare(self.root, alias)
+        self.assertFalse(self.output.exists())
+
+    def test_copy_of_bundled_compiler_is_rejected_by_content(self):
+        digest = hashlib.sha256(self.compiler.read_bytes()).hexdigest()
+        with patch.object(flat_generation, "BUNDLED_FLATC_SHA256", digest):
+            with self.assertRaisesRegex(RuntimeError, "bundled flatc is unsupported"):
+                flat_generation.prepare(self.root)
+        self.assertFalse(self.output.exists())
+
+    @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS quarantine attributes")
+    def test_quarantined_compiler_is_rejected_before_version_probe(self):
+        run(["/usr/bin/xattr", "-w", "com.apple.quarantine", "0081;1;test;", str(self.compiler)])
+        self.write_compiler("#!/bin/sh\nexit 99\n")
+        with self.assertRaisesRegex(RuntimeError, "flatc has macOS quarantine"):
+            flat_generation.prepare(self.root, self.compiler)
+        self.assertFalse(self.output.exists())
 
 
 class SyncTests(TemporaryTest):
@@ -113,6 +162,7 @@ class SyncTests(TemporaryTest):
             "submodules/telegram-ios/submodules/MTProtoRustEngine/MTProtoEngineFFI.xcframework/Info.plist",
             "submodules/tgcalls/SharedHeaders/api.h",
             "submodules/telegram-ios/submodules/OpusBinding/SharedHeaders/api.h",
+            ".build/flatbuffers-24.12.23/flatc",
             ".build/telegram-api-generation/state.json",
             "submodules/telegram-ios/build-system/SwiftTL/.build/generator",
             "submodules/telegram-ios/submodules/TelegramApi/Sources/SwiftPMGenerated/Api0.swift",
@@ -154,8 +204,28 @@ class FrameworkTests(TemporaryTest):
             destination = self.root / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
-        for name in ["prepare-telegram-api.py", "prepare-flat-serialization.py"]:
-            write(self.root / "scripts" / name, "")
+        write(self.root / "scripts/prepare-telegram-api.py", "")
+        write(self.root / "scripts/prepare-flat-serialization.py", '''
+import os
+from pathlib import Path
+
+root = Path(__file__).resolve().parent.parent
+selected = Path(os.environ.get("GERGRAM_FLATC") or root / ".build/flatbuffers-24.12.23/flatc")
+if not os.access(selected, os.X_OK):
+    raise SystemExit(f"Missing executable compiler: {selected}")
+with (root / "flatc-generation-inputs").open("a") as inputs:
+    inputs.write(f"{selected}\\n")
+''')
+        write(self.root / "scripts/build-flatc.sh", '''#!/bin/bash
+set -e
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+printf 'build\\n' >> "$root/flatc-build-runs"
+compiler="$root/.build/flatbuffers-24.12.23/flatc"
+mkdir -p "$(dirname "$compiler")"
+printf '#!/bin/sh\\nexit 99\\n' > "$compiler"
+chmod +x "$compiler"
+''')
+        write(self.root / "scripts/prepare-telegram-ios.sh", "#!/bin/sh\nexit 0\n")
         write(self.root / "scripts/rebuild", "no")
         write(self.root / "core-xprojects/tlottie/build.sh", "exit 0\n")
         for lib, project in zip(self.libraries, self.projects):
@@ -194,6 +264,7 @@ fi
             executable.chmod(0o755)
         self.environment = dict(os.environ, PATH=str(self.root / "bin") + os.pathsep + os.environ["PATH"])
         self.environment.pop("BUILD_TIMING_LOG", None)
+        self.environment.pop("GERGRAM_FLATC", None)
 
     def configure(self, **environment):
         return run(["sh", str(self.root / "scripts/configure_frameworks.sh")], cwd=self.root, env=dict(self.environment, **environment))
@@ -206,6 +277,22 @@ fi
         self.assertEqual(self.runs(), self.libraries)
         self.configure()
         self.assertEqual(self.runs(), self.libraries)
+        self.assertEqual((self.root / "flatc-build-runs").read_text().splitlines(), ["build"])
+        default = self.root.resolve() / ".build/flatbuffers-24.12.23/flatc"
+        self.assertEqual((self.root / "flatc-generation-inputs").read_text().splitlines(), [str(default)] * 2)
+
+    def test_explicit_compiler_is_never_replaced_or_fallen_back(self):
+        override = self.root / "external-flatc"
+        with self.assertRaises(subprocess.CalledProcessError) as error:
+            self.configure(GERGRAM_FLATC=str(override))
+        self.assertIn(f"Missing executable compiler: {override}", error.exception.stderr)
+        self.assertFalse((self.root / "flatc-build-runs").exists())
+        self.assertFalse((self.root / "runs").exists())
+
+        write(override, "#!/bin/sh\nexit 99\n").chmod(0o755)
+        self.configure(GERGRAM_FLATC=str(override))
+        self.assertFalse((self.root / "flatc-build-runs").exists())
+        self.assertEqual((self.root / "flatc-generation-inputs").read_text().splitlines(), [str(override)])
 
     def test_missing_native_output_and_xcframework_are_repaired(self):
         self.configure()

@@ -234,13 +234,13 @@ public final class ChatInputActionButtonView: ChatInputStateView {
     /// can re-render the button text/colors and re-resolve the side icons
     /// against the new theme without needing the caller to push the data again.
     private struct PendingUpdate {
-        let text: String
-        let action: (ChatInteraction) -> Void
+        let main: (text: String, action: (ChatInteraction) -> Void)?
         let chatInteraction: ChatInteraction
         let isBot: Bool
         let rightAdditionData: ChatState.AdditionAction?
         let leftAdditionData: ChatState.AdditionAction?
         let accent: Bool
+        let clearBotStartPayload: ((ChatInteraction) -> Bool)?
     }
     private var pending: PendingUpdate?
 
@@ -263,14 +263,14 @@ public final class ChatInputActionButtonView: ChatInputStateView {
     private var outgoingTitles: [TextView] = []
 
     public func canUpdateInPlace(accent: Bool, rightAdditionData: ChatState.AdditionAction?, leftAdditionData: ChatState.AdditionAction?) -> Bool {
-        guard let pending, !pending.isBot, !pending.accent, !accent else {
+        guard let pending, pending.main != nil, !pending.isBot, !pending.accent, !accent else {
             return false
         }
         return pending.rightAdditionData?.icon == rightAdditionData?.icon && pending.leftAdditionData?.icon == leftAdditionData?.icon
     }
 
     override func glassMorphSlots(visible: Bool) -> ChatInputGlassSlots? {
-        guard !isBot, var slots = super.glassMorphSlots(visible: visible) else {
+        guard !isBot, pending?.main != nil, var slots = super.glassMorphSlots(visible: visible) else {
             return nil
         }
         if let view = leftAddition {
@@ -288,14 +288,43 @@ public final class ChatInputActionButtonView: ChatInputStateView {
         rightAddition?.setGlassEffectHidden(hidden)
     }
 
-    public func update(text: String, action: @escaping (ChatInteraction) -> Void, chatInteraction: ChatInteraction, isBot: Bool = false, rightAdditionData: ChatState.AdditionAction? = nil, leftAdditionData: ChatState.AdditionAction? = nil, accent: Bool = false, animated: Bool = false) {
-        let previousText = pending?.text
-        pending = PendingUpdate(text: text, action: action, chatInteraction: chatInteraction, isBot: isBot, rightAdditionData: rightAdditionData, leftAdditionData: leftAdditionData, accent: accent)
+    public func update(text: String, action: @escaping (ChatInteraction) -> Void, chatInteraction: ChatInteraction, isBot: Bool = false, rightAdditionData: ChatState.AdditionAction? = nil, leftAdditionData: ChatState.AdditionAction? = nil, accent: Bool = false, animated: Bool = false, clearBotStartPayload: ((ChatInteraction) -> Bool)? = nil) {
+        let previousText = pending?.main?.text
+        pending = PendingUpdate(main: (text, action), chatInteraction: chatInteraction, isBot: isBot, rightAdditionData: rightAdditionData, leftAdditionData: leftAdditionData, accent: accent, clearBotStartPayload: clearBotStartPayload)
         if animated, let previousText, previousText != text {
             applyTitleChange(from: previousText)
         } else {
             applyUpdate()
         }
+    }
+
+    func updateAdditions(chatInteraction: ChatInteraction, right: ChatState.AdditionAction?, left: ChatState.AdditionAction?) {
+        pending = PendingUpdate(main: nil, chatInteraction: chatInteraction, isBot: false, rightAdditionData: right, leftAdditionData: left, accent: false, clearBotStartPayload: nil)
+        applyUpdate()
+    }
+
+    private func bindMainButton(_ pending: PendingUpdate) {
+        let chatInteraction = pending.chatInteraction
+        button.removeAllHandlers()
+        if let action = pending.main?.action {
+            button.set(handler: { _ in
+                action(chatInteraction)
+            }, for: .Click)
+        }
+
+        guard let clearPayload = pending.clearBotStartPayload else {
+            button.setAccessibilityCustomActions(nil)
+            return
+        }
+        button.set(handler: { _ in
+            _ = clearPayload(chatInteraction)
+        }, for: .RightUp)
+        button.setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: localizedString("Gergram.Chat.ClearBotStartPayload"), handler: { [weak chatInteraction] in
+                guard let chatInteraction else { return false }
+                return clearPayload(chatInteraction)
+            })
+        ])
     }
 
     private func bindAddition(_ button: ImageButton, data: ChatState.AdditionAction, chatInteraction: ChatInteraction) {
@@ -308,17 +337,13 @@ public final class ChatInputActionButtonView: ChatInputStateView {
     }
 
     private func applyTitleChange(from previousText: String) {
-        guard let pending else { return }
+        guard let pending, let text = pending.main?.text else { return }
 
         let activeTheme = currentChatTheme ?? theme
-        let action = pending.action
         let chatInteraction = pending.chatInteraction
 
-        button.set(text: pending.text, for: .Normal)
-        button.removeAllHandlers()
-        button.set(handler: { _ in
-            action(chatInteraction)
-        }, for: .Click)
+        button.set(text: text, for: .Normal)
+        bindMainButton(pending)
 
         if let view = rightAddition, let data = pending.rightAdditionData {
             bindAddition(view, data: data, chatInteraction: chatInteraction)
@@ -375,8 +400,6 @@ public final class ChatInputActionButtonView: ChatInputStateView {
         let activeTheme = currentChatTheme ?? theme
         let chatGlassTint = activeTheme.colors.background.withAlphaComponent(0.4)
 
-        let text = pending.text
-        let action = pending.action
         let chatInteraction = pending.chatInteraction
         let isBot = pending.isBot
         let accent = pending.accent
@@ -391,9 +414,9 @@ public final class ChatInputActionButtonView: ChatInputStateView {
         leftAddition?.removeFromSuperview()
         leftAddition = nil
         button.isHidden = false
-        button.removeAllHandlers()
+        containerView.isHidden = pending.main == nil
 
-        if isBot {
+        if isBot, let text = pending.main?.text {
             button.style = ControlStyle(font: .medium(.title), foregroundColor: activeTheme.colors.underSelectedColor)
             button.set(text: text, for: .Normal)
             button.set(background: .clear, for: .Normal)
@@ -407,7 +430,7 @@ public final class ChatInputActionButtonView: ChatInputStateView {
             shimmer.isStatic = true
             button.addSubview(shimmer)
             self.shimmerView = shimmer
-        } else if accent {
+        } else if accent, let (text, action) = pending.main {
             button.isHidden = true
             let ab = TextButton()
             ab.autoSizeToFit = false
@@ -430,7 +453,7 @@ public final class ChatInputActionButtonView: ChatInputStateView {
             // glass tinted to the chat background so any borders/shadows
             // around it still match.
             glassEffect?.customTint = chatGlassTint
-        } else {
+        } else if let text = pending.main?.text {
             glassEffect?.customTint = chatGlassTint
             button.set(color: activeTheme.colors.text, for: .Normal)
             button.set(font: .normal(.title), for: .Normal)
@@ -439,9 +462,7 @@ public final class ChatInputActionButtonView: ChatInputStateView {
             button.set(background: .clear, for: .Normal)
         }
 
-        button.set(handler: { _ in
-            action(chatInteraction)
-        }, for: .Click)
+        bindMainButton(pending)
 
         if let data = pending.rightAdditionData {
             let btn = ImageButton()
@@ -492,6 +513,7 @@ public final class ChatInputActionButtonView: ChatInputStateView {
             transition.updateFrame(view: view, frame: NSMakeRect(size.width - edge - view.frame.width, 0, view.frame.width, view.frame.height))
         }
 
+        guard !containerView.isHidden else { return }
         _ = button.sizeToFit()
         _ = accentButton?.sizeToFit()
 

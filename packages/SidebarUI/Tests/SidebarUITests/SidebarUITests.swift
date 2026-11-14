@@ -42,7 +42,7 @@ final class SidebarUITests: XCTestCase {
         XCTAssertEqual(entries.map { $0.stableId }, [-2, -1, 20, 10])
         XCTAssertEqual(entries.map { $0.index }, [-1, 1, 2, 3])
         XCTAssertEqual(entries.sorted(), entries)
-        guard case let .folder(_, selected, _, count, unmuted) = entries[1] else { return XCTFail() }
+        guard case let .folder(_, selected, _, count, unmuted, _) = entries[1] else { return XCTFail() }
         XCTAssertTrue(selected)
         XCTAssertEqual(count, 0)
         XCTAssertFalse(unmuted)
@@ -52,12 +52,12 @@ final class SidebarUITests: XCTestCase {
         let entries = leftSidebarEntries(SidebarState(tabs: [filter(20), filter(10)], selectedFilterId: 10), badgeForFilter: { filter in
             return filter.sidebarId == 20 ? (7, true) : nil
         })
-        guard case let .folder(_, selected, filter, count, unmuted) = entries[1] else { return XCTFail() }
+        guard case let .folder(_, selected, filter, count, unmuted, _) = entries[1] else { return XCTFail() }
         XCTAssertEqual(filter.sidebarId, 20)
         XCTAssertFalse(selected)
         XCTAssertEqual(count, 7)
         XCTAssertTrue(unmuted)
-        guard case let .folder(_, secondSelected, _, secondCount, _) = entries[2] else { return XCTFail() }
+        guard case let .folder(_, secondSelected, _, secondCount, _, _) = entries[2] else { return XCTFail() }
         XCTAssertTrue(secondSelected)
         XCTAssertEqual(secondCount, 0)
     }
@@ -69,6 +69,55 @@ final class SidebarUITests: XCTestCase {
         XCTAssertEqual(sidebarReorderedFilters(folders, from: 2, to: 3, rangeLocation: 1, offset: 0).map { $0.sidebarId }, [-1, 20, 10])
         XCTAssertEqual(sidebarReorderedFilters(folders, from: 5, to: 6, rangeLocation: 5, offset: 1).map { $0.sidebarId }, [-1, 20, 10])
         XCTAssertEqual(sidebarReorderedFilters(folders, from: 1, to: 3, rangeLocation: 1, offset: 0).map { $0.sidebarId }, [10, 20, -1])
+    }
+
+    func testFolderPresentationMigrationAndIndependentSettings() throws {
+        let legacyData = Data(#"{"t":1,"i":1}"#.utf8)
+        let legacy = try JSONDecoder().decode(ChatListFoldersSettings.self, from: legacyData)
+        XCTAssertTrue(legacy.sidebar)
+        XCTAssertTrue(legacy.interacted)
+        XCTAssertEqual(legacy.presentation, ChatListFolderPresentation())
+
+        let updated = legacy.withUpdatedPresentation { presentation in
+            presentation.hideUnreadCounters = true
+            presentation.hiddenFolderIds.insert(10)
+        }.withUpdatedSidebar(false).withUpdatedSidebarInteracted(false)
+        let persisted = try JSONEncoder().encode(updated)
+        let reopened = try JSONDecoder().decode(ChatListFoldersSettings.self, from: persisted)
+        XCTAssertFalse(reopened.sidebar)
+        XCTAssertFalse(reopened.interacted)
+        XCTAssertTrue(reopened.presentation.hideUnreadCounters)
+        XCTAssertFalse(reopened.presentation.hideAllChats)
+        XCTAssertEqual(reopened.presentation.hiddenFolderIds, [10])
+    }
+
+    func testFolderVisibilityRetainsAllChatsWhenNoCustomFolderRemains() {
+        let folders: [ChatListFilter] = [.allChats, filter(10), filter(20)]
+        var presentation = ChatListFolderPresentation()
+        XCTAssertEqual(presentation.visibleFilters(folders), folders)
+        presentation.hideAllChats = true
+        XCTAssertEqual(presentation.visibleFilters(folders), [filter(10), filter(20)])
+        presentation.hiddenFolderIds = [10, 20]
+        XCTAssertEqual(presentation.visibleFilters(folders), [.allChats])
+        presentation.hiddenFolderIds.remove(10)
+        XCTAssertEqual(presentation.visibleFilters(folders), [filter(10)])
+    }
+
+    func testReorderingVisibleFoldersKeepsHiddenSlotsAndRejectsStaleDrags() {
+        let folders: [ChatListFilter] = [.allChats, filter(10), filter(20), filter(30)]
+        let visible = [filter(10), filter(30)]
+        XCTAssertEqual(reorderingVisibleChatListFilters(folders, visible: visible, from: 0, to: 1), [.allChats, filter(30), filter(20), filter(10)])
+        XCTAssertEqual(reorderingVisibleChatListFilters(folders, visible: visible, from: 1, to: 0), [.allChats, filter(30), filter(20), filter(10)])
+        XCTAssertEqual(reorderingVisibleChatListFilters(folders, visible: Array(visible.reversed()), from: 0, to: 1), folders)
+        XCTAssertEqual(reorderingVisibleChatListFilters(folders, visible: visible, from: 0, to: 2), folders)
+    }
+
+    func testHidingFolderBadgeRetainsUnreadCountForMenu() {
+        let state = SidebarState(tabs: [filter(10)], selectedFilterId: 10, hideUnreadCounters: true)
+        let entries = leftSidebarEntries(state, badgeForFilter: { _ in (7, true) })
+        guard case let .folder(_, _, _, count, _, hideUnreadCounters) = entries[1] else { return XCTFail() }
+        XCTAssertTrue(hideUnreadCounters)
+        XCTAssertEqual(count, 7)
     }
 
     func testClassificationPrefersUnreadAndExplicitPeersUseGenericIcon() {

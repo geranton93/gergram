@@ -199,25 +199,18 @@ public final class WebappBrowser : Window {
     public let containerView = View()
     private let shadow = SimpleShapeLayer()
     private let testLayer = SimpleLayer()
-    public init(parent: Window) {
+    public init(parent: Window, sizePreferences: MiniAppWindowSizePreferences? = nil) {
         
         containerView.wantsLayer = true
         
-        let windowFrame = parent.frame
+        let geometry = MiniAppWindowGeometry(parentFrame: parent.frame, visibleFrame: (parent.screen ?? NSScreen.main)?.visibleFrame,
+                                             largerWidth: sizePreferences?.isEnlarged(.width) == true,
+                                             largerHeight: sizePreferences?.isEnlarged(.height) == true)
+        let style: NSWindow.StyleMask = [.fullSizeContentView, .titled, .borderless, .resizable]
+        let contentRect = NSWindow.contentRect(forFrameRect: geometry.frame, styleMask: style)
+        super.init(contentRect: contentRect, styleMask: style, backing: .buffered, defer: true)
 
-        
-        let screen = NSScreen.main!
-        
-        let s = NSMakeSize(screen.frame.width + 20, screen.frame.height + 20)
-        let size = NSMakeSize(420, min(420 + 420 * 0.7, s.height - 80))
-        
-        let originX = windowFrame.origin.x + (windowFrame.width - size.width) / 2
-        let originY = windowFrame.origin.y + (windowFrame.height - size.height) / 2
-        let rect = NSRect(origin: NSPoint(x: originX, y: originY), size: size)
-
-        super.init(contentRect: rect, styleMask: [.fullSizeContentView, .titled, .borderless, .resizable], backing: .buffered, defer: true)
-        
-        self.minSize = rect.size
+        self.minSize = geometry.minimumSize
         
         self.contentView?.wantsLayer = true
         self.contentView?.autoresizesSubviews = false
@@ -1891,7 +1884,8 @@ public final class WebappBrowserController : ViewController {
         super.init()
         self.analyticsContext = initialAnalyticsOrigin?.context ?? analyticsContext ?? Analytics.shared.unresolvedContext()
         bar = .init(height: 0)
-        _window = WebappBrowser(parent: context.window)
+        let sizePreferences = initialTab?.peer == nil ? nil : MiniAppWindowSizePreferences()
+        _window = WebappBrowser(parent: context.window, sizePreferences: sizePreferences)
     }
     
     public func add(_ tab: BrowserTabData.Data, uniqueId: BrowserTabData.Unique? = nil) {

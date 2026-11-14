@@ -83,6 +83,10 @@ public class StickerPackRowItem: TableRowItem {
         items.append(ContextMenuItem(strings().emojiContextRemove, handler: {
             _ = context.engine.stickers.removeStickerPackInteractively(id: id, option: option).start()
         }, itemImage: animation.value))
+
+        if let copyId = StickerPackIdentifier(packId: id)?.copyMenuItem(context: context) {
+            items.append(copyId)
+        }
         
         if NSApp.currentEvent?.modifierFlags.contains(.control) == true {
             items.append(ContextMenuItem("Copy thumbnail (Dev.)", handler: {

@@ -13,6 +13,7 @@ import ChatListUI
 import WebAppUI
 import ImageCanvasUI
 import PeerInfoUI
+import SettingsUI
 import AvatarEditorUI
 
 extension GlobalBadgeNode: @retroactive ChatUIBadgeNode {
@@ -197,6 +198,10 @@ func installChatUIHooks() {
     }
     hooks.forumSidebarToggleImage = { open in
         open ? NSImage(resource: .iconMonoforumToggleFilled) : NSImage(resource: .iconMonoforumToggle)
+    }
+    hooks.openLocalMessageArchive = { context, location in
+        guard context.isCurrent, !context.isFrozen else { return }
+        context.bindings.rootNavigation().push(localMessageArchiveController(context: context, location: location))
     }
     hooks.addForumMembers = { context, peerId in selectForumMembers(context: context.concrete, peerId: peerId) }
     hooks.makeForumSidebarRows = { context, onSelect in

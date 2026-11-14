@@ -613,6 +613,10 @@ public final class L10n {
   }
   /// Services
   public static var appMenuServices: String  { return L10n.tr("Localizable", "App.Menu.Services") }
+  /// Streamer Mode
+  public static var appMenuStreamerMode: String  { return L10n.tr("Localizable", "App.Menu.StreamerMode") }
+  /// Requests capture exclusion for app windows and pauses new notifications. Coverage depends on macOS and the capture app.
+  public static var appMenuStreamerModeDescription: String  { return L10n.tr("Localizable", "App.Menu.StreamerMode.Description") }
   /// Pause to trim or replay.
   public static var appTooltipPauseRecording: String  { return L10n.tr("Localizable", "App.Tooltip.PauseRecording") }
   /// Hold to record video. Click to switch to voice.
@@ -9281,8 +9285,16 @@ public final class L10n {
   public static var generalSettingsSendLargePhotosTooltipDisabled: String  { return L10n.tr("Localizable", "GeneralSettings.SendLargePhotos.Tooltip.Disabled") }
   /// Photos will be sent in high quality
   public static var generalSettingsSendLargePhotosTooltipEnabled: String  { return L10n.tr("Localizable", "GeneralSettings.SendLargePhotos.Tooltip.Enabled") }
+  /// Show Seconds in Message Timestamps
+  public static var generalSettingsShowMessageTimestampSeconds: String  { return L10n.tr("Localizable", "GeneralSettings.ShowMessageTimestampSeconds") }
+  /// Peer ID Format
+  public static var generalSettingsShowProfileIdFormat: String  { return L10n.tr("Localizable", "GeneralSettings.ShowProfileId.Format") }
   /// Show Peer IDs in Profile
   public static var generalSettingsShowProfileIdText: String  { return L10n.tr("Localizable", "GeneralSettings.ShowProfileId.Text") }
+  /// Collapse Channel Recommendations by Default
+  public static var generalSettingsSimilarChannelsCollapse: String  { return L10n.tr("Localizable", "GeneralSettings.SimilarChannels.Collapse") }
+  /// Hide Similar Channels Tab
+  public static var generalSettingsSimilarChannelsHideTab: String  { return L10n.tr("Localizable", "GeneralSettings.SimilarChannels.HideTab") }
   /// Check Grammar With Spelling
   public static var generalSettingsSpellingCheckGrammarSpelling: String  { return L10n.tr("Localizable", "GeneralSettings.Spelling.CheckGrammarSpelling") }
   /// Correct Spelling Automatically

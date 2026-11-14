@@ -3,6 +3,8 @@ import AppKit
 import ObjcUtils
 
 public final class CaptureExclusionManager {
+    private static var windowRegions: [ObjectIdentifier: WindowRegions] = [:]
+    private let owner = UUID()
 
     public init() {
     }
@@ -22,6 +24,11 @@ public final class CaptureExclusionManager {
     private struct ExclusionEntry {
         public let window: NSWindow
         public let source: ExclusionSource
+    }
+
+    private struct WindowRegions {
+        let window: WeakWindowRef
+        var regions: [UUID: CGRect]
     }
 
     private var entries: [Token: ExclusionEntry] = [:]
@@ -93,7 +100,8 @@ public final class CaptureExclusionManager {
     }
 
     public func removeExclusion(_ token: Token, for window: NSWindow) {
-        guard entries.removeValue(forKey: token) != nil else { return }
+        guard let entry = entries[token], entry.window === window else { return }
+        entries.removeValue(forKey: token)
         removeObservers(for: token)
 
         let key = ObjectIdentifier(window)
@@ -101,20 +109,18 @@ public final class CaptureExclusionManager {
         if windowTokens[key]?.isEmpty == true {
             windowTokens.removeValue(forKey: key)
             trackedWindows.removeValue(forKey: key)
-            DispatchQueue.main.async {
-                setWindowCaptureExclusion(window, .zero, false)
-            }
-        } else {
-            reapply(for: window)
         }
+        reapply(for: window)
     }
 
     public func cleanup() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { self.cleanup() }
+            return
+        }
         for (_, weakRef) in trackedWindows {
             if let window = weakRef.window {
-                DispatchQueue.main.async {
-                    setWindowCaptureExclusion(window, .zero, false)
-                }
+                Self.applyRegion(nil, for: window, owner: owner)
             }
         }
         for token in observations.keys {
@@ -138,10 +144,9 @@ public final class CaptureExclusionManager {
 
     private func reapply(for window: NSWindow) {
         let key = ObjectIdentifier(window)
-        guard let tokens = windowTokens[key], !tokens.isEmpty else { return }
 
         var combined: CGRect?
-        for token in tokens {
+        for token in windowTokens[key] ?? [] {
             guard let entry = entries[token] else { continue }
             let rect: CGRect
             switch entry.source {
@@ -167,10 +172,30 @@ public final class CaptureExclusionManager {
             }
         }
 
-        if let combined = combined {
-            DispatchQueue.main.async {
-                setWindowCaptureExclusion(window, combined, true)
+        Self.applyRegion(combined, for: window, owner: owner)
+    }
+
+    private static func applyRegion(_ region: CGRect?, for window: NSWindow, owner: UUID) {
+        let key = ObjectIdentifier(window)
+        var state = windowRegions[key]
+        if state?.window.window !== window {
+            state = nil
+        }
+        if let region = region {
+            if state == nil {
+                state = WindowRegions(window: WeakWindowRef(window), regions: [:])
             }
+            state?.regions[owner] = region
+        } else {
+            guard state?.regions.removeValue(forKey: owner) != nil else { return }
+        }
+        if let state = state, let first = state.regions.values.first {
+            windowRegions[key] = state
+            let combined = state.regions.values.reduce(first) { $0.union($1) }
+            setWindowCaptureExclusion(window, combined, true)
+        } else {
+            windowRegions.removeValue(forKey: key)
+            setWindowCaptureExclusion(window, .zero, false)
         }
     }
 

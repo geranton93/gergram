@@ -20,12 +20,15 @@ enum NSSound {
 final class AdditionController {
     let pendingActions = PreviewSenderPendingActions()
     var sent = false
-    var _urls = [URL(fileURLWithPath: "/existing")]
+    var attachmentOrder = PreviewSenderAttachmentOrder(urls: [URL(fileURLWithPath: "/existing")], layout: .items)
+    var pendingRenderSend: (() -> Void)?
+    func invalidateStickerForAttachmentChange() {}
     var urls: [URL] {
-        get { _urls }
-        set {
+        get { attachmentOrder.urls }
+        set { updateAttachmentURLs(newValue) }
+    }
+    func updateAttachmentURLs(_ urls: [URL], replacingRenderedAttachment: Bool = false) {
 __NORMALIZE__
-        }
     }
     let genericView = AdditionView()
     var analyticsMediaJourney: AdditionJourney? = AdditionJourney()
@@ -102,5 +105,19 @@ final class AdditionTests: XCTestCase {
         controller.insertAdditionUrls?([URL(fileURLWithPath: "/new")], .addDrop)
         XCTAssertEqual(NSSound.beeps, 1)
         XCTAssertEqual(controller.urls.count, 2)
+    }
+
+    func testChangedAttachmentsClearRenderSendUnlessReplacingItsOwnRenderedFile() {
+        let controller = AdditionController()
+        controller.pendingRenderSend = {}
+        let unchanged = controller.urls
+        controller.urls = unchanged
+        XCTAssertNotNil(controller.pendingRenderSend)
+
+        controller.updateAttachmentURLs([URL(fileURLWithPath: "/rendered")], replacingRenderedAttachment: true)
+        XCTAssertNotNil(controller.pendingRenderSend)
+
+        controller.urls.append(URL(fileURLWithPath: "/added"))
+        XCTAssertNil(controller.pendingRenderSend)
     }
 }

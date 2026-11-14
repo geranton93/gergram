@@ -205,6 +205,7 @@ public struct ChatUIHooks {
     public let getGroupCallPanelData: (any AccountContextProtocol, PeerId) -> Signal<GroupCallPanelData?, NoError>
     public let savedMessagesChatListItems: (PeerId, Account) -> Signal<[EngineChatList.Item]?, NoError>
     public let forumChatListItems: (PeerId, Account) -> Signal<[EngineChatList.Item]?, NoError>
+    public var openLocalMessageArchive: ((any AccountContextProtocol, ChatLocation) -> Void)?
     public var addForumMembers: ((any AccountContextProtocol, PeerId) -> Disposable)? = nil
     public var forumSidebarToggleImage: ((Bool) -> NSImage)? = nil
     public var makeForumSidebarRows: ((any AccountContextProtocol, @escaping (Int64?, MessageId?) -> Void) -> any ForumSidebarRowsContent)? = nil

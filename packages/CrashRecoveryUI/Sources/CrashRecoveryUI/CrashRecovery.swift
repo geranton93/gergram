@@ -30,6 +30,7 @@ public struct CrashRecoveryUpdater {
 
 public enum CrashRecoveryUpdate {
     case updater(CrashRecoveryUpdater)
+    case unavailable
     case appStore
     case website
 }
@@ -114,6 +115,8 @@ private func formattedSize(_ bytes: Int) -> String {
 
 private func recoveryContent(update: CrashRecoveryUpdate, state: CrashRecoveryUpdateState, openedExternal: Bool) -> CrashRecoveryContent {
     switch update {
+    case .unavailable:
+        return CrashRecoveryContent(symbol: .warning, title: "gergram", detail: "Automatic updates are unavailable for this build.", progress: nil, primaryTitle: Text.quit, primaryEnabled: true, secondaryEnabled: true, showsWebsite: false, showsReset: true)
     case .appStore:
         return CrashRecoveryContent(symbol: .appStore, title: Text.appStore, detail: Text.appStoreDetail, progress: nil, primaryTitle: openedExternal ? Text.quit : Text.openAppStore, primaryEnabled: true, secondaryEnabled: true, showsWebsite: false, showsReset: true)
     case .website:
@@ -121,21 +124,21 @@ private func recoveryContent(update: CrashRecoveryUpdate, state: CrashRecoveryUp
     case .updater:
         switch state {
         case .checking:
-            return CrashRecoveryContent(symbol: .activity, title: Text.checking, detail: Text.checkingDetail, progress: nil, primaryTitle: Text.update, primaryEnabled: false, secondaryEnabled: true, showsWebsite: true, showsReset: true)
+            return CrashRecoveryContent(symbol: .activity, title: Text.checking, detail: Text.checkingDetail, progress: nil, primaryTitle: Text.update, primaryEnabled: false, secondaryEnabled: true, showsWebsite: false, showsReset: true)
         case let .downloading(version, current, total):
             let detail = total > 0 ? Text.downloaded(formattedSize(current), formattedSize(total)) : Text.downloadStarting
             let progress = total > 0 ? min(1, CGFloat(current) / CGFloat(total)) : 0
-            return CrashRecoveryContent(symbol: .download, title: Text.downloading(version), detail: detail, progress: progress, primaryTitle: Text.downloadingButton, primaryEnabled: false, secondaryEnabled: true, showsWebsite: true, showsReset: true)
+            return CrashRecoveryContent(symbol: .download, title: Text.downloading(version), detail: detail, progress: progress, primaryTitle: Text.downloadingButton, primaryEnabled: false, secondaryEnabled: true, showsWebsite: false, showsReset: true)
         case let .preparing(version):
-            return CrashRecoveryContent(symbol: .activity, title: Text.preparing(version), detail: Text.preparingDetail, progress: nil, primaryTitle: Text.preparingButton, primaryEnabled: false, secondaryEnabled: true, showsWebsite: true, showsReset: true)
+            return CrashRecoveryContent(symbol: .activity, title: Text.preparing(version), detail: Text.preparingDetail, progress: nil, primaryTitle: Text.preparingButton, primaryEnabled: false, secondaryEnabled: true, showsWebsite: false, showsReset: true)
         case let .readyToInstall(version):
-            return CrashRecoveryContent(symbol: .ready, title: Text.ready(version), detail: Text.readyDetail, progress: nil, primaryTitle: Text.install, primaryEnabled: true, secondaryEnabled: true, showsWebsite: true, showsReset: true)
+            return CrashRecoveryContent(symbol: .ready, title: Text.ready(version), detail: Text.readyDetail, progress: nil, primaryTitle: Text.install, primaryEnabled: true, secondaryEnabled: true, showsWebsite: false, showsReset: true)
         case .installing:
             return CrashRecoveryContent(symbol: .activity, title: Text.installing, detail: Text.installingDetail, progress: nil, primaryTitle: Text.installingButton, primaryEnabled: false, secondaryEnabled: true, showsWebsite: false, showsReset: false)
         case .upToDate:
-            return CrashRecoveryContent(symbol: .upToDate, title: Text.upToDate, detail: Text.upToDateDetail, progress: nil, primaryTitle: Text.checkAgain, primaryEnabled: true, secondaryEnabled: true, showsWebsite: true, showsReset: true)
+            return CrashRecoveryContent(symbol: .upToDate, title: Text.upToDate, detail: Text.upToDateDetail, progress: nil, primaryTitle: Text.checkAgain, primaryEnabled: true, secondaryEnabled: true, showsWebsite: false, showsReset: true)
         case .failed:
-            return CrashRecoveryContent(symbol: .warning, title: Text.failed, detail: Text.failedDetail, progress: nil, primaryTitle: Text.tryAgain, primaryEnabled: true, secondaryEnabled: true, showsWebsite: true, showsReset: true)
+            return CrashRecoveryContent(symbol: .warning, title: Text.failed, detail: Text.failedDetail, progress: nil, primaryTitle: Text.tryAgain, primaryEnabled: true, secondaryEnabled: true, showsWebsite: false, showsReset: true)
         }
     }
 }
@@ -231,6 +234,8 @@ private final class CrashRecoveryWindowController: NSObject, NSWindowDelegate {
         switch update {
         case .appStore, .website:
             return openedExternal
+        case .unavailable:
+            return true
         case .updater:
             return false
         }
@@ -271,6 +276,8 @@ private final class CrashRecoveryWindowController: NSObject, NSWindowDelegate {
             return
         }
         switch update {
+        case .unavailable:
+            NSApp.terminate(nil)
         case let .updater(updater):
             switch state {
             case .readyToInstall:

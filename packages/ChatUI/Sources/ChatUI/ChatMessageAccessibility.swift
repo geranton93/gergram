@@ -54,8 +54,9 @@ public struct ChatMessageAccessibility {
     public let forward: Forward?
     public let isSelected: Bool?
     public let pluralRecipients: Bool
+    private let isEdited: Bool
 
-    public init(kind: Kind, isIncoming: Bool, authorName: String?, announceAuthor: Bool, caption: String?, date: String, status: Status, reply: Reply? = nil, forward: Forward? = nil, isSelected: Bool? = nil, pluralRecipients: Bool = false) {
+    public init(kind: Kind, isIncoming: Bool, authorName: String?, announceAuthor: Bool, caption: String?, date: String, status: Status, reply: Reply? = nil, forward: Forward? = nil, isSelected: Bool? = nil, pluralRecipients: Bool = false, isEdited: Bool = false) {
         self.kind = kind
         self.isIncoming = isIncoming
         self.authorName = authorName
@@ -67,6 +68,7 @@ public struct ChatMessageAccessibility {
         self.forward = forward
         self.isSelected = isSelected
         self.pluralRecipients = pluralRecipients
+        self.isEdited = isEdited
     }
 
     private func pick(from: (String) -> String, plain: String, your: String) -> String {
@@ -267,6 +269,9 @@ public struct ChatMessageAccessibility {
         }
         if !date.isEmpty {
             lines.append(date)
+        }
+        if isEdited {
+            lines.append(strings().chatMessageEdited)
         }
         if let status = statusText {
             lines.append(status)

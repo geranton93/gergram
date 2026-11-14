@@ -47,6 +47,11 @@ public enum ForceTouchAction: Int32 {
     case react
 }
 
+public enum ProfilePeerIdFormat: String, CaseIterable {
+    case telegramAPI
+    case botAPI
+}
+
 public enum BotPemissionKey: String {
     case contact = "PermissionInlineBotContact"
 }
@@ -410,7 +415,93 @@ public class FastSettings {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: "kCanViewPeerId")
+            profilePeerIdDisplayPromise.set(visibleProfilePeerIdFormat)
         }
+    }
+
+    public static var profilePeerIdFormat: ProfilePeerIdFormat {
+        get {
+            return UserDefaults.standard.string(forKey: "kProfilePeerIdFormat")
+                .flatMap(ProfilePeerIdFormat.init(rawValue:)) ?? .telegramAPI
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "kProfilePeerIdFormat")
+            profilePeerIdDisplayPromise.set(visibleProfilePeerIdFormat)
+        }
+    }
+
+    private static var visibleProfilePeerIdFormat: ProfilePeerIdFormat? {
+        return canViewPeerId ? profilePeerIdFormat : nil
+    }
+
+    private static let profilePeerIdDisplayPromise = ValuePromise(visibleProfilePeerIdFormat, ignoreRepeated: true)
+
+    public static var profilePeerIdDisplay: Signal<ProfilePeerIdFormat?, NoError> {
+        return profilePeerIdDisplayPromise.get()
+    }
+
+    private static let hideSimilarChannelsTabPromise = ValuePromise(hideSimilarChannelsTab, ignoreRepeated: true)
+    private static let collapseChannelRecommendationsPromise = ValuePromise(collapseChannelRecommendations, ignoreRepeated: true)
+
+    public static var hideSimilarChannelsTab: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: "kHideSimilarChannelsTab")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "kHideSimilarChannelsTab")
+            hideSimilarChannelsTabPromise.set(newValue)
+        }
+    }
+
+    public static var hideSimilarChannelsTabSignal: Signal<Bool, NoError> {
+        return hideSimilarChannelsTabPromise.get()
+    }
+
+    public static var collapseChannelRecommendations: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: "kCollapseChannelRecommendations")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "kCollapseChannelRecommendations")
+            collapseChannelRecommendationsPromise.set(newValue)
+        }
+    }
+
+    public static var collapseChannelRecommendationsSignal: Signal<Bool, NoError> {
+        return collapseChannelRecommendationsPromise.get()
+    }
+
+    private static let showMessageTimestampSecondsPromise = ValuePromise(showMessageTimestampSeconds, ignoreRepeated: true)
+
+    public static var showMessageTimestampSeconds: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: "kShowMessageTimestampSeconds")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "kShowMessageTimestampSeconds")
+            showMessageTimestampSecondsPromise.set(newValue)
+        }
+    }
+
+    public static var showMessageTimestampSecondsSignal: Signal<Bool, NoError> {
+        return showMessageTimestampSecondsPromise.get()
+    }
+
+    private static let filterZalgoTextKey = "gergram.chat.filterZalgoText"
+    private static let filterZalgoTextPromise = ValuePromise(filterZalgoText, ignoreRepeated: true)
+
+    public static var filterZalgoText: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: filterZalgoTextKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: filterZalgoTextKey)
+            filterZalgoTextPromise.set(newValue)
+        }
+    }
+
+    public static var filterZalgoTextSignal: Signal<Bool, NoError> {
+        return filterZalgoTextPromise.get()
     }
 
     private static let migrateSidebarAlwaysEnabled: Void = {

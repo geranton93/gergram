@@ -248,6 +248,71 @@ final class LinkParsingTests: XCTestCase {
         guard case .nothing = parse("tg://settings/unknown") else { return XCTFail("Expected nothing") }
     }
 
+    func testGergramPeerLinksRequireAccountContext() {
+        let url = "gergram://chat/bot-api/-1000000000042"
+        guard case let .gergramPeer(link, route) = parse(url) else {
+            return XCTFail("Expected gergram chat route")
+        }
+        XCTAssertEqual(link, url)
+        XCTAssertEqual(route.destination, .chat)
+        XCTAssertEqual(route.peerId.namespace, Namespaces.Peer.CloudChannel)
+        XCTAssertEqual(route.peerId.id._internalGetInt64Value(), 42)
+        for (url, options) in [
+            (url, InAppLinkParsingOptions()),
+            ("gergram://chat/channel/42?account=2", enabled)
+        ] {
+            guard case .nothing = parse(url, options: options) else { return XCTFail(url) }
+        }
+    }
+
+    func testGergramSettingsLinksStayLocalAndRequireAccountContext() {
+        let editedLabel = "gergram://settings/appearance/edited-message-label"
+        let zalgoFilter = "gergram://settings/general/filter-zalgo-text"
+        let cases: [(String, GergramSettingsRoute)] = [
+            ("gergram://settings/general/message-context-menu", .messageContextMenu),
+            ("gergram://settings/general/on-device-transcription-language", .transcriptionLanguage),
+            (zalgoFilter, .filterZalgoText),
+            ("gergram://settings/general/mini-app-window-size", .miniAppWindowSize),
+            ("gergram://settings/general/hide-chat-list-stories", .hideChatListStories),
+            ("gergram://settings/general/hide-profile-stories", .hideProfileStories),
+            ("gergram://settings/general/channel-bottom-action", .channelBottomAction),
+            ("gergram://settings/general/send-without-sound", .sendWithoutSound),
+            ("gergram://settings/appearance/message-bubble-corners", .messageBubbleCorners),
+            ("gergram://settings/appearance/avatar-corners", .avatarCorners),
+            (editedLabel, .editedMessageLabel),
+            ("gergram://settings/privacy/locally-hidden-senders", .locallyHiddenSenders),
+            ("gergram://settings/privacy/message-filters", .messageFilters),
+            ("gergram://settings/privacy/local-message-archive", .localMessageArchive)
+        ]
+        for (url, route) in cases {
+            guard case let .settings(link, section) = parse(url) else { return XCTFail("Expected settings: \(url)") }
+            XCTAssertEqual(link, url)
+            XCTAssertEqual(section, .gergram(route))
+            guard case .nothing = parse(url, options: InAppLinkParsingOptions()) else {
+                return XCTFail("Expected no navigation without an account")
+            }
+        }
+
+        for url in [
+            "gergram://settings/privacy/reset",
+            editedLabel + "?value=custom",
+            editedLabel + "#reset",
+            editedLabel + "/reset",
+            zalgoFilter + "?enabled=true",
+            "GERGRAM://example.t.me/settings/privacy/locally-hidden-senders",
+            "gergram://settings/privacy/locally-hidden-senders?account=123",
+            "gergram://settings/privacy/message-filters?import=https://example.test/rules",
+            "gergram://settings/privacy/local-message-archive/clear"
+        ] {
+            guard case .nothing = parse(url) else { return XCTFail("Expected no fallback for \(url)") }
+        }
+
+        guard case let .settings(_, section) = parse("tg://settings/privacy/locally-hidden-senders") else {
+            return XCTFail("Expected the original Telegram settings fallback")
+        }
+        XCTAssertEqual(section, .privacy(nil))
+    }
+
     func testStickerPackKindsAndPeerIdentifiers() {
         let peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(9))
         var options = enabled

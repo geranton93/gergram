@@ -15,6 +15,7 @@ import GeneralRows
 import InputTextView
 import LocalAnimations
 import Localization
+import MessageTextUtils
 import MessageUtils
 import PremiumStatusUI
 import PremiumUI
@@ -28,6 +29,8 @@ import InlineStickerLayer
 import HTMLBubbles
 
 private let forwardKeyString = ":##"
+
+private let chatEditedIndicatorImage = TelegramThemeHooks.shared.image(.iconChatActionEditMessage)
 
 public struct ChatFloatingPhoto {
     public var point: NSPoint
@@ -174,6 +177,8 @@ public class ChatRowItem: TableRowItem {
     public private(set) var replyCount:TextViewLayout?
     public private(set) var postAuthor:TextViewLayout?
     public private(set) var editedLabel:TextViewLayout?
+    private(set) var editedIcon: CGImage?
+    private var announcesEdit = false
     public private(set) var paidMessage:TextViewLayout?
     public private(set) var diceStake:TextViewLayout?
 
@@ -349,7 +354,7 @@ public class ChatRowItem: TableRowItem {
             
             var tempWidth: CGFloat = width - self.contentOffset.x - bubbleDefaultInnerInset - (20 + 10 + additionBubbleInset) - 20
             
-            if isSharable || hasSource {
+            if (!hidesFastShare && isSharable) || hasSource {
                 tempWidth -= 35
             }
             if isLikable {
@@ -1046,9 +1051,11 @@ public class ChatRowItem: TableRowItem {
         }
     }
     
+    var hidesFastShare = ChatAffordancePreferences.shared.hidesFastShare
+
     public var shareVisible: Bool {
         
-        guard let message = message else {
+        guard !hidesFastShare, let message = message else {
             return false
         }
         if isSharable {
@@ -1591,14 +1598,17 @@ public class ChatRowItem: TableRowItem {
         guard let neighbors = bubbleNeighbors else {
             return nil
         }
-        return messageBubbleCorners(incoming: isIncoming, neighbors: neighbors, inset: inset)
+        return messageBubbleCorners(incoming: isIncoming, neighbors: neighbors, inset: inset, radius: messageBubbleRadius)
     }
+
+    var hidesMessageBubbleTail = MessageBubbleTailPreferences.shared.isHidden
+    var messageBubbleRadius = MessageBubbleRadiusPreferences.shared.radius
 
     public var bubbleImage:(CGImage, NSEdgeInsets)? {
         guard let neighbors = bubbleNeighbors else {
             return nil
         }
-        return messageBubbleMaskImage(incoming: isIncoming, neighbors: neighbors)
+        return messageBubbleMaskImage(incoming: isIncoming, neighbors: neighbors, showsTail: !hidesMessageBubbleTail, radius: messageBubbleRadius)
     }
 
     public let downloadSettings: AutomaticMediaDownloadSettings
@@ -1856,7 +1866,17 @@ public class ChatRowItem: TableRowItem {
     
     private var _reactionsLayout: ChatReactionsLayout?
     private var hasNoReactionsLayout: Bool = false
+    var hidesMessageReactions = false
+    var hiddenReactionAvatarPeerIds: Set<PeerId> = [] {
+        didSet {
+            if hiddenReactionAvatarPeerIds != oldValue {
+                _reactionsLayout = nil
+            }
+        }
+    }
+
     public var reactionsLayout: ChatReactionsLayout? {
+        guard !hidesMessageReactions else { return nil }
         if let value = _reactionsLayout {
             return value
         } else if hasNoReactionsLayout {
@@ -1906,7 +1926,7 @@ public class ChatRowItem: TableRowItem {
                     }
                 }, reactionsDisabled: { [weak chatInteraction] in
                     chatInteraction?.showRestrictionToast(strings().chatSendReactionRestricted)
-                }, analyticsContext: origin)
+                }, analyticsContext: origin, hiddenReactionAvatarPeerIds: hiddenReactionAvatarPeerIds)
                 
                 _reactionsLayout = layout
                 return layout
@@ -1936,6 +1956,10 @@ public class ChatRowItem: TableRowItem {
     
     
     public init(_ initialSize:NSSize, _ chatInteraction:ChatInteraction, _ context: any AccountContextProtocol, _ object: ChatHistoryEntry, theme: TelegramPresentationTheme) {
+        let filtersAuthorNames = FastSettings.filterZalgoText && object.message?.adAttribute == nil
+        func displayName(_ name: String) -> String {
+            ChatZalgoTextFilter.displayName(name, enabled: filtersAuthorNames)
+        }
         self.entry = object
         self.hasVerticalMonoforum = ChatRowItem.hasVerticalMonoforum(object)
         self.effectiveCommentMessage = ChatRowItem.effectiveCommentMessage(object)
@@ -2199,7 +2223,7 @@ public class ChatRowItem: TableRowItem {
                 for attr in message.attributes {
                     if let attr = attr as? AuthorSignatureMessageAttribute {
                         if !message.flags.contains(.Failed) {
-                            let attr: NSAttributedString = .initialize(string: attr.signature.prefixWithDots(13), color: isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: renderType == .bubble ? .normal(.small) : .normal(.short))
+                            let attr: NSAttributedString = .initialize(string: displayName(attr.signature.prefixWithDots(13)), color: isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: renderType == .bubble ? .normal(.small) : .normal(.short))
                             postAuthor = TextViewLayout(attr, maximumNumberOfLines: 1)
                             
                             postAuthor?.measure(width: .greatestFiniteMagnitude)
@@ -2212,7 +2236,7 @@ public class ChatRowItem: TableRowItem {
                 for attr in message.attributes {
                     if let attr = attr as? AuthorSignatureMessageAttribute {
                         if !message.flags.contains(.Failed) {
-                            let badge: NSAttributedString = .initialize(string: " " + attr.signature, color: !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: .normal(.short))
+                            let badge: NSAttributedString = .initialize(string: " " + displayName(attr.signature), color: !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: .normal(.short))
                         
                             adminBadge = TextViewLayout(badge, maximumNumberOfLines: 1, truncationType: .end, alignment: .left)
                             adminBadge?.mayItems = false
@@ -2224,7 +2248,7 @@ public class ChatRowItem: TableRowItem {
             }
             if postAuthor == nil, ChatRowItem.authorIsChannel(message: message, account: context.account) {
                 if let author = message.forwardInfo?.authorSignature {
-                    let attr: NSAttributedString = .initialize(string: author, color: isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: renderType == .bubble ? .normal(.small) : .normal(.short))
+                    let attr: NSAttributedString = .initialize(string: displayName(author), color: isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? presentation.colors.grayText : presentation.chat.grayText(isIncoming, object.renderType == .bubble), font: renderType == .bubble ? .normal(.small) : .normal(.short))
                     postAuthor = TextViewLayout(attr, maximumNumberOfLines: 1)
                 }
             }
@@ -2271,13 +2295,13 @@ public class ChatRowItem: TableRowItem {
 
                     if ChatRowItem.authorIsChannel(message: message, account: context.account) {
                         if let author = info.author {
-                            let range = attr.append(string: author.displayTitle, color: presentation.chat.linkColor(isIncoming, object.renderType == .bubble), font: .medium(.text))
+                            let range = attr.append(string: displayName(author.displayTitle), color: presentation.chat.linkColor(isIncoming, object.renderType == .bubble), font: .medium(.text))
                             
                             let appLink = ChatHistoryLink.peerInfo(link: "", peerId: author.id, action: nil, openChat: !(author is TelegramUser), postId: info.sourceMessageId?.id, callback: chatInteraction.openInfo)
                             attr.add(link: appLink, for: range, color: presentation.chat.linkColor(isIncoming, object.renderType == .bubble))
                         } else {
                             let color = presentation.chat.linkColor(isIncoming, object.renderType == .bubble)
-                            let range = attr.append(string: info.authorTitle, color: color, font: .normal(.text))
+                            let range = attr.append(string: displayName(info.authorTitle), color: color, font: .normal(.text))
                             attr.add(link: LinkHooks.shared.callbackLink("hid", { _ in
                                 hiddenFwdTooltip?()
                             }), for: range, color: color)
@@ -2292,9 +2316,9 @@ public class ChatRowItem: TableRowItem {
                         }
                         
                         if let source = info.source, source.isChannel {
-                            var range = attr.append(string: source.displayTitle, color: color, font: .medium(.text))
+                            var range = attr.append(string: displayName(source.displayTitle), color: color, font: .medium(.text))
                             if info.author?.id != source.id {
-                                let subrange = attr.append(string: " (\(info.authorTitle))", color: color, font: .medium(.text))
+                                let subrange = attr.append(string: " (\(displayName(info.authorTitle)))", color: color, font: .medium(.text))
                                 range.length += subrange.length
                             }
                             
@@ -2303,7 +2327,7 @@ public class ChatRowItem: TableRowItem {
                             attr.add(link: appLink, for: range, color: color)
                             
                         } else {
-                            let range = attr.append(string: info.authorTitle, color: color, font: info.author == nil ? .normal(.text) : .medium(.text))
+                            let range = attr.append(string: displayName(info.authorTitle), color: color, font: info.author == nil ? .normal(.text) : .medium(.text))
                             
                             var linkAbility: Bool = true
                             if let channel = info.author as? TelegramChannel {
@@ -2363,7 +2387,7 @@ public class ChatRowItem: TableRowItem {
                         } else {
                             var fullName = attr.string
                             if let signature = message.forwardInfo?.authorSignature, message.isAnonymousMessage {
-                                fullName += " (\(signature))"
+                                fullName += " (\(displayName(signature)))"
                             }
                             if message.forwardInfo?.author != nil {
                                 text = strings().chatBubblesForwardedFromWithPhoto(fullName)
@@ -2421,7 +2445,7 @@ public class ChatRowItem: TableRowItem {
                 }
                 
                 var attr: NSMutableAttributedString = NSMutableAttributedString()
-                let fullName = author.compactDisplayTitle
+                let fullName = displayName(author.compactDisplayTitle)
                 
                 let text = strings().chatBubblesForwardedStory(fullName)
                 
@@ -2508,12 +2532,12 @@ public class ChatRowItem: TableRowItem {
                         attr.addAttribute(NSAttributedString.Key.link, value: ChatHistoryLink.peerInfo(link: "", peerId: bot.id, action: nil, openChat: false, postId: nil, callback: chatInteraction.openInfo), range: botRange)
                         if let caller = message.peers[guestAttr.peerId] {
                             _ = attr.append(string: strings().chatRowBotForConnector, color: grayColor, font: .medium(.text))
-                            _ = attr.append(string: caller.compactDisplayTitle, color: linkColor, font: .medium(.text))
+                            _ = attr.append(string: displayName(caller.compactDisplayTitle), color: linkColor, font: .medium(.text))
                         }
                     } else {
                         if canFillAuthorName {
                             authorVerificationPeer = ChatAuthorVerification.peer(author: titlePeer, chatId: message.id.peerId, displaysAuthor: !isBubbled || hasBubble)
-                            let range = attr.append(string: title, color: nameColor, font: .medium(.text))
+                            let range = attr.append(string: displayName(title), color: nameColor, font: .medium(.text))
                             if peer.id.id._internalGetInt64Value() != 0 {
                                 attr.addAttribute(NSAttributedString.Key.link, value: ChatHistoryLink.peerInfo(link: "", peerId:peer.id, action:nil, openChat: peer.isChannel, postId: nil, callback: chatInteraction.openInfo), range: range)
                             } else {
@@ -2551,8 +2575,13 @@ public class ChatRowItem: TableRowItem {
                             self.adminBadgeIsRank = rankType != .none
                             self.adminBadgeRankType = rankType
                             self.adminBadgeColor = rankType != .none ? badgeColor : nil
-                        }
-                        else if ChatRowItem.authorIsChannel(message: message, account: context.account) {
+                        } else if ChatRowItem.authorIsChannel(message: message, account: context.account)
+                            || ChatChannelAuthorBadge.showsDirectAuthor(
+                                in: (coreMessageMainPeer(message) as? TelegramChannel)?.info,
+                                author: (message.author as? TelegramChannel)?.info,
+                                displaysAuthor: peer.id == message.author?.id,
+                                isIncoming: isIncoming
+                            ) {
                             badge = .initialize(string: " " + strings().chatChannelBadge, color: !hasBubble ? theme.colors.grayText : theme.chat.grayText(isIncoming, object.renderType == .bubble), font: .normal(.short))
                             self.adminBadgeIsRank = false
                             self.adminBadgeColor = nil
@@ -2628,7 +2657,6 @@ public class ChatRowItem: TableRowItem {
                 guestChatBadge = layout
             }
             
-            let dateFormatter = DateSelectorUtil.chatDateFormatter
             let dateColor = isStateOverlayLayout ? stateOverlayTextColor : (!hasBubble ? theme.colors.grayText : theme.chat.grayText(isIncoming, object.renderType == .bubble))
             
             let dateFont: NSFont = renderType == .bubble ? .normal(.small) : .normal(.short)
@@ -2638,7 +2666,7 @@ public class ChatRowItem: TableRowItem {
                 var time:TimeInterval = TimeInterval(attribute.approximateCompletionTime)
                 time -= context.timeDifference
                 
-                let dateText = dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time)))
+                let dateText = DateSelectorUtil.chatDateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time)))
                 
                 let attr: NSMutableAttributedString = NSAttributedString.initialize(string: strings().chatVideoProccessingMessageTime(dateText), color: dateColor, font: dateFont).mutableCopy() as! NSMutableAttributedString
                 
@@ -2650,10 +2678,11 @@ public class ChatRowItem: TableRowItem {
                 time -= context.timeDifference
                 
                 
-                let attr: NSMutableAttributedString = NSAttributedString.initialize(string: dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time))), color: dateColor, font: dateFont).mutableCopy() as! NSMutableAttributedString
+                let dateText = ChatDisplayTimestamp.time(for: Date(timeIntervalSince1970: time), showsSeconds: FastSettings.showMessageTimestampSeconds)
+                let attr: NSMutableAttributedString = NSAttributedString.initialize(string: dateText, color: dateColor, font: dateFont).mutableCopy() as! NSMutableAttributedString
                 
                 if let attribute = message.inlineBotAttribute, let peerId = attribute.peerId, let peer = message.peers[peerId] {
-                    attr.insert(.initialize(string: "\(attribute.title ?? peer.displayTitle), ", color: dateColor, font: dateFont), at: 0)
+                    attr.insert(.initialize(string: "\(displayName(attribute.title ?? peer.displayTitle)), ", color: dateColor, font: dateFont), at: 0)
                 }
                 
                 if let repeatPeriod = message.scheduleRepeatPeriod {
@@ -2707,11 +2736,10 @@ public class ChatRowItem: TableRowItem {
             view.showHiddenForwardTooltip()
         }
         
-        let editedAttribute = messages.compactMap({
-            return $0.editedAttribute
-        }).sorted(by: {
-            $0.date < $1.date
-        }).first
+        let editedMessage = messages.compactMap { message in
+            message.editedAttribute.map { (id: message.id, attribute: $0) }
+        }.min { $0.attribute.date < $1.attribute.date }
+        let editedAttribute = editedMessage?.attribute
         
         
         
@@ -2759,33 +2787,44 @@ public class ChatRowItem: TableRowItem {
             }
 
             if editedAttribute != nil || message.id.namespace == Namespaces.Message.Cloud {
-                if isEditMarkVisible || isUnsent, message.id.peerId != context.peerId, let editedAttribute {
-                    
-                    
-                    var string = strings().chatMessageEdited
-                    
+                if isEditMarkVisible || isUnsent, message.id.peerId != context.peerId, let editedMessage {
+                    let editedAttribute = editedMessage.attribute
+                    let editedIndicator = entry.additionalData(editedMessage.id).editedIndicator
+                    let style = editedIndicator.style
                     let color = isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? theme.colors.grayText : theme.chat.grayText(isIncoming, object.renderType == .bubble)
                     let font: NSFont = renderType == .bubble ? .normal(.small) : .normal(.short)
+                    var relativeDate: String?
                     if message_primary_edited_date, self.date == nil {
                         let editedDate = Date(timeIntervalSince1970: TimeInterval(editedAttribute.date))
                         let time: String
                         if Calendar.current.isDateInToday(editedDate) {
-                            string = strings().chatRowEdited("\(strings().timeToday) \(strings().timeAt)")
-                            time = DateSelectorUtil.chatDateFormatter.string(from: editedDate)
+                            relativeDate = "\(strings().timeToday) \(strings().timeAt)"
+                            time = ChatDisplayTimestamp.time(for: editedDate, showsSeconds: FastSettings.showMessageTimestampSeconds)
                         } else if Calendar.current.isDateInYesterday(editedDate) {
-                            string = strings().chatRowEdited("\(strings().timeYesterday) \(strings().timeAt)")
-                            time = DateSelectorUtil.chatDateFormatter.string(from: editedDate)
+                            relativeDate = "\(strings().timeYesterday) \(strings().timeAt)"
+                            time = ChatDisplayTimestamp.time(for: editedDate, showsSeconds: FastSettings.showMessageTimestampSeconds)
                         } else {
                             time = DateUtils.string(forLastSeen: editedAttribute.date)
                         }
-                        let timeAttr: NSAttributedString = .initialize(string: time, color: color, font: font)
+                        let dateText = style == .text && editedIndicator.customText == nil ? time : relativeDate.map { "\($0) \(time)" } ?? time
+                        let timeAttr: NSAttributedString = .initialize(string: dateText, color: color, font: font)
                         self.date = TextViewLayout(timeAttr, maximumNumberOfLines: 1)
                         self.date?.measure(width: .greatestFiniteMagnitude)
                     }
-                                        
-                    let attr: NSAttributedString = .initialize(string: string, color: color, font: font)
-                    editedLabel = TextViewLayout(attr, maximumNumberOfLines: 1)
-                    editedLabel?.measure(width: .greatestFiniteMagnitude)
+
+                    announcesEdit = style != .hidden
+                    switch style {
+                    case .text:
+                        let string = editedIndicator.customText ?? relativeDate.map { strings().chatRowEdited($0) } ?? strings().chatMessageEdited
+                        let attr: NSAttributedString = .initialize(string: string, color: color, font: font)
+                        editedLabel = TextViewLayout(attr, maximumNumberOfLines: 1)
+                        let maximumLabelWidth: CGFloat = editedIndicator.customText == nil ? .greatestFiniteMagnitude : 88
+                        editedLabel?.measure(width: maximumLabelWidth)
+                    case .icon:
+                        editedIcon = chatEditedIndicatorImage.precomposed(color)
+                    case .hidden:
+                        break
+                    }
                 }
                 
                 
@@ -2809,7 +2848,20 @@ public class ChatRowItem: TableRowItem {
                 let formatterEdited = DateSelectorUtil.chatFullDateFormatter
                 fullDate = "\(fullDate) (\(formatterEdited.string(from: Date(timeIntervalSince1970: TimeInterval(forwardInfo.date)))))"
             }
-            let replyPresentation = { [self] in ChatAccessoryPresentation(background: hasBubble ? theme.chat.backgroundColor(isIncoming, object.renderType == .bubble) : isBubbled ?  theme.colors.grayForeground : theme.colors.background, colors: theme.chat.replyTitle(self), enabledText: theme.chat.replyText(self), disabledText: theme.chat.replyDisabledText(self), quoteIcon: theme.chat.replyQuote(self), pattern: theme.chat.replyPattern(self), giftEmojiFileId: theme.chat.replyGiftEmojiId(self), app: theme) }
+            let simplifiesReplies = ChatReplyAppearancePreferences.shared.isSimplified
+            let replyPresentation = { [self] in
+                ChatAccessoryPresentation(
+                    background: hasBubble ? theme.chat.backgroundColor(isIncoming, object.renderType == .bubble) : isBubbled ? theme.colors.grayForeground : theme.colors.background,
+                    colors: theme.chat.replyTitle(self),
+                    enabledText: theme.chat.replyText(self),
+                    disabledText: theme.chat.replyDisabledText(self),
+                    quoteIcon: theme.chat.replyQuote(self),
+                    pattern: simplifiesReplies ? nil : theme.chat.replyPattern(self),
+                    giftEmojiFileId: simplifiesReplies ? nil : theme.chat.replyGiftEmojiId(self),
+                    app: theme,
+                    fillsReplyBackground: !simplifiesReplies
+                )
+            }
 
             let referencesPending = context.account.viewTracker.pendingMessageReferences.hasLoadingReferences(messageId: message.id)
             for attribute in message.attributes {
@@ -2859,7 +2911,7 @@ public class ChatRowItem: TableRowItem {
                     var forwardCount: Int?
                     for attr in message.attributes {
                         if let attr = attr as? AuthorSignatureMessageAttribute {
-                            author = "\(attr.signature), "
+                            author = "\(displayName(attr.signature)), "
                         } else if let attr = attr as? ForwardCountMessageAttribute {
                             forwardCount = attr.count
                         }
@@ -3428,8 +3480,14 @@ public class ChatRowItem: TableRowItem {
         return max(nameWidth, forwardWidth, replyWidth, topicReplyWidth, badgeWidth)//min(max(max(nameWidth, forwardWidth), replyWidth), contentSize.width)
     }
     
+    private var hidesDecorativeAuthorStatus = PremiumStatusVisibilityPreferences.shared.isHidden
+
+    func setHidesDecorativeAuthorStatus(_ hidden: Bool) {
+        hidesDecorativeAuthorStatus = hidden
+    }
+
     public var hasStatus: Bool {
-        if let peer = self.peer, let message = self.message, PremiumStatusControl.hasControl(peer, left: false) {
+        if let peer = self.peer, let message = self.message, PremiumStatusControl.hasControl(peer, left: false, hidesDecorativeStatus: hidesDecorativeAuthorStatus) {
             if authorText != nil, let peer = message.peers[message.id.peerId] {
                 if peer.isGroup || peer.isSupergroup || peer.isGigagroup {
                     return true
@@ -3440,7 +3498,7 @@ public class ChatRowItem: TableRowItem {
     }
     
     public var statusSize: CGFloat {
-        if let peer = self.peer, hasStatus, let controlSize = PremiumStatusControl.controlSize(peer, false, left: false) {
+        if let peer = self.peer, hasStatus, let controlSize = PremiumStatusControl.controlSize(peer, false, left: false, hidesDecorativeStatus: hidesDecorativeAuthorStatus) {
             return controlSize.width
         }
         return 0
@@ -3455,7 +3513,7 @@ public class ChatRowItem: TableRowItem {
     public func statusLayer(_ cached: PremiumStatusLayer?, animated: Bool) -> PremiumStatusLayer? {
         if let peer = peer, let attr = authorText?.attributedString, !attr.string.isEmpty, hasStatus {
             if let color = attr.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor {
-                return PremiumStatusLayer.layer(peer, account: context.account, inlinePacksContext: context.inlinePacksContext, left: false, isSelected: false, color: color, cached: cached, animated: animated)
+                return PremiumStatusLayer.layer(peer, account: context.account, inlinePacksContext: context.inlinePacksContext, left: false, isSelected: false, color: color, cached: cached, animated: animated, hidesDecorativeStatus: hidesDecorativeAuthorStatus)
             }
         }
         return nil
@@ -3464,7 +3522,7 @@ public class ChatRowItem: TableRowItem {
     public func status(_ cached: PremiumStatusControl?, animated: Bool) -> PremiumStatusControl? {
         if let peer = peer, let attr = authorText?.attributedString, !attr.string.isEmpty, hasStatus {
             if let color = attr.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor {
-                return PremiumStatusControl.control(peer, account: context.account, inlinePacksContext: context.inlinePacksContext, left: false, isSelected: false, color: color, cached: cached, animated: animated)
+                return PremiumStatusControl.control(peer, account: context.account, inlinePacksContext: context.inlinePacksContext, left: false, isSelected: false, color: color, cached: cached, animated: animated, hidesDecorativeStatus: hidesDecorativeAuthorStatus)
             }
         }
         return nil
@@ -3867,6 +3925,11 @@ public class ChatRowItem: TableRowItem {
         let incoming = message.effectivelyIncoming(accountPeerId)
         let kind = accessibilityKind
         let announceAuthor = accessibilityAnnouncesAuthor
+        let filtersAuthorNames = FastSettings.filterZalgoText && message.adAttribute == nil
+        func displayName(_ name: String) -> String {
+            ChatZalgoTextFilter.displayName(name, enabled: filtersAuthorNames)
+        }
+        let authorName = message.author.map { displayName($0.displayTitle) }
         var reply: ChatMessageAccessibility.Reply?
         if let attribute = message.replyAttribute, let replied = message.associatedMessages[attribute.messageId] {
             var text = ""
@@ -3878,18 +3941,18 @@ public class ChatRowItem: TableRowItem {
                     text = ChatMessageAccessibility(kind: repliedKind, isIncoming: true, authorName: nil, announceAuthor: false, caption: nil, date: "", status: .none).label
                 }
             }
-            reply = .init(authorName: replied.author?.displayTitle, isIncoming: replied.effectivelyIncoming(accountPeerId), text: text)
+            reply = .init(authorName: replied.author.map { displayName($0.displayTitle) }, isIncoming: replied.effectivelyIncoming(accountPeerId), text: text)
         }
         var forward: ChatMessageAccessibility.Forward?
         if let info = message.forwardInfo {
             if info.author?.id == accountPeerId {
                 forward = .you
             } else if let name = info.author?.displayTitle ?? info.authorSignature {
-                forward = .from(name)
+                forward = .from(displayName(name))
             }
         }
         guard details else {
-            return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: message.author?.displayTitle, announceAuthor: announceAuthor, caption: nil, date: "", status: .none, reply: reply, forward: forward, pluralRecipients: announceAuthor)
+            return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: authorName, announceAuthor: announceAuthor, caption: nil, date: "", status: .none, reply: reply, forward: forward, pluralRecipients: announceAuthor)
         }
         let status: ChatMessageAccessibility.Status
         if incoming {
@@ -3903,7 +3966,7 @@ public class ChatRowItem: TableRowItem {
             status = .sent(read: isRead, played: ChatMessageAccessibility.isConsumable(kind) ? (consumed ?? false) : nil)
         }
         let date = ChatMessageAccessibility.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(message.timestamp)))
-        return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: message.author?.displayTitle, announceAuthor: announceAuthor, caption: ChatMessageAccessibility.caption(for: message, kind: kind), date: date, status: status, reply: reply, forward: forward, isSelected: accessibilitySelected, pluralRecipients: announceAuthor)
+        return ChatMessageAccessibility(kind: kind, isIncoming: incoming, authorName: authorName, announceAuthor: announceAuthor, caption: ChatMessageAccessibility.caption(for: message, kind: kind), date: date, status: status, reply: reply, forward: forward, isSelected: accessibilitySelected, pluralRecipients: announceAuthor, isEdited: announcesEdit)
     }
 
     open var accessibilityKind: ChatMessageAccessibility.Kind {
@@ -4061,7 +4124,8 @@ public class ChatRowItem: TableRowItem {
     }
     
     public override var menuAdditionView: Signal<Window?, NoError> {
-        if canReact {
+        let extendedMenu = ChatMessageContextMenuModifier.isExtended(NSEvent.modifierFlags)
+        if canReact, MessageContextMenuPreferences().isVisible(.reactionsPanel, extendedMenu: extendedMenu) {
             
             let context = self.context
             

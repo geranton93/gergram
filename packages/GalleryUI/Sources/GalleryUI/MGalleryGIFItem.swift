@@ -106,6 +106,14 @@ public class MGalleryGIFItem: MGalleryItem {
         
         self.mediaPlayer.pause()
     }
+
+    public override func togglePlayerOrPause() {
+        self.mediaPlayer.togglePlayPause()
+    }
+
+    func seek(by seconds: Double) {
+        self.mediaPlayer.seekVideo(by: seconds)
+    }
     
     public override var status:Signal<MediaResourceStatus, NoError> {
         if let message = entry.message {

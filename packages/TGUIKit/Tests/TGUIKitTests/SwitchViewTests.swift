@@ -24,6 +24,7 @@ final class SwitchViewTests: XCTestCase {
     private func makeSwitch(on: Bool = false, motion: Bool = false) -> SwitchView {
         let view = SwitchView()
         view.reduceMotion = { !motion }
+        view.animationsEnabled = { true }
         view.setIsOn(on, animated: false)
         let window = SnapshotWindow(contentRect: CGRect(x: 0, y: 0, width: 120, height: 80), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -64,6 +65,39 @@ final class SwitchViewTests: XCTestCase {
         waitUntilRest(view)
         XCTAssertFalse(view.isOn)
         XCTAssertEqual(calls, 2)
+    }
+
+    func testPreferenceDisablesMotionAndStillCommitsClickAndDrag() throws {
+        let suite = "Gergram.SwitchAnimation.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = SwitchAnimationPreferences(defaults: defaults)
+        let view = makeSwitch(motion: true)
+        view.animationsEnabled = { preferences.isEnabled }
+        var values: [Bool] = []
+        let disposable = preferences.signal.start(next: { values.append($0) })
+        defer { disposable.dispose() }
+        var changes: [Bool] = []
+        view.stateChanged = { changes.append(view.isOn) }
+
+        preferences.setEnabled(false)
+        preferences.setEnabled(false)
+        XCTAssertFalse(SwitchAnimationPreferences(defaults: defaults).isEnabled)
+        view.performToggle()
+        XCTAssertFalse(view.isSettling)
+        XCTAssertNil(view.positionAnimation)
+        view.beginInteraction(at: CGPoint(x: 35, y: 12))
+        view.endInteraction(at: CGPoint(x: 9, y: 12))
+        XCTAssertFalse(view.isSettling)
+        XCTAssertEqual(changes, [true, false])
+
+        preferences.setEnabled(true)
+        view.reduceMotion = { true }
+        view.performToggle()
+        XCTAssertFalse(view.isSettling)
+        XCTAssertNil(view.positionAnimation)
+        XCTAssertEqual(changes, [true, false, true])
+        XCTAssertEqual(values, [true, false, true])
     }
 
     func testClickCommitsOnlyAfterSettling() {

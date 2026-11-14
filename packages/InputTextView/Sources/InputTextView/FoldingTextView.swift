@@ -176,15 +176,12 @@ public final class FoldingTextQuoteLayer: SimpleLayer {
             let tertiaryTintColor = blockQuote.colors.tertiary
 
 
-            var bg = blockColor
-            if blockQuote.isCode {
-                bg = bg.darker(amount: 0.5).withAlphaComponent(0.5)
-            } else {
-                bg = bg.withAlphaComponent(0.1)
+            if blockQuote.fillsBackground {
+                let bg = blockQuote.isCode ? blockColor.darker(amount: 0.5).withAlphaComponent(0.5) : blockColor.withAlphaComponent(0.1)
+                ctx.setFillColor(bg.cgColor)
+                ctx.addPath(CGPath(roundedRect: blockFrame, cornerWidth: radius, cornerHeight: radius, transform: nil))
+                ctx.fillPath()
             }
-            ctx.setFillColor(bg.cgColor)
-            ctx.addPath(CGPath(roundedRect: blockFrame, cornerWidth: radius, cornerHeight: radius, transform: nil))
-            ctx.fillPath()
 
             ctx.setFillColor(tintColor.cgColor)
 

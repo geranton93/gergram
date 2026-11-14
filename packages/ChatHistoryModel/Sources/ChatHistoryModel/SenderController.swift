@@ -161,14 +161,15 @@ public class Sender: NSObject {
         return preview
     }
 
-    public static func enqueue(input:ChatTextInputState, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, disablePreview:Bool = false, linkBelowMessage: Bool = false, largeMedia: Bool? = nil, silent: Bool = false, atDate:Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, mediaPreview: TelegramMediaWebpage? = nil, emptyHandler:(()->Void)? = nil, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, sendPaidMessageStars: StarsAmount? = nil, suggestPost: ChatInterfaceState.ChannelSuggestPost? = nil, ephemeralBotPeerId: PeerId? = nil) -> Signal<[MessageId?],NoError> {
-        return enqueue(input: input, context: context, peerId: peerId, replyId: replyId, threadId: threadId, replyStoryId: replyStoryId, disablePreview: disablePreview, linkBelowMessage: linkBelowMessage, largeMedia: largeMedia, silent: silent, atDate: atDate, repeatPeriod: repeatPeriod, sendAsPeerId: sendAsPeerId, mediaPreview: mediaPreview, emptyHandler: emptyHandler, customChatContents: customChatContents, messageEffect: messageEffect, sendPaidMessageStars: sendPaidMessageStars, suggestPost: suggestPost, ephemeralBotPeerId: ephemeralBotPeerId, observedResult: nil)
+    public static func enqueue(input:ChatTextInputState, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, disablePreview:Bool = false, linkBelowMessage: Bool = false, largeMedia: Bool? = nil, silent: Bool = false, sound: ChatSendSound = .automatic, atDate:Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, mediaPreview: TelegramMediaWebpage? = nil, emptyHandler:(()->Void)? = nil, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, sendPaidMessageStars: StarsAmount? = nil, suggestPost: ChatInterfaceState.ChannelSuggestPost? = nil, ephemeralBotPeerId: PeerId? = nil) -> Signal<[MessageId?],NoError> {
+        return enqueue(input: input, context: context, peerId: peerId, replyId: replyId, threadId: threadId, replyStoryId: replyStoryId, disablePreview: disablePreview, linkBelowMessage: linkBelowMessage, largeMedia: largeMedia, silent: silent, sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, sendAsPeerId: sendAsPeerId, mediaPreview: mediaPreview, emptyHandler: emptyHandler, customChatContents: customChatContents, messageEffect: messageEffect, sendPaidMessageStars: sendPaidMessageStars, suggestPost: suggestPost, ephemeralBotPeerId: ephemeralBotPeerId, observedResult: nil)
     }
 
-    public static func enqueue(input:ChatTextInputState, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, disablePreview:Bool = false, linkBelowMessage: Bool = false, largeMedia: Bool? = nil, silent: Bool = false, atDate:Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, mediaPreview: TelegramMediaWebpage? = nil, emptyHandler:(()->Void)? = nil, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, sendPaidMessageStars: StarsAmount? = nil, suggestPost: ChatInterfaceState.ChannelSuggestPost? = nil, ephemeralBotPeerId: PeerId? = nil, observedResult: ((Int, [MessageId?]) -> Void)?) -> Signal<[MessageId?],NoError> {
+    public static func enqueue(input:ChatTextInputState, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, disablePreview:Bool = false, linkBelowMessage: Bool = false, largeMedia: Bool? = nil, silent: Bool = false, sound: ChatSendSound = .automatic, atDate:Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, mediaPreview: TelegramMediaWebpage? = nil, emptyHandler:(()->Void)? = nil, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, sendPaidMessageStars: StarsAmount? = nil, suggestPost: ChatInterfaceState.ChannelSuggestPost? = nil, ephemeralBotPeerId: PeerId? = nil, observedResult: ((Int, [MessageId?]) -> Void)?) -> Signal<[MessageId?],NoError> {
         
         var inset:Int = 0
         let dynamicEmojiOrder = context.stickerSettings.dynamicPackOrder
+        let shouldMute = sound.notificationIsSilent ?? (silent || FastSettings.isChannelMessagesMuted(peerId))
         
         var input:ChatTextInputState = input
         
@@ -225,7 +226,7 @@ public class Sender: NSObject {
             if disablePreview {
                 attributes.append(OutgoingContentInfoMessageAttribute(flags: [.disableLinkPreviews]))
             }
-            if FastSettings.isChannelMessagesMuted(peerId) || silent {
+            if shouldMute {
                 attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
             }
             if let sendAsPeerId = sendAsPeerId {
@@ -552,14 +553,15 @@ public class Sender: NSObject {
         return attrs
     }
     
-    public static func forwardMessages(messageIds:[MessageId], context: any AccountContextProtocol, peerId:PeerId, replyId: EngineMessageReplySubject?, threadId: Int64?, hideNames: Bool = false, hideCaptions: Bool = false, silent: Bool = false, atDate: Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, sendPaidMessageStars: StarsAmount? = nil) -> Signal<[MessageId?], NoError> {
+    public static func forwardMessages(messageIds:[MessageId], context: any AccountContextProtocol, peerId:PeerId, replyId: EngineMessageReplySubject?, threadId: Int64?, hideNames: Bool = false, hideCaptions: Bool = false, silent: Bool = false, sound: ChatSendSound = .automatic, atDate: Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, sendPaidMessageStars: StarsAmount? = nil) -> Signal<[MessageId?], NoError> {
         
         var fwdMessages:[EnqueueMessage] = []
         
         let sorted = messageIds.sorted(by: >)
+        let shouldMute = sound.notificationIsSilent ?? (silent || FastSettings.isChannelMessagesMuted(peerId))
         
         var attributes: [MessageAttribute] = []        
-        if FastSettings.isChannelMessagesMuted(peerId) || silent {
+        if shouldMute {
             attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
         }
         if hideNames || hideCaptions {
@@ -598,8 +600,9 @@ public class Sender: NSObject {
         return enqueueMessages(account: context.account, peerId: peerId, messages: [EnqueueMessage.message(text: "", attributes: attributes, inlineStickers: [:], mediaReference: AnyMediaReference.standalone(media: media), threadId: threadId, replyToMessageId: nil, replyToStoryId: nil, localGroupingKey: nil, correlationId: nil, bubbleUpEmojiOrStickersets: [])])
     }
     
-    public static func enqueue(media:[MediaSenderContainer], context: any AccountContextProtocol, peerId:PeerId, replyId: EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, silent: Bool = false, atDate:Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId:PeerId? = nil, query: String? = nil, isSpoiler: Bool = false, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, leadingText: Bool = false, sendPaidMessageStars: StarsAmount? = nil) ->Signal<[MessageId?], NoError> {
+    public static func enqueue(media:[MediaSenderContainer], context: any AccountContextProtocol, peerId:PeerId, replyId: EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, silent: Bool = false, sound: ChatSendSound = .automatic, atDate:Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId:PeerId? = nil, query: String? = nil, isSpoiler: Bool = false, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, leadingText: Bool = false, sendPaidMessageStars: StarsAmount? = nil) ->Signal<[MessageId?], NoError> {
         var senders:[Signal<[MessageId?], NoError>] = []
+        let shouldMute = sound.notificationIsSilent ?? (silent || FastSettings.isChannelMessagesMuted(peerId))
         
         
        
@@ -607,7 +610,7 @@ public class Sender: NSObject {
         for path in media {
             
             var attributes:[MessageAttribute] = []
-            if FastSettings.isChannelMessagesMuted(peerId) || silent {
+            if shouldMute {
                 attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
             }
             if let date = atDate {
@@ -662,21 +665,22 @@ public class Sender: NSObject {
         }  |> take(1) 
     }
     
-    public static func enqueue(media:Media, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, silent: Bool = false, atDate: Date? = nil, repeatPeriod: Int32? = nil, query: String? = nil, collectionId: ItemCollectionId? = nil, customChatContents: ChatCustomContentsProtocol? = nil, sendPaidMessageStars: StarsAmount? = nil) ->Signal<[MessageId?],NoError> {
-        return enqueue(media: media, context: context, peerId: peerId, replyId: replyId, threadId: threadId, replyStoryId: replyStoryId, silent: silent, atDate: atDate, repeatPeriod: repeatPeriod, query: query, collectionId: collectionId, customChatContents: customChatContents, sendPaidMessageStars: sendPaidMessageStars, observedResult: nil)
+    public static func enqueue(media:Media, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, silent: Bool = false, sound: ChatSendSound = .automatic, atDate: Date? = nil, repeatPeriod: Int32? = nil, query: String? = nil, collectionId: ItemCollectionId? = nil, customChatContents: ChatCustomContentsProtocol? = nil, sendPaidMessageStars: StarsAmount? = nil) ->Signal<[MessageId?],NoError> {
+        return enqueue(media: media, context: context, peerId: peerId, replyId: replyId, threadId: threadId, replyStoryId: replyStoryId, silent: silent, sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, query: query, collectionId: collectionId, customChatContents: customChatContents, sendPaidMessageStars: sendPaidMessageStars, observedResult: nil)
     }
 
-    public static func enqueue(media:Media, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, silent: Bool = false, atDate: Date? = nil, repeatPeriod: Int32? = nil, query: String? = nil, collectionId: ItemCollectionId? = nil, customChatContents: ChatCustomContentsProtocol? = nil, sendPaidMessageStars: StarsAmount? = nil, observedResult: ((Int, [MessageId?]) -> Void)?) ->Signal<[MessageId?],NoError> {
-        return enqueue(media: [media], caption: ChatTextInputState(), context: context, peerId: peerId, replyId: replyId, threadId: threadId, replyStoryId: replyStoryId, silent: silent, atDate: atDate, repeatPeriod: repeatPeriod, query: query, collectionId: collectionId, customChatContents: customChatContents, sendPaidMessageStars: sendPaidMessageStars, observedResult: observedResult)
+    public static func enqueue(media:Media, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, silent: Bool = false, sound: ChatSendSound = .automatic, atDate: Date? = nil, repeatPeriod: Int32? = nil, query: String? = nil, collectionId: ItemCollectionId? = nil, customChatContents: ChatCustomContentsProtocol? = nil, sendPaidMessageStars: StarsAmount? = nil, observedResult: ((Int, [MessageId?]) -> Void)?) ->Signal<[MessageId?],NoError> {
+        return enqueue(media: [media], caption: ChatTextInputState(), context: context, peerId: peerId, replyId: replyId, threadId: threadId, replyStoryId: replyStoryId, silent: silent, sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, query: query, collectionId: collectionId, customChatContents: customChatContents, sendPaidMessageStars: sendPaidMessageStars, observedResult: observedResult)
     }
 
-    public static func enqueue(media:[Media], caption: ChatTextInputState, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, isCollage: Bool = false, additionText: ChatTextInputState? = nil, silent: Bool = false, atDate: Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, query: String? = nil, collectionId: ItemCollectionId? = nil, isSpoiler: Bool = false, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, leadingText: Bool = false, sendPaidMessageStars: StarsAmount? = nil, suggestPost: ChatInterfaceState.ChannelSuggestPost? = nil) ->Signal<[MessageId?],NoError> {
-        return enqueue(media: media, caption: caption, context: context, peerId: peerId, replyId: replyId, threadId: threadId, replyStoryId: replyStoryId, isCollage: isCollage, additionText: additionText, silent: silent, atDate: atDate, repeatPeriod: repeatPeriod, sendAsPeerId: sendAsPeerId, query: query, collectionId: collectionId, isSpoiler: isSpoiler, customChatContents: customChatContents, messageEffect: messageEffect, leadingText: leadingText, sendPaidMessageStars: sendPaidMessageStars, suggestPost: suggestPost, observedResult: nil)
+    public static func enqueue(media:[Media], caption: ChatTextInputState, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, isCollage: Bool = false, additionText: ChatTextInputState? = nil, silent: Bool = false, sound: ChatSendSound = .automatic, atDate: Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, query: String? = nil, collectionId: ItemCollectionId? = nil, isSpoiler: Bool = false, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, leadingText: Bool = false, sendPaidMessageStars: StarsAmount? = nil, suggestPost: ChatInterfaceState.ChannelSuggestPost? = nil) ->Signal<[MessageId?],NoError> {
+        return enqueue(media: media, caption: caption, context: context, peerId: peerId, replyId: replyId, threadId: threadId, replyStoryId: replyStoryId, isCollage: isCollage, additionText: additionText, silent: silent, sound: sound, atDate: atDate, repeatPeriod: repeatPeriod, sendAsPeerId: sendAsPeerId, query: query, collectionId: collectionId, isSpoiler: isSpoiler, customChatContents: customChatContents, messageEffect: messageEffect, leadingText: leadingText, sendPaidMessageStars: sendPaidMessageStars, suggestPost: suggestPost, observedResult: nil)
     }
 
-    public static func enqueue(media:[Media], caption: ChatTextInputState, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, isCollage: Bool = false, additionText: ChatTextInputState? = nil, silent: Bool = false, atDate: Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, query: String? = nil, collectionId: ItemCollectionId? = nil, isSpoiler: Bool = false, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, leadingText: Bool = false, sendPaidMessageStars: StarsAmount? = nil, suggestPost: ChatInterfaceState.ChannelSuggestPost? = nil, observedResult: ((Int, [MessageId?]) -> Void)?) ->Signal<[MessageId?],NoError> {
+    public static func enqueue(media:[Media], caption: ChatTextInputState, context: any AccountContextProtocol, peerId:PeerId, replyId:EngineMessageReplySubject?, threadId: Int64?, replyStoryId: StoryId? = nil, isCollage: Bool = false, additionText: ChatTextInputState? = nil, silent: Bool = false, sound: ChatSendSound = .automatic, atDate: Date? = nil, repeatPeriod: Int32? = nil, sendAsPeerId: PeerId? = nil, query: String? = nil, collectionId: ItemCollectionId? = nil, isSpoiler: Bool = false, customChatContents: ChatCustomContentsProtocol? = nil, messageEffect: AvailableMessageEffects.MessageEffect? = nil, leadingText: Bool = false, sendPaidMessageStars: StarsAmount? = nil, suggestPost: ChatInterfaceState.ChannelSuggestPost? = nil, observedResult: ((Int, [MessageId?]) -> Void)?) ->Signal<[MessageId?],NoError> {
         
         let dynamicEmojiOrder: Bool = context.stickerSettings.dynamicPackOrder
+        let shouldMute = sound.notificationIsSilent ?? (silent || FastSettings.isChannelMessagesMuted(peerId))
         
         let parsingUrlType: ParsingType
         if peerId.namespace != Namespaces.Peer.SecretChat {
@@ -687,7 +691,7 @@ public class Sender: NSObject {
         
         var attributes:[MessageAttribute] = [TextEntitiesMessageAttribute(entities: caption.messageTextEntities(parsingUrlType, extractDates: peerId.namespace == Namespaces.Peer.CloudUser))]
         let caption = Atomic(value: caption)
-        if FastSettings.isChannelMessagesMuted(peerId) || silent {
+        if shouldMute {
             attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
         }
         if let date = atDate {
@@ -750,7 +754,7 @@ public class Sender: NSObject {
 
                 var attributes:[MessageAttribute] = [TextEntitiesMessageAttribute(entities: subState.messageTextEntities(parsingUrlType, extractDates: peerId.namespace == Namespaces.Peer.CloudUser))]
 
-                if FastSettings.isChannelMessagesMuted(peerId) || silent {
+                if shouldMute {
                     attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
                 }
                 if let date = atDate {

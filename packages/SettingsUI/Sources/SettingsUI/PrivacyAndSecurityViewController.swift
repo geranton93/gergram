@@ -153,6 +153,11 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
     case secretChatWebPreviewHeader(sectionId: Int)
     case secretChatWebPreviewToggle(sectionId: Int, value: Bool?, viewType: GeneralViewType)
     case secretChatWebPreviewDesc(sectionId: Int)
+    case hideBlockedSenders(sectionId: Int, enabled: Bool)
+    case hideBlockedSendersDescription(sectionId: Int)
+    case locallyHiddenSenders(sectionId: Int)
+    case messageFilters(sectionId: Int)
+    case localMessageArchive(sectionId: Int)
     
     case section(sectionId:Int)
 
@@ -243,6 +248,8 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
         case let .secretChatWebPreviewToggle(sectionId, _, _):
             return sectionId
         case let .secretChatWebPreviewDesc(sectionId):
+            return sectionId
+        case let .hideBlockedSenders(sectionId, _), let .hideBlockedSendersDescription(sectionId), let .locallyHiddenSenders(sectionId), let .messageFilters(sectionId), let .localMessageArchive(sectionId):
             return sectionId
         case let .section(sectionId):
             return sectionId
@@ -338,6 +345,16 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
             return 41
         case .secretChatWebPreviewDesc:
             return 42
+        case .hideBlockedSenders:
+            return 43
+        case .hideBlockedSendersDescription:
+            return 44
+        case .locallyHiddenSenders:
+            return 45
+        case .messageFilters:
+            return 46
+        case .localMessageArchive:
+            return 47
         case let .section(sectionId):
             return (sectionId + 1) * 1000 - sectionId
         }
@@ -533,6 +550,30 @@ private enum PrivacyAndSecurityEntry: Comparable, Identifiable {
             }, autoswitch: true)
         case .secretChatWebPreviewDesc:
             return GeneralTextRowItem(initialSize, stableId: stableId, text: strings().privacyAndSecuritySecretChatWebPreviewDesc, viewType: .textBottomItem)
+        case let .hideBlockedSenders(_, enabled):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.HideBlockedSenders"), type: .switchable(enabled), viewType: .singleItem, action: {
+                BlockedSenderVisibilitySettings.setEnabled(!enabled)
+            })
+        case .hideBlockedSendersDescription:
+            return GeneralTextRowItem(initialSize, stableId: stableId, text: localizedString("Gergram.Chat.HideBlockedSendersDescription"), viewType: .textBottomItem)
+        case .locallyHiddenSenders:
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.ShadowBannedSenders"), type: .next, viewType: .singleItem, action: {
+                let context = arguments.context
+                guard !context.isFrozen else { return }
+                context.bindings.rootNavigation().push(localShadowBannedSendersController(context: context))
+            })
+        case .messageFilters:
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Chat.MessageFilters"), type: .next, viewType: .singleItem, action: {
+                let context = arguments.context
+                guard !context.isFrozen else { return }
+                context.bindings.rootNavigation().push(localMessageFiltersController(context: context))
+            })
+        case .localMessageArchive:
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: localizedString("Gergram.Archive.Title"), type: .next, viewType: .singleItem, action: {
+                let context = arguments.context
+                guard !context.isFrozen else { return }
+                context.bindings.rootNavigation().push(localMessageArchiveController(context: context))
+            })
         case .section:
             return GeneralRowItem(initialSize, height: 20, stableId: stableId, viewType: .separator)
         }
@@ -593,7 +634,7 @@ fileprivate func prepareTransition(left:[AppearanceWrapperEntry<PrivacyAndSecuri
     return TableUpdateTransition(deleted: removed, inserted: inserted, updated: updated, animated: true)
 }
 
-private func entries(state: PrivacyAndSecurityControllerState, contentConfiguration: ContentSettingsConfiguration?, privacySettings: AccountPrivacySettings?, webSessions: WebSessionsContextState, blockedState: BlockedPeersContextState, proxy: ProxySettings, recentPeers: RecentPeers, configuration: TwoStepVeriticationAccessConfiguration?, activeSessions: ActiveSessionsContextState, passcodeData: PostboxAccessChallengeData, context: any AccountContextProtocol, loginEmail: String?, passkeysDataValue: [TelegramPasskey]?, displayPasskeys: Bool) -> [PrivacyAndSecurityEntry] {
+private func entries(state: PrivacyAndSecurityControllerState, contentConfiguration: ContentSettingsConfiguration?, privacySettings: AccountPrivacySettings?, webSessions: WebSessionsContextState, blockedState: BlockedPeersContextState, proxy: ProxySettings, recentPeers: RecentPeers, configuration: TwoStepVeriticationAccessConfiguration?, activeSessions: ActiveSessionsContextState, passcodeData: PostboxAccessChallengeData, context: any AccountContextProtocol, loginEmail: String?, passkeysDataValue: [TelegramPasskey]?, displayPasskeys: Bool, hideBlockedSenders: Bool) -> [PrivacyAndSecurityEntry] {
     var entries: [PrivacyAndSecurityEntry] = []
 
     var sectionId:Int = 1
@@ -786,20 +827,34 @@ private func entries(state: PrivacyAndSecurityControllerState, contentConfigurat
         entries.append(.webAuthorizationsHeader(sectionId: sectionId))
         entries.append(.webAuthorizations(sectionId: sectionId, viewType: .singleItem))
         
-        if FastSettings.isSecretChatWebPreviewAvailable(for: context.account.id.int64) != nil {
-            entries.append(.section(sectionId: sectionId))
-            sectionId += 1
-        }
+        entries.append(.section(sectionId: sectionId))
+        sectionId += 1
     }
     
     if let value = FastSettings.isSecretChatWebPreviewAvailable(for: context.account.id.int64) {
         entries.append(.secretChatWebPreviewHeader(sectionId: sectionId))
         entries.append(.secretChatWebPreviewToggle(sectionId: sectionId, value: value, viewType: .singleItem))
         entries.append(.secretChatWebPreviewDesc(sectionId: sectionId))
+
+        entries.append(.section(sectionId: sectionId))
+        sectionId += 1
     }
 
+    entries.append(.hideBlockedSenders(sectionId: sectionId, enabled: hideBlockedSenders))
+    entries.append(.hideBlockedSendersDescription(sectionId: sectionId))
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
+
+    entries.append(.locallyHiddenSenders(sectionId: sectionId))
+    entries.append(.section(sectionId: sectionId))
+    sectionId += 1
+
+    entries.append(.messageFilters(sectionId: sectionId))
+    entries.append(.section(sectionId: sectionId))
+    sectionId += 1
+
+    entries.append(.localMessageArchive(sectionId: sectionId))
+    entries.append(.section(sectionId: sectionId))
 
     return entries
 }
@@ -1367,9 +1422,9 @@ open class PrivacyAndSecurityViewController<Context: AccountContextProtocol>: Ta
         #endif
 
         
-        let signal = combineLatest(queue: .mainQueue(), statePromise.get(), contentConfiguration, appearanceSignal, settings, privacySettingsPromise.get(), context.webSessions.state, combineLatest(queue: .mainQueue(), context.engine.peers.recentPeers(), twoStepAccessConfiguration.get(), context.activeSessionsContext.state, context.sharedContext.accountManager.accessChallengeData()), context.blockedPeersContext.state, loginEmail, passkeysDataValue.get())
-        |> map { state, contentConfiguration, appearance, proxy, privacySettings, webSessions, additional, blockedState, loginEmail, passkeysDataValue -> TableUpdateTransition in
-            let entries = entries(state: state, contentConfiguration: contentConfiguration, privacySettings: privacySettings, webSessions: webSessions, blockedState: blockedState, proxy: proxy, recentPeers: additional.0, configuration: additional.1, activeSessions: additional.2, passcodeData: additional.3.data, context: context, loginEmail: loginEmail, passkeysDataValue: passkeysDataValue, displayPasskeys: displayPasskeys).map{AppearanceWrapperEntry(entry: $0, appearance: appearance)}
+        let signal = combineLatest(queue: .mainQueue(), statePromise.get(), contentConfiguration, appearanceSignal, settings, privacySettingsPromise.get(), context.webSessions.state, combineLatest(queue: .mainQueue(), context.engine.peers.recentPeers(), twoStepAccessConfiguration.get(), context.activeSessionsContext.state, context.sharedContext.accountManager.accessChallengeData()), context.blockedPeersContext.state, loginEmail, passkeysDataValue.get(), BlockedSenderVisibilitySettings.observe())
+        |> map { state, contentConfiguration, appearance, proxy, privacySettings, webSessions, additional, blockedState, loginEmail, passkeysDataValue, hideBlockedSenders -> TableUpdateTransition in
+            let entries = entries(state: state, contentConfiguration: contentConfiguration, privacySettings: privacySettings, webSessions: webSessions, blockedState: blockedState, proxy: proxy, recentPeers: additional.0, configuration: additional.1, activeSessions: additional.2, passcodeData: additional.3.data, context: context, loginEmail: loginEmail, passkeysDataValue: passkeysDataValue, displayPasskeys: displayPasskeys, hideBlockedSenders: hideBlockedSenders).map{AppearanceWrapperEntry(entry: $0, appearance: appearance)}
             return prepareTransition(left: previous.swap(entries), right: entries, initialSize: initialSize.modify {$0}, arguments: arguments)
         } |> afterDisposed {
             actionsDisposable.dispose()

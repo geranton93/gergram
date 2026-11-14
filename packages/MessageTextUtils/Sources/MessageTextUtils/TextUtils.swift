@@ -271,7 +271,16 @@ public func pullText(from message:Message, mediaViewType: MessageTextMediaViewTy
     
 }
 
-public func chatListText(account:Account, for message:Message?, messagesCount: Int = 1, renderedPeer:EngineRenderedPeer? = nil, draft:EngineChatList.Draft? = nil, folder: Bool = false, applyUserName: Bool = false, isPremium: Bool = false, isReplied: Bool = false, notifications: Bool = false, innerSubject: EngineMessageReplyInnerSubject? = nil) -> NSAttributedString {
+struct ChatListTextBodyOffset {
+    let value: Int
+
+    func entityRange(in text: NSString, matching messageText: String) -> NSRange {
+        guard value >= 0, value <= text.length, !messageText.isEmpty else { return NSRange(location: NSNotFound, length: 0) }
+        return text.range(of: messageText, options: [.anchored, .backwards, .literal], range: NSRange(location: value, length: text.length - value))
+    }
+}
+
+public func chatListText(account:Account, for message:Message?, messagesCount: Int = 1, renderedPeer:EngineRenderedPeer? = nil, draft:EngineChatList.Draft? = nil, folder: Bool = false, applyUserName: Bool = false, isPremium: Bool = false, isReplied: Bool = false, notifications: Bool = false, innerSubject: EngineMessageReplyInnerSubject? = nil, messageBodyOffset: ((Int) -> Void)? = nil) -> NSAttributedString {
     
     
     if let draft = draft, !draft.text.isEmpty {
@@ -366,6 +375,7 @@ public func chatListText(account:Account, for message:Message?, messagesCount: I
         
         let (messageText, justSpoiled) = pullText(from: message, mediaViewType: mediaViewType, messagesCount: messagesCount, notifications: notifications, innerSubject: innerSubject)
         let attributedText: NSMutableAttributedString = NSMutableAttributedString()
+        var messageBodyRange: NSRange?
 
         
         if messageText.length > 0 {
@@ -379,18 +389,18 @@ public func chatListText(account:Account, for message:Message?, messagesCount: I
                     
                     peerText += (folder ? ": " : "\r")
                     _ = attributedText.append(string: peerText, color: theme.chatList.peerTextColor, font: .normal(.text))
-                    _ = attributedText.append(string: messageText as String, color: theme.chatList.grayTextColor, font: .normal(.text))
                 } else if let author = message.author as? TelegramUser, let peer = peer, peer as? TelegramUser == nil, !peer.isChannel, applyUserName {
                     var peerText: String = (author.id == account.peerId ? "\(strings().chatListYou)" : author.displayTitle)
                     
                     peerText += (folder ? ": " : "\r")
                     _ = attributedText.append(string: peerText, color: theme.chatList.peerTextColor, font: .normal(.text))
-                    _ = attributedText.append(string: messageText as String, color: theme.chatList.grayTextColor, font: .normal(.text))
-                } else {
-                    _ = attributedText.append(string: messageText as String, color: theme.chatList.grayTextColor, font: .normal(.text))
                 }
-            } else {
-                _ = attributedText.append(string: messageText as String, color: theme.chatList.grayTextColor, font: .normal(.text))
+            }
+            let previewTextOffset = attributedText.length
+            _ = attributedText.append(string: messageText as String, color: theme.chatList.grayTextColor, font: .normal(.text))
+            if messageBodyOffset != nil {
+                // Eligible media can prepend a label to the original caption.
+                messageBodyRange = ChatListTextBodyOffset(value: previewTextOffset).entityRange(in: attributedText.string.nsstring, matching: justSpoiled)
             }
             
             attributedText.setSelected(color: theme.colors.underSelectedColor, range: attributedText.range)
@@ -466,7 +476,7 @@ public func chatListText(account:Account, for message:Message?, messagesCount: I
             }
         }
         if !applyUserName {
-            let range = attributedText.string.nsstring.range(of: justSpoiled)
+            let range = messageBodyRange ?? attributedText.string.nsstring.range(of: justSpoiled)
         
             if range.location != NSNotFound {
                 InlineStickerItem.apply(to: attributedText, associatedMedia: effective.associatedMedia, entities:  effective.entities, isPremium: isPremium, ignoreSpoiler: true, offset: range.location)
@@ -595,8 +605,10 @@ public func chatListText(account:Account, for message:Message?, messagesCount: I
                 }
 
             }
+            if let messageBodyRange, messageBodyRange.location != NSNotFound { messageBodyOffset?(messageBodyRange.location) }
             return attributedText.trimNewLinesToSpace
         } else {
+            if let messageBodyRange, messageBodyRange.location != NSNotFound { messageBodyOffset?(messageBodyRange.location) }
             return attributedText
         }
         

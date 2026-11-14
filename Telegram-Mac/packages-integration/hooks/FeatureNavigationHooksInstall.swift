@@ -364,6 +364,20 @@ func installFeatureNavigationHooks() {
     hooks.makeArchiveSettingsController = { context, privacy, update in
         return ArchiveSettingsController(context: context, privacy: privacy, update: update)
     }
+    hooks.makeArchivedMessageChat = { context, location, messageId in
+        guard let context = context as? AccountContext, context.isCurrent, !context.isFrozen,
+              context.window.isVisible, location.peerId == messageId.peerId else { return nil }
+        let mode: ChatMode
+        if let thread = location.threadMessage {
+            guard thread.isForumPost, !thread.isMonoforumPost, !thread.isNotAvailable else { return nil }
+            mode = .thread(mode: .topic(origin: thread.effectiveTopId))
+        } else {
+            mode = .history
+        }
+        var focus = ChatFocusTarget(messageId: messageId, string: nil)
+        focus.cachedAnchor = true
+        return ChatController(context: context, chatLocation: location, mode: mode, focusTarget: focus)
+    }
     hooks.updateAccountBirthday = { date, context in
         editAccountUpdateBirthday(date, context: context)
     }

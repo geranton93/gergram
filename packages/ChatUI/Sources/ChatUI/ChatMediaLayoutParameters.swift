@@ -25,6 +25,7 @@ public class ChatMediaLayoutParameters : Equatable {
     public var showMessage:(Message)->Void = {_ in }
     
     public let isRevealed: Bool
+    var revealsOrdinaryMediaSpoilers = false
     public var forceSpoiler: Bool = false
     public var payAmount: Int64? = nil
     public var isProtected: Bool = false

@@ -71,18 +71,18 @@ private func richTextScheduleRequest(chatInteraction: ChatInteraction, analytics
     }
 }
 
-private func richTextSendMenuItems(chatInteraction: ChatInteraction, analyticsContext: AnalyticsContext) -> ((@escaping (Bool, ChatInteraction.Schedule?) -> Void) -> [ContextMenuItem]?) {
+private func richTextSendMenuItems(chatInteraction: ChatInteraction, analyticsContext: AnalyticsContext) -> ((@escaping (ChatSendSound, ChatInteraction.Schedule?) -> Void) -> [ContextMenuItem]?) {
     let origin = chatInteraction.captureAnalyticsContext(inherited: analyticsContext)
     return { [weak chatInteraction] send in
         guard let chatInteraction else { return nil }
         let current = chatInteraction.captureAnalyticsContext(inherited: origin)
         let analyticsPresentation = current.beginPresentation()
         defer { analyticsPresentation.end() }
-        return sendMessageMenuItems(chatInteraction: chatInteraction, analyticsContext: current, send: { silent, schedule in
+        return sendMessageMenuItems(chatInteraction: chatInteraction, analyticsContext: current, send: { sound, schedule in
             let current = chatInteraction.captureAnalyticsContext(inherited: origin)
             let analyticsPresentation = current.beginPresentation()
             defer { analyticsPresentation.end() }
-            send(silent, schedule)
+            send(sound, schedule)
         })
     }
 }
@@ -151,7 +151,9 @@ public func showRichTextEditor(chatInteraction: ChatInteraction, morphSource: ((
 
     let flushDraft = ActionBox()
     chatInteraction.storePendingRichTextEditorDraft = { flushDraft.action?() }
-    let controller = RichTextEditorController(context: context, initialDocument: initialDocument, initialDraft: initialDraft, requestScheduleDate: richTextScheduleRequest(chatInteraction: chatInteraction, analyticsContext: analyticsContext), sendMenuItems: richTextSendMenuItems(chatInteraction: chatInteraction, analyticsContext: analyticsContext), onCancel: { composed in
+    let controller = RichTextEditorController(context: context, initialDocument: initialDocument, initialDraft: initialDraft, requestScheduleDate: richTextScheduleRequest(chatInteraction: chatInteraction, analyticsContext: analyticsContext), resolveSendSound: { [weak chatInteraction] sound in
+        chatInteraction?.resolvedSendSound(sound) ?? sound
+    }, sendMenuItems: richTextSendMenuItems(chatInteraction: chatInteraction, analyticsContext: analyticsContext), onCancel: { composed in
         chatInteraction.storePendingRichTextEditorDraft = nil
         let origin = chatInteraction.captureAnalyticsContext(inherited: analyticsContext)
         let analyticsPresentation = origin.beginPresentation()
@@ -195,7 +197,9 @@ private func composerEditorController(chatInteraction: ChatInteraction, initialD
     let context = chatInteraction.interactionContext
     let flushDraft = ActionBox()
     chatInteraction.storePendingRichTextEditorDraft = { flushDraft.action?() }
-    let controller = RichTextEditorController(context: context, initialDocument: initialDocument, initialDraft: initialDraft, requestScheduleDate: richTextScheduleRequest(chatInteraction: chatInteraction, analyticsContext: analyticsContext), sendMenuItems: richTextSendMenuItems(chatInteraction: chatInteraction, analyticsContext: analyticsContext), onCancel: { composed in
+    let controller = RichTextEditorController(context: context, initialDocument: initialDocument, initialDraft: initialDraft, requestScheduleDate: richTextScheduleRequest(chatInteraction: chatInteraction, analyticsContext: analyticsContext), resolveSendSound: { [weak chatInteraction] sound in
+        chatInteraction?.resolvedSendSound(sound) ?? sound
+    }, sendMenuItems: richTextSendMenuItems(chatInteraction: chatInteraction, analyticsContext: analyticsContext), onCancel: { composed in
         chatInteraction.storePendingRichTextEditorDraft = nil
         let origin = chatInteraction.captureAnalyticsContext(inherited: analyticsContext)
         let analyticsPresentation = origin.beginPresentation()
@@ -339,7 +343,7 @@ private func richTextEditorEntries(_ state: RichTextEditorState, coordinator: Ri
 }
 
 @available(macOS 12, *)
-public func RichTextEditorController(context: any AccountContextProtocol, initialDocument: Document? = nil, initialDraft: (blocks: [RichTextOutgoingBlock], media: [String: Media])? = nil, isEditing: Bool = false, requestScheduleDate: ((@escaping (Date, Int32?) -> Void) -> Void)? = nil, sendMenuItems: ((@escaping (Bool, ChatInteraction.Schedule?) -> Void) -> [ContextMenuItem]?)? = nil, onDeleteMessage: (() -> Void)? = nil, onCancel: ((ComposedRichMessage) -> Void)? = nil, autosaveDraft: ((InstantPage?) -> Void)? = nil, flushDraft: ActionBox? = nil, analyticsContext: AnalyticsContext? = nil, send: @escaping (_ text: String, _ attributes: [MessageAttribute]) -> Void) -> InputDataModalController {
+public func RichTextEditorController(context: any AccountContextProtocol, initialDocument: Document? = nil, initialDraft: (blocks: [RichTextOutgoingBlock], media: [String: Media])? = nil, isEditing: Bool = false, requestScheduleDate: ((@escaping (Date, Int32?) -> Void) -> Void)? = nil, resolveSendSound: @escaping (ChatSendSound) -> ChatSendSound = { $0 }, sendMenuItems: ((@escaping (ChatSendSound, ChatInteraction.Schedule?) -> Void) -> [ContextMenuItem]?)? = nil, onDeleteMessage: (() -> Void)? = nil, onCancel: ((ComposedRichMessage) -> Void)? = nil, autosaveDraft: ((InstantPage?) -> Void)? = nil, flushDraft: ActionBox? = nil, analyticsContext: AnalyticsContext? = nil, send: @escaping (_ text: String, _ attributes: [MessageAttribute]) -> Void) -> InputDataModalController {
     let analyticsContext = Analytics.shared.captureContext(engine: context.engine, peerId: context.peerId, inherited: analyticsContext ?? Analytics.shared.unresolvedContext())
     let analyticsPresentation = analyticsContext.beginPresentation()
     defer { analyticsPresentation.end() }
@@ -720,11 +724,12 @@ public func RichTextEditorController(context: any AccountContextProtocol, initia
             commit(attributes)
         }
     }
-    let performSend: (Bool, ChatInteraction.Schedule?) -> Void = { [weak coordinator] silent, schedule in
+    let performSend: (ChatSendSound, ChatInteraction.Schedule?) -> Void = { [weak coordinator] sound, schedule in
         let origin = Analytics.shared.captureContext(engine: context.engine, peerId: context.peerId, inherited: analyticsContext)
         let analyticsPresentation = origin.beginPresentation()
         defer { analyticsPresentation.end() }
         guard let coordinator, !isClosed, !didSend else { return }
+        let silent = !isEditing && resolveSendSound(sound).notificationIsSilent == true
         let outgoing = coordinator.editor.outgoingBlocks()
         guard richTextOutgoingHasContent(outgoing) else {
             if isEditing, let onDeleteMessage {
@@ -772,7 +777,7 @@ public func RichTextEditorController(context: any AccountContextProtocol, initia
         }
     }
     coordinator.sendAction.action = {
-        performSend(false, nil)
+        performSend(.automatic, nil)
     }
     if let sendMenuItems {
         coordinator.setSendContextMenu({ [weak coordinator] in
@@ -789,12 +794,12 @@ public func RichTextEditorController(context: any AccountContextProtocol, initia
                     currentMedia[key]?.isEqual(to: value) == true
                 }
             }
-            return sendMenuItems({ silent, schedule in
+            return sendMenuItems({ sound, schedule in
                 let current = Analytics.shared.captureContext(engine: context.engine, peerId: context.peerId, inherited: analyticsContext)
                 let analyticsPresentation = current.beginPresentation()
                 defer { analyticsPresentation.end() }
                 guard action.takeIfCurrent() else { return }
-                performSend(silent, schedule)
+                performSend(sound, schedule)
             })
         })
     }

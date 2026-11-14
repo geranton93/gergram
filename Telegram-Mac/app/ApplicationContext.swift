@@ -1025,7 +1025,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
     private func updateLeftSidebar(with folders: ChatListFolders, layout: SplitViewState, animated: Bool) -> Void {
         
         if self.window is AppWindow {
-            if (folders.sidebar && !folders.isEmpty) || layout == .minimisize {
+            if (folders.sidebar && folders.hasVisibleFolders) || layout == .minimisize {
                 self.context.bindings.rootNavigation().navigationBarLeftPosition = 0
             } else {
                 self.context.bindings.rootNavigation().navigationBarLeftPosition = layout == .single ? Window.controlsInset : 0
@@ -1033,8 +1033,8 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         }
 
                 
-        let currentSidebar = !folders.isEmpty && (folders.sidebar)
-        let previousSidebar = self.folders == nil ? nil : !self.folders!.isEmpty && (self.folders!.sidebar)
+        let currentSidebar = folders.hasVisibleFolders && folders.sidebar
+        let previousSidebar = self.folders == nil ? nil : self.folders!.hasVisibleFolders && self.folders!.sidebar
 
         let readySignal: Signal<Bool, NoError>
         

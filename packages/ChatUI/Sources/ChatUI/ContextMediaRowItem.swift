@@ -22,7 +22,7 @@ public final class ContextMediaArguments {
     public let menuItems: (TelegramMediaFile, NSView) -> Signal<[ContextMenuItem], NoError>
     public let openMessage: (Message) -> Void
     public let messageMenuItems: (Message, NSView) -> Signal<[ContextMenuItem], NoError>
-    public var drag: ((ChatContextResult, NSPoint, Bool) -> Bool)?
+    public var beginDrag: ((ChatContextResult, NSPoint) -> (update: (NSPoint, Bool) -> Void, cancel: () -> Void)?)?
 
     public init(sendResult: @escaping(ChatContextResultCollection?, ChatContextResult, NSView) -> Void = { _, _, _ in }, menuItems: @escaping(TelegramMediaFile, NSView) -> Signal<[ContextMenuItem], NoError> = { _, _ in return .single([]) }, openMessage: @escaping(Message) -> Void = { _ in }, messageMenuItems:@escaping (Message, NSView) -> Signal<[ContextMenuItem], NoError> = { _, _ in return .single([]) }) {
         self.sendResult = sendResult
@@ -134,80 +134,115 @@ public class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
         fatalError("init(coder:) has not been implemented")
     }
     
-    private let stickerFetchedDisposable:MetaDisposable = MetaDisposable()
-    private let longDisposable = MetaDisposable()
-    private var dragStart: (NSPoint, Int)?
-    private var isDraggingResult = false
-    deinit {
-        stickerFetchedDisposable.dispose()
-        longDisposable.dispose()
+    private struct Press {
+        let item: ContextMediaRowItem
+        let tile: NSView
+        let index: Int
+        let locationInWindow: NSPoint
     }
-    
+
+    private let longDisposable = MetaDisposable()
+    private let previewDisposable = MetaDisposable()
+    private var press: Press?
+    private var activeDrag: (update: (NSPoint, Bool) -> Void, cancel: () -> Void)?
+
+    deinit {
+        longDisposable.dispose()
+        previewDisposable.dispose()
+    }
+
+    private func clearPress() {
+        longDisposable.set(nil)
+        press = nil
+        previewDisposable.set(nil)
+    }
+
+    private func cancelDrag() {
+        let drag = activeDrag
+        activeDrag = nil
+        drag?.cancel()
+    }
+
+    public override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if window !== newWindow {
+            clearPress()
+            cancelDrag()
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
     public func previewMediaIfPossible() -> Bool {
-        if let item = self.item as? ContextMediaRowItem, let table = item.table, let window = window as? Window {
-            startModalPreviewHandle(table, window: window, context: item.context)
+        guard let window else { return false }
+        return previewPressedTile(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
+
+    private func previewPressedTile(at point: NSPoint) -> Bool {
+        guard let press, matchesPress(press, at: point), let window = window as? Window,
+              let table = press.item.table, table.window === window, let initial = fileAtPoint(point),
+              let handle = startModalPreviewHandle(table, window: window, context: press.item.context, initial: initial) else {
+            return false
+        }
+        clearPress()
+        if item === press.item, self.window === window {
+            previewDisposable.set(handle)
+        } else {
+            handle.dispose()
         }
         return true
     }
-    
-    public override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-        
-        let signal = Signal<NoValue, NoError>.complete() |> delay(0.2, queue: .mainQueue())
-        
-        let downIndex = self.index(at: convert(event.locationInWindow, to: nil))
 
-        isDraggingResult = false
-        if let item = item as? ContextMediaRowItem, item.result.messages.isEmpty, let index = self.index(at: convert(event.locationInWindow, from: nil)) {
-            dragStart = (event.locationInWindow, index)
-        } else {
-            dragStart = nil
+    private func matchesPress(_ press: Press, at point: NSPoint) -> Bool {
+        guard item === press.item, let index = index(at: point), index == press.index else {
+            return false
         }
-        
+        return subviews[index] === press.tile
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        clearPress()
+        cancelDrag()
+        super.mouseDown(with: event)
+
+        guard let window, event.window === window, event.clickCount == 1, !event.modifierFlags.contains(.control),
+              let item = item as? ContextMediaRowItem else {
+            return
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        guard let index = index(at: point) else { return }
+        press = Press(item: item, tile: subviews[index], index: index, locationInWindow: event.locationInWindow)
+        guard fileAtPoint(point) != nil else { return }
+
+        let signal = Signal<NoValue, NoError>.complete() |> delay(0.2, queue: .mainQueue())
         longDisposable.set(signal.start(completed: { [weak self] in
-            guard let `self` = self, let window = self.window else {
-                return
-            }
-            let nextIndex = self.index(at: self.convert(window.mouseLocationOutsideOfEventStream, to: nil))
-            if nextIndex == downIndex {
-                _ = self.previewMediaIfPossible()
+            if NSEvent.pressedMouseButtons & 1 != 0 {
+                _ = self?.previewMediaIfPossible()
             }
         }))
     }
-    
-    
+
     public override func forceClick(in location: NSPoint) {
-        if mouseInside() == true {
-            let result = previewMediaIfPossible()
-            if !result {
-                super.forceClick(in: location)
-            }
-        } else {
+        if !previewPressedTile(at: location) {
             super.forceClick(in: location)
         }
-        
     }
     
     public func fileAtPoint(_ point: NSPoint) -> (QuickPreviewMedia, NSView?)? {
-        guard let item = item as? ContextMediaRowItem else {return nil}
-        for i in 0 ..< self.subviews.count {
-            if NSPointInRect(point, self.subviews[i].frame) {
-                switch item.result.entries[i] {
-                case let .gif(_, file):
-                    return (.file(file, GifPreviewModalView.self), self.subviews[i])
-                case let .sticker(_, file):
-                    let reference = file.stickerReference != nil ? FileMediaReference.stickerPack(stickerPack: file.stickerReference!, media: file) : FileMediaReference.standalone(media: file)
-                    if file.isAnimatedSticker || file.isWebm {
-                        return (.file(reference, AnimatedStickerPreviewModalView.self), self.subviews[i])
-                    } else {
-                        return (.file(reference, StickerPreviewModalView.self), self.subviews[i])
-                    }
-                default:
-                    break
-                }
+        guard let item = item as? ContextMediaRowItem, let index = index(at: point) else { return nil }
+        let tile = subviews[index]
+        switch item.result.entries[index] {
+        case let .gif(_, file):
+            return (.file(file, GifPreviewModalView.self), tile)
+        case let .sticker(_, file):
+            let reference = file.stickerReference.map {
+                FileMediaReference.stickerPack(stickerPack: $0, media: file)
+            } ?? .standalone(media: file)
+            if file.isAnimatedSticker || file.isWebm {
+                return (.file(reference, AnimatedStickerPreviewModalView.self), tile)
             }
+            return (.file(reference, StickerPreviewModalView.self), tile)
+        default:
+            return nil
         }
-        return nil
     }
     
     public override func interactionContentView(for innerId: AnyHashable, animateIn: Bool) -> NSView {
@@ -226,6 +261,9 @@ public class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
     
 
     public override func set(item: TableRowItem, animated: Bool) {
+        if self.item !== item {
+            clearPress()
+        }
         super.set(item: item, animated: animated)
 
         guard let item = item as? ContextMediaRowItem else { return }
@@ -370,57 +408,63 @@ public class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
     }
 
     public func index(at point: NSPoint) -> Int? {
-        if let _ = item as? ContextMediaRowItem {
-            for (i, subview) in self.subviews.enumerated() {
-                if NSPointInRect(point, subview.frame) {
-                    return i
-                }
-            }
+        guard let item = item as? ContextMediaRowItem, !isHiddenOrHasHiddenAncestor, visibleRect.contains(point) else {
+            return nil
         }
-        return nil
+        return subviews.prefix(item.result.entries.count).firstIndex { $0.frame.contains(point) }
     }
     
     public override func mouseDragged(with event: NSEvent) {
         super.mouseDragged(with: event)
-        guard let item = item as? ContextMediaRowItem, let drag = item.arguments.drag, let (start, index) = dragStart, index < item.result.results.count else {
+        guard let window, event.window === window else { return }
+        let location = event.locationInWindow
+        if let activeDrag {
+            activeDrag.update(location, false)
             return
         }
-        let location = event.locationInWindow
-        if isDraggingResult {
-            _ = drag(item.result.results[index], location, false)
-        } else if hypot(location.x - start.x, location.y - start.y) > 6 {
-            isDraggingResult = drag(item.result.results[index], location, false)
-            if isDraggingResult {
-                longDisposable.set(nil)
-            } else {
-                dragStart = nil
+        guard let press else { return }
+        let movedBeyondDragThreshold = hypot(location.x - press.locationInWindow.x, location.y - press.locationInWindow.y) > 6
+        if movedBeyondDragThreshold, press.item.result.messages.isEmpty,
+           let beginDrag = press.item.arguments.beginDrag, press.item.result.results.indices.contains(press.index) {
+            clearPress()
+            let result = press.item.result.results[press.index]
+            if let drag = beginDrag(result, location) {
+                if self.window === window {
+                    activeDrag = drag
+                } else {
+                    drag.cancel()
+                }
             }
+            return
+        }
+        if !matchesPress(press, at: convert(location, from: nil)) {
+            clearPress()
         }
     }
 
     public override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
         
-        longDisposable.set(nil)
-        if isDraggingResult {
-            isDraggingResult = false
-            if let item = item as? ContextMediaRowItem, let (_, index) = dragStart, index < item.result.results.count {
-                _ = item.arguments.drag?(item.result.results[index], event.locationInWindow, true)
-            }
-            dragStart = nil
+        let press = self.press
+        let activeDrag = self.activeDrag
+        clearPress()
+        self.activeDrag = nil
+        guard let window, event.window === window else {
+            activeDrag?.cancel()
             return
         }
-        dragStart = nil
-//        
-        if let item = item as? ContextMediaRowItem, event.clickCount == 1  {
-            let point = convert(event.locationInWindow, from: nil)
-            if let index = self.index(at: point) {
-                if !item.result.messages.isEmpty {
-                    item.arguments.openMessage(item.result.messages[index])
-                } else {
-                    item.arguments.sendResult(item.collection, item.result.results[index], self.subviews[index])
-                }
-            }
+        if let activeDrag {
+            activeDrag.update(event.locationInWindow, true)
+            return
+        }
+        guard let press, event.clickCount == 1, matchesPress(press, at: convert(event.locationInWindow, from: nil)) else {
+            return
+        }
+        let item = press.item
+        if item.result.messages.indices.contains(press.index) {
+            item.arguments.openMessage(item.result.messages[press.index])
+        } else if item.result.messages.isEmpty, item.result.results.indices.contains(press.index) {
+            item.arguments.sendResult(item.collection, item.result.results[press.index], press.tile)
         }
     }
     

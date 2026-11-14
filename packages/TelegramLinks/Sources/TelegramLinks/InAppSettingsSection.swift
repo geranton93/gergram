@@ -26,6 +26,7 @@ public enum InAppSettingsSection : Equatable {
     case my_stories
     case general
     case chat
+    case gergram(GergramSettingsRoute)
 
     public enum CallsSubSection : String {
         case start_call = "start-call"

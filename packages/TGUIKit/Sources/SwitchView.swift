@@ -151,6 +151,7 @@ public class SwitchView: Control {
     private(set) var visualPosition: CGFloat = 0
     private(set) var nativeLens: LiquidGlassLensView?
     var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    var animationsEnabled: () -> Bool = { SwitchAnimationPreferences.shared.isEnabled }
     var reduceTransparency: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }
     var lensFactory: () -> LiquidGlassLensView? = { LiquidGlassLensView.make() }
 
@@ -162,6 +163,7 @@ public class SwitchView: Control {
     var positionAnimation: CASpringAnimation? { positionView.layer?.animation(forKey: "switchPosition") as? CASpringAnimation }
     private var geometry: SwitchGeometry { SwitchGeometry(bounds: bounds) }
     private var canInteract: Bool { isEnabled && userInteractionEnabled && !isHiddenOrHasHiddenAncestor }
+    private var canAnimate: Bool { animationsEnabled() && !reduceMotion() }
 
     override convenience init() {
         self.init(frame: CGRect(origin: .zero, size: SwitchView.preferredSize))
@@ -216,7 +218,7 @@ public class SwitchView: Control {
         let changed = self.isOn != isOn
         self.isOn = isOn
         visualPosition = isOn ? 1 : 0
-        render(animated: animated && !reduceMotion())
+        render(animated: animated && canAnimate)
         if changed {
             NSAccessibility.post(element: self, notification: .valueChanged)
         }
@@ -237,9 +239,9 @@ public class SwitchView: Control {
         invalidateInteraction()
         visualPosition = isOn ? 1 : 0
         gesture = Gesture(start: point, initialPosition: visualPosition)
-        lifted = !reduceMotion()
+        lifted = canAnimate
         installEscapeMonitor()
-        render(animated: !reduceMotion())
+        render(animated: canAnimate)
     }
 
     func dragInteraction(to point: CGPoint) {
@@ -260,7 +262,7 @@ public class SwitchView: Control {
             return
         }
         visualPosition = snappedPosition
-        render(animated: !reduceMotion())
+        render(animated: canAnimate)
     }
 
     func endInteraction(at point: CGPoint) {
@@ -315,7 +317,7 @@ public class SwitchView: Control {
         lifted = false
         dragOffset = 0
         installEscapeMonitor()
-        render(animated: !reduceMotion() && window != nil)
+        render(animated: canAnimate && window != nil)
     }
 
     public func finishPendingChange() {

@@ -392,6 +392,44 @@ public func messageFileSaveMenuItem(file: TelegramMediaFile, context: any Accoun
     }, itemImage: MenuAnimation.menu_save_as.value, keyEquivalent: keyEquivalent)
 }
 
+private func inlineCallbackDataMenu(_ markup: ReplyMarkupMessageAttribute, window: Window) -> ContextMenuItem? {
+    let title = localizedString("Gergram.Chat.CallbackData")
+    let menu = ContextMenu()
+    for button in markup.rows.flatMap(\.buttons) {
+        guard case let .callback(_, data) = button.action else { continue }
+
+        let payload: String
+        let copyTitle: String
+        switch ChatInlineCallbackPayload(data: data.makeData()) {
+        case let .text(text):
+            payload = text
+            copyTitle = strings().contextCopy
+        case let .base64(base64):
+            payload = base64
+            copyTitle = localizedString("Gergram.Chat.CopyCallbackBase64")
+        }
+
+        let actions = ContextMenu()
+        actions.addItem(ContextMenuItem(localizedString("Gergram.Chat.ViewCallbackData"), handler: { [weak window] in
+            guard let window else { return }
+            let text = payload.isEmpty ? localizedString("Gergram.Chat.EmptyCallbackData") : payload
+            showModalText(for: window, text: text, title: title)
+        }))
+        actions.addItem(ContextMenuItem(copyTitle, handler: {
+            copyToClipboard(payload)
+        }, itemImage: MenuAnimation.menu_copy.value))
+
+        let buttonItem = ContextMenuItem(button.title.isEmpty ? title : button.title.fixed, handler: {})
+        buttonItem.submenu = actions
+        menu.addItem(buttonItem)
+    }
+    guard !menu.items.isEmpty else { return nil }
+
+    let item = ContextMenuItem(title, handler: {}, itemImage: MenuAnimation.menu_show_info.value)
+    item.submenu = menu
+    return item
+}
+
 public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLayout: (TextViewLayout?, LinkType?)?, chatInteraction: ChatInteraction, useGroupIfNeeded: Bool = true, fromAdPromo: Bool = false, source: ChatMenuItemSource = .general) -> Signal<[ContextMenuItem], NoError> {
     
     if chatInteraction.interactionContext.isFrozen {
@@ -403,6 +441,8 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
     }
 
     let translationOrigin = messageTranslationAnalyticsContext(message, chatInteraction: chatInteraction)
+    let menuPreferences = MessageContextMenuPreferences()
+    let extendedMenu = ChatMessageContextMenuModifier.isExtended(NSEvent.modifierFlags)
     let selectedIds = chatInteraction.presentation.selectionState?.selectedIds ?? []
     let selectedMessages: Signal<[Message], NoError>
     if selectedIds.count > 1, selectedIds.contains(message.id) {
@@ -411,7 +451,25 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         selectedMessages = .single([])
     }
 
-    return combineLatest(queue: .mainQueue(), chatMenuItemsData(for: message, textLayout: textLayout, entry: entry, chatInteraction: chatInteraction, source: source), selectedMessages) |> map { [chatInteraction] data, selectedMessages in
+    let shadowBannedSenderIds: Signal<Set<PeerId>?, NoError>
+    if case .general = source, chatInteraction.canManageLocalMessageVisibility {
+        shadowBannedSenderIds = localShadowBannedSenderIds(chatInteraction.context.account.postbox) |> take(1) |> map(Optional.some)
+    } else {
+        shadowBannedSenderIds = .single(nil)
+    }
+
+    let filterLiteral: ChatLiteralMessageFilter?
+    if case .general = source, chatInteraction.canManageLocalMessageVisibility, entry?.isFakeMessage == false,
+       entry?.additionalData.translate == nil, menuPreferences.isVisible(.addFilter, extendedMenu: extendedMenu) {
+        filterLiteral = ChatRegexFilterQuickAddAction.selectedLiteral(message: message, layout: textLayout?.0)
+    } else {
+        filterLiteral = nil
+    }
+    let filtersEnabled: Signal<Bool, NoError> = filterLiteral == nil
+        ? .single(false)
+        : (localMessageFilterPreferences(chatInteraction.context.account.postbox) |> take(1) |> map { $0.isEnabled })
+
+    return combineLatest(queue: .mainQueue(), chatMenuItemsData(for: message, textLayout: textLayout, entry: entry, chatInteraction: chatInteraction, source: source), selectedMessages, shadowBannedSenderIds, filtersEnabled) |> map { [chatInteraction] data, selectedMessages, shadowBannedSenderIds, filtersEnabled in
         
         let peer = data.message.peers[data.message.id.peerId]
         let isNotFailed = !message.flags.contains(.Failed) && !message.flags.contains(.Unsent) && !data.message.flags.contains(.Sending)
@@ -531,6 +589,15 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         var fifthBlock:[ContextMenuItem] = []
         var sixBlock:[ContextMenuItem] = []
         var sevenBlock:[ContextMenuItem] = []
+
+        if case .general = source, isNotFailed, !protected, !isService, !isEphemeralNamespace,
+           messageId.peerId.namespace != Namespaces.Peer.SecretChat,
+           !data.message.isCopyProtected(cachedData: data.cachedData),
+           messageId.peerId.namespace != Namespaces.Peer.CloudUser || messageId.peerId == context.peerId || data.cachedData is CachedUserData,
+           let markup = data.message.replyMarkup, markup.flags.contains(.inline),
+           let callbackData = inlineCallbackDataMenu(markup, window: context.window) {
+            zeroBlock.append(callbackData)
+        }
         
         
 
@@ -1131,6 +1198,11 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
             }
         }
 
+        if case .general = source, isNotFailed, !isService, entry?.isFakeMessage == false,
+           let item = ChatReceivedAudioTranscriptionAction.menuItem(for: data.message, cachedData: data.cachedData, interaction: chatInteraction) {
+            thirdBlock.append(item)
+        }
+
         if let copyLinkKind = chatMessageCopyLinkKind(messageId: messageId, peer: peer, getPeer: { message.peers[$0] }, isService: isService), isNotFailed, !message.isScheduledMessage {
             thirdBlock.append(ContextMenuItem(strings().messageContextCopyMessageLink1, handler: {
                 let isThread = copyLinkKind != .directMessages && data.chatLocation.threadMsgId != nil
@@ -1391,6 +1463,10 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
         
      
         
+        if let messageShot = ChatMessageShotAction.menuItem(for: data.message, selection: selectedIds, selectedMessages: selectedMessages, cachedData: data.cachedData, chatTheme: entry?.additionalData.chatTheme, interaction: chatInteraction) {
+            thirdBlock.append(messageShot)
+        }
+
         let photoMessages = selectedMessages.isEmpty ? data.groupped ?? [] : selectedMessages
         let photos = ChatPhotoSaveAction.items(from: photoMessages, cachedData: data.cachedData)
         if photos.count > 1 {
@@ -1499,8 +1575,37 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
             }
         }
         
-        if (MessageReadMenuItem.canViewReadStats(message: data.message, chatInteraction: data.chatInteraction, appConfig: appConfiguration)), data.isRead, !data.isLogInteraction {
+        if menuPreferences.isVisible(.viewsPanel, extendedMenu: extendedMenu),
+           MessageReadMenuItem.canViewReadStats(message: data.message, chatInteraction: data.chatInteraction, appConfig: appConfiguration),
+           data.isRead, !data.isLogInteraction {
             fourthBlock.append(MessageReadMenuItem(context: context, chatInteraction: data.chatInteraction, message: message, availableReactions: data.availableReactions))
+        }
+        if case .general = source, entry?.isFakeMessage != true,
+           menuPreferences.isVisible(.messageDetails, extendedMenu: extendedMenu),
+           let details = ChatMessageDetailsAction.menuItem(for: data.message, cachedData: data.cachedData, interaction: chatInteraction) {
+            fourthBlock.append(details)
+        }
+        if case .general = source, !isService, isNotFailed, entry?.isFakeMessage == false,
+           data.chatLocation == chatInteraction.chatLocation,
+           menuPreferences.isVisible(.senderSearch, extendedMenu: extendedMenu),
+           let search = ChatSenderMessageSearchAction.menuItem(for: data.message, interaction: chatInteraction) {
+            fourthBlock.append(search)
+        }
+        if case .general = source, !isService, isNotFailed, entry?.isFakeMessage == false,
+           data.chatLocation == chatInteraction.chatLocation,
+           menuPreferences.isVisible(.repeatMessage, extendedMenu: extendedMenu),
+           let repeatMessage = chatInteraction.repeatMessageAction.menuItem(for: data.message, interaction: chatInteraction) {
+            fourthBlock.append(repeatMessage)
+        }
+        if case .general = source, !data.isLogInteraction, !isService, entry?.isFakeMessage == false,
+           data.chatLocation == chatInteraction.chatLocation, chatInteraction.readUntilMessage != nil,
+           let target = ChatReadUntilPolicy.target(message: data.message, album: data.groupped, presentation: chatInteraction.presentation, accountPeerId: context.peerId) {
+            let location = data.chatLocation
+            let key = data.message.groupingKey == nil ? "Gergram.Chat.ReadUntil" : "Gergram.Chat.ReadUntilAlbum"
+            fourthBlock.append(ContextMenuItem(localizedString(key), handler: { [weak chatInteraction] in
+                guard let chatInteraction, chatInteraction.chatLocation == location else { return }
+                chatInteraction.readUntilMessage?(target)
+            }, itemImage: MenuAnimation.menu_read.value))
         }
         
         
@@ -1530,6 +1635,34 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
             fifthBlock.append(ContextMenuItem(strings().chatContextCancelEditing, handler: {
                 account.pendingUpdateMessageManager.cancel(messageId: messageId)
             }, itemImage: MenuAnimation.menu_clear_history.value))
+        }
+
+        if case .general = source, !isService, isNotFailed, data.chatState != .selecting,
+           data.chatLocation == chatInteraction.chatLocation, data.message.id.peerId == chatInteraction.peerId,
+           data.chatLocation.threadMessage?.effectiveTopId != messageId,
+           entry?.isFakeMessage == false, chatInteraction.canManageLocalMessageVisibility,
+           menuPreferences.isVisible(.hideMessage, extendedMenu: extendedMenu),
+           chatInteraction.hideLocalMessage != nil {
+            let title = localizedString(message.groupingKey == nil ? "Gergram.Chat.HideMessage" : "Gergram.Chat.HideAlbum")
+            let location = data.chatLocation
+            fifthBlock.append(ContextMenuItem(title, handler: { [weak chatInteraction] in
+                guard let chatInteraction, chatInteraction.canAnimateUpdates(), chatInteraction.chatLocation == location,
+                      chatInteraction.mode == mode, chatInteraction.presentation.state != .selecting,
+                      chatInteraction.canManageLocalMessageVisibility else { return }
+                chatInteraction.hideLocalMessage?(message)
+            }, itemImage: MenuAnimation.menu_hide.value))
+        }
+
+        if case .general = source, !isService, isNotFailed, data.chatState != .selecting,
+           data.chatLocation == chatInteraction.chatLocation, entry?.isFakeMessage == false,
+           let shadowBannedSenderIds,
+           let shadowBan = ChatLocalShadowBanAction.menuItem(for: data.message, shadowBannedSenderIds: shadowBannedSenderIds, interaction: chatInteraction) {
+            fifthBlock.append(shadowBan)
+        }
+
+        if filtersEnabled, !isService, isNotFailed, data.chatState != .selecting, data.chatLocation == chatInteraction.chatLocation,
+           let filterLiteral, let addFilter = ChatRegexFilterQuickAddAction.menuItem(message: data.message, literal: filterLiteral, cachedData: data.cachedData, interaction: chatInteraction) {
+            fifthBlock.append(addFilter)
         }
 
         if canDeleteMessage(data.message, account: account, chatLocation: data.chatLocation, mode: data.chatMode), !data.isLogInteraction {

@@ -122,7 +122,8 @@ public enum ChatListRowState : Equatable {
 }
 
 
-func chatListHasUnreadIncomingGramTransfer(_ messages: [Message], readState: EnginePeerReadCounters?, accountPeerId: PeerId) -> Bool {
+func chatListHasUnreadIncomingGramTransfer(_ messages: [Message], readState: EnginePeerReadCounters?, accountPeerId: PeerId, hidesSenderPreview: Bool = false) -> Bool {
+    guard !hidesSenderPreview else { return false }
     return messages.last.map { message in
         guard let readState, readState.count > 0, !readState.isIncomingMessageIndexRead(MessageIndex(message)) else {
             return false
@@ -158,8 +159,9 @@ public class ChatListRowItem: TableRowItem {
     }
         
     private var messages:[Message]
+    private var hidesSenderPreview = false
     public var message: Message? {
-        return messages.first(where: { !$0.text.isEmpty }) ?? messages.first
+        return ChatListSenderPreviewVisibility.previewMessage(messages, hidden: false)
     }
     
     public let context: any AccountContextProtocol
@@ -262,6 +264,7 @@ public class ChatListRowItem: TableRowItem {
 
 
     private var messageLayout:TextViewLayout?
+    private var messageDisplayTransform: ((NSAttributedString) -> NSAttributedString?)?
     private var messageSelectedLayout:TextViewLayout?
     private var messageSelectedMaxLines: Int32 = 2
     private var messageSelectedCutout: TextViewCutout? = nil
@@ -475,7 +478,7 @@ public class ChatListRowItem: TableRowItem {
     public let activities: [PeerListState.InputActivities.Activity]
     
     public var toolTip: String? {
-        return messageLayout?.attributedString.string
+        return messageLayout?.displayString
     }
     
     public private(set) var isOnline: Bool?
@@ -498,12 +501,13 @@ public class ChatListRowItem: TableRowItem {
 
     public let isArchiveItem: Bool
     
-    public init(_ initialSize:NSSize, context: any AccountContextProtocol, stableId: UIChatListEntryId, pinnedType: ChatListPinnedType, groupId: EngineChatList.Group, groupItems: [EngineChatList.GroupItem.Item], messages: [Message], unreadCount: Int, activities: [PeerListState.InputActivities.Activity] = [], animateGroup: Bool = false, hideStatus: ItemHideStatus = .normal, hasFailed: Bool = false, filter: ChatListFilter = .allChats, appearMode: PeerListState.AppearMode = .normal, hideContent: Bool = false, getHideProgress:(()->CGFloat?)? = nil, openStory: @escaping(StoryInitialIndex?, Bool, Bool)->Void = { _, _, _ in }, storyState: EngineStorySubscriptions? = nil, isContact: Bool = false) {
+    public init(_ initialSize:NSSize, context: any AccountContextProtocol, stableId: UIChatListEntryId, pinnedType: ChatListPinnedType, groupId: EngineChatList.Group, groupItems: [EngineChatList.GroupItem.Item], messages: [Message], unreadCount: Int, activities: [PeerListState.InputActivities.Activity] = [], animateGroup: Bool = false, hideStatus: ItemHideStatus = .normal, hasFailed: Bool = false, filter: ChatListFilter = .allChats, appearMode: PeerListState.AppearMode = .normal, hideContent: Bool = false, getHideProgress:(()->CGFloat?)? = nil, openStory: @escaping(StoryInitialIndex?, Bool, Bool)->Void = { _, _, _ in }, storyState: EngineStorySubscriptions? = nil, isContact: Bool = false, filtersZalgoPreview: Bool = false, hidesSenderPreview: Bool = false) {
         let relativeDateReferenceTimestamp = Date().timeIntervalSince1970
         self.groupId = groupId
         self.peer = nil
         self.mode = .chat
         self.messages = messages
+        self.hidesSenderPreview = hidesSenderPreview
         self.chatListIndex = nil
         self.activities = activities
         self.context = context
@@ -608,8 +612,10 @@ public class ChatListRowItem: TableRowItem {
         }
         
         var messageText: NSAttributedString
-        if groupItems.count == 1 {
-            messageText = chatListText(account: context.account, for: message, messagesCount: 1, folder: true)
+        var bodyOffset: Int?
+        if groupItems.count == 1 && !hidesSenderPreview {
+            let recordBodyOffset: ((Int) -> Void)? = filtersZalgoPreview && ChatListZalgoPreview.isEligible(message) ? { bodyOffset = $0 } : nil
+            messageText = chatListText(account: context.account, for: message, messagesCount: 1, folder: true, messageBodyOffset: recordBodyOffset)
         } else {
             let textString = NSMutableAttributedString(string: "")
             var isFirst = true
@@ -635,9 +641,12 @@ public class ChatListRowItem: TableRowItem {
             messageText = .initialize(string: strings().chatListArchiveStoryCountOther(storyState.items.count), color: theme.chatList.grayTextColor, font: .normal(.text))
         }
         
-        if let messageText = messageText.trimmed.mutableCopy() as? NSMutableAttributedString, !messageText.string
-            .isEmpty {
-            self.messageLayout = .init(messageText, maximumNumberOfLines: 2)
+        let preview = ChatListZalgoPreview.trimmedArchivePreview(messageText, bodyOffset: bodyOffset)
+        if !preview.text.string.isEmpty {
+            if let bodyOffset = preview.bodyOffset {
+                self.messageDisplayTransform = ChatListZalgoPreview.transform(enabled: filtersZalgoPreview, message: message, hasDraft: false, prefixLength: bodyOffset)
+            }
+            self.messageLayout = .init(preview.text, maximumNumberOfLines: 2, displayTextTransform: messageDisplayTransform)
             self.messageSelectedMaxLines = 2
             self.messageSelectedCutout = nil
         }
@@ -744,8 +753,9 @@ public class ChatListRowItem: TableRowItem {
     public let monoforumMessagesSelected: TextViewLayout?
 
 
-    public init(_ initialSize:NSSize, context: any AccountContextProtocol, stableId: UIChatListEntryId, mode: Mode, messages: [Message], index: ChatListIndex? = nil, readState:EnginePeerReadCounters? = nil, draft:EngineChatList.Draft? = nil, pinnedType:ChatListPinnedType = .none, renderedPeer:EngineRenderedPeer, peerPresence: EnginePeer.Presence? = nil, forumTopicData: EngineChatList.ForumTopicData? = nil, forumTopicItems:[EngineChatList.ForumTopicData] = [], activities: [PeerListState.InputActivities.Activity] = [], highlightText: String? = nil, associatedGroupId: EngineChatList.Group = .root, isMuted:Bool = false, hasFailed: Bool = false, hasUnreadMentions: Bool = false, hasUnreadReactions: Bool = false, hasUnreadVotes: Bool = false, showBadge: Bool = true, filter: ChatListFilter = .allChats, hideStatus: ItemHideStatus? = nil, titleMode: TitleMode = .normal, appearMode: PeerListState.AppearMode = .normal, hideContent: Bool = false, getHideProgress:(()->CGFloat?)? = nil, selectedForum: PeerId? = nil, autoremoveTimeout: Int32? = nil, story: EngineChatList.StoryStats? = nil, openStory: @escaping(StoryInitialIndex?, Bool, Bool)->Void = { _, _, _ in }, storyState: EngineStorySubscriptions? = nil, isContact: Bool = false, displayAsTopics: Bool = false, folders: FilterData? = nil, communityCategories: [PeerId: ChatListFilterPeerCategories] = [:], canPreviewChat: Bool = false, titleOverride: String? = nil, savedMessagesParentPeerId: PeerId? = nil) {
+    public init(_ initialSize:NSSize, context: any AccountContextProtocol, stableId: UIChatListEntryId, mode: Mode, messages: [Message], index: ChatListIndex? = nil, readState:EnginePeerReadCounters? = nil, draft:EngineChatList.Draft? = nil, pinnedType:ChatListPinnedType = .none, renderedPeer:EngineRenderedPeer, peerPresence: EnginePeer.Presence? = nil, forumTopicData: EngineChatList.ForumTopicData? = nil, forumTopicItems:[EngineChatList.ForumTopicData] = [], activities: [PeerListState.InputActivities.Activity] = [], highlightText: String? = nil, associatedGroupId: EngineChatList.Group = .root, isMuted:Bool = false, hasFailed: Bool = false, hasUnreadMentions: Bool = false, hasUnreadReactions: Bool = false, hasUnreadVotes: Bool = false, showBadge: Bool = true, filter: ChatListFilter = .allChats, hideStatus: ItemHideStatus? = nil, titleMode: TitleMode = .normal, appearMode: PeerListState.AppearMode = .normal, hideContent: Bool = false, getHideProgress:(()->CGFloat?)? = nil, selectedForum: PeerId? = nil, autoremoveTimeout: Int32? = nil, story: EngineChatList.StoryStats? = nil, openStory: @escaping(StoryInitialIndex?, Bool, Bool)->Void = { _, _, _ in }, storyState: EngineStorySubscriptions? = nil, isContact: Bool = false, displayAsTopics: Bool = false, folders: FilterData? = nil, communityCategories: [PeerId: ChatListFilterPeerCategories] = [:], canPreviewChat: Bool = false, titleOverride: String? = nil, savedMessagesParentPeerId: PeerId? = nil, filtersZalgoPreview: Bool = false, hidesSenderPreview: Bool = false) {
         self.savedMessagesParentPeerId = savedMessagesParentPeerId
+        self.hidesSenderPreview = hidesSenderPreview
         let relativeDateReferenceTimestamp = Date().timeIntervalSince1970
         
         
@@ -821,7 +831,7 @@ public class ChatListRowItem: TableRowItem {
         self.canPreviewChat = canPreviewChat
         
         
-        self.hasGramBadge = chatListHasUnreadIncomingGramTransfer(messages, readState: readState, accountPeerId: context.peerId)
+        self.hasGramBadge = chatListHasUnreadIncomingGramTransfer(messages, readState: readState, accountPeerId: context.peerId, hidesSenderPreview: hidesSenderPreview)
 
         if let peer, let botInfo = peer.botInfo, botInfo.flags.contains(.hasWebApp), readState == nil || readState?.count == 0, !hasGramBadge, splitState != .minimisize {
             self.openMiniApp = .init(.initialize(string: strings().chatListOpenMiniApp, color: theme.colors.underSelectedColor, font: .medium(.text)), alignment: .center)
@@ -947,7 +957,7 @@ public class ChatListRowItem: TableRowItem {
         self.displaySelectedUsesMayItemsFalse = false
                 
         if !forumTopicItems.isEmpty, let message = messages.first, tags == nil {
-            self.topicsLayout = .init(context, message: message, items: forumTopicItems, draft: draft)
+            self.topicsLayout = .init(context, message: message, items: forumTopicItems, draft: draft, filtersZalgoPreview: filtersZalgoPreview, hidesSenderPreview: hidesSenderPreview)
         }
     
         
@@ -975,7 +985,7 @@ public class ChatListRowItem: TableRowItem {
             self.dateLayout = TextViewLayout(date, mayItems: false)
             self.dateLayout?.measure(width: .greatestFiniteMagnitude)
                       
-            if forumTopicItems.isEmpty || tags != nil {
+            if !hidesSenderPreview, forumTopicItems.isEmpty || tags != nil {
                 var author: Peer?
                 if message.isImported, let info = message.forwardInfo {
                     if let peer = info.author {
@@ -1081,7 +1091,7 @@ public class ChatListRowItem: TableRowItem {
                 textLeftCutout += contentImageTrailingSpace
             }
         }
-        if let _ = messages.first(where: { $0.storyAttribute != nil }) {
+        if !hidesSenderPreview, messages.contains(where: { $0.storyAttribute != nil }) {
             textLeftCutout += 20
         }
 
@@ -1172,13 +1182,15 @@ public class ChatListRowItem: TableRowItem {
                     break
                 }
             } else {
-                messageText = chatListText(account: context.account, for: message, messagesCount: messages.count, renderedPeer: renderedPeer, draft: draft, folder: false, applyUserName: false, isPremium: context.isPremium)
+                let preview = ChatListSenderPreviewVisibility.previewMessage(messages, hidden: hidesSenderPreview)
+                messageText = chatListText(account: context.account, for: preview, messagesCount: messages.count, renderedPeer: renderedPeer, draft: draft, folder: false, applyUserName: false, isPremium: context.isPremium)
+                self.messageDisplayTransform = ChatListZalgoPreview.transform(enabled: filtersZalgoPreview, message: preview, hasDraft: draft?.text.isEmpty == false)
                 if !textLeftCutout.isZero {
                     textCutout = TextViewCutout(topLeft: CGSize(width: textLeftCutout, height: 14))
                 }
             }
             if let messageText = messageText?.trimmed, !messageText.string.isEmpty {
-                self.messageLayout = .init(messageText, maximumNumberOfLines: chatNameLayout != nil || tags != nil ? 1 : 2, cutout: textCutout)
+                self.messageLayout = .init(messageText, maximumNumberOfLines: chatNameLayout != nil || tags != nil ? 1 : 2, cutout: textCutout, displayTextTransform: messageDisplayTransform)
                 
                 self.messageSelectedMaxLines = chatNameLayout != nil || tags != nil ? 1 : 2
                 self.messageSelectedCutout = textCutout
@@ -1479,6 +1491,7 @@ public class ChatListRowItem: TableRowItem {
     
     
     public func openPeerStory() {
+        guard avatarStoryIndicator != nil else { return }
         if let peerId = peerId {
             let table = self.table
             self.openStory(.init(peerId: peerId, id: nil, messageId: nil, takeControl: { [weak table] peerId, _, storyId in
@@ -1596,7 +1609,7 @@ public class ChatListRowItem: TableRowItem {
 
     public override var accessibilityValue: String? {
         let message = messages.first
-        return ChatListRowItem.accessibilityValue(isArchive: isGroup, hasMessage: message != nil, incoming: message?.flags.contains(.Incoming) ?? false, author: chatNameLayout?.attributedString.string, read: isRead, preview: messageLayout?.attributedString.string)
+        return ChatListRowItem.accessibilityValue(isArchive: isGroup, hasMessage: message != nil, incoming: message?.flags.contains(.Incoming) ?? false, author: chatNameLayout?.attributedString.string, read: isRead, preview: messageLayout?.displayString)
     }
 
     public override var accessibilityRole: NSAccessibility.Role? {
@@ -2507,7 +2520,7 @@ public class ChatListRowItem: TableRowItem {
     }
     
     public var isReplyToStory: Bool {
-        if self.messages.first(where: { $0.storyAttribute != nil }) != nil {
+        if !hidesSenderPreview, self.messages.contains(where: { $0.storyAttribute != nil }) {
             if isForum && !isTopic {
                 return false
             }
@@ -2558,7 +2571,7 @@ public class ChatListRowItem: TableRowItem {
                     let selectedText = src.mutableCopy() as! NSMutableAttributedString
                     if let color = selectedText.attribute(.selectedColor, at: 0, effectiveRange: nil) {
                         selectedText.addAttribute(NSAttributedString.Key.foregroundColor, value: color, range: selectedText.range)
-                        messageSelectedLayout = .init(selectedText, maximumNumberOfLines: messageSelectedMaxLines, cutout: messageSelectedCutout)
+                        messageSelectedLayout = .init(selectedText, maximumNumberOfLines: messageSelectedMaxLines, cutout: messageSelectedCutout, displayTextTransform: messageDisplayTransform)
                     }
                 }
                 if let width = messageSelectedPendingWidth {
@@ -2635,7 +2648,7 @@ public class ChatListRowItem: TableRowItem {
     }
 
     private func setupRelativeDateTimer(relativeTo timestamp: TimeInterval) {
-        guard let message = messages.first else { return }
+        guard !hidesSenderPreview, let message = messages.first else { return }
         var relativeDateTimestamps: [Int32] = []
         for attribute in message.attributes {
             if let attribute = attribute as? TextEntitiesMessageAttribute {

@@ -312,7 +312,7 @@ public class ChatMediaItem: ChatRowItem {
             caption = ChatMessageItem.applyMessageEntities(with: [TextEntitiesMessageAttribute(entities: entities)], for: text, message: message, context: context, fontSize: theme.fontSize, openInfo:chatInteraction.openInfo, botCommand:chatInteraction.sendPlainText, hashtag: chatInteraction.hashtag, applyProxy: chatInteraction.applyProxy, textColor: theme.chat.textColor(isIncoming, object.renderType == .bubble), linkColor: theme.chat.linkColor(isIncoming, object.renderType == .bubble), monospacedPre: theme.chat.monospacedPreColor(isIncoming, entry.renderType == .bubble), monospacedCode: theme.chat.monospacedCodeColor(isIncoming, entry.renderType == .bubble), mediaDuration: mediaDuration, timecode: { [weak self] timecode in
                 self?.parameters?.set_timeCodeInitializer(timecode)
                 self?.parameters?.showMedia(message)
-            }, openBank: chatInteraction.openBank, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: message.isIncoming(context.account, entry.renderType == .bubble), bubbled: entry.renderType == .bubble), isDark: theme.colors.isDark, bubbled: entry.renderType == .bubble, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && isIncoming).mutableCopy() as! NSMutableAttributedString
+            }, openBank: chatInteraction.openBank, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: message.isIncoming(context.account, entry.renderType == .bubble), bubbled: entry.renderType == .bubble), fillsQuoteBackground: !ChatReplyAppearancePreferences.shared.isSimplified, isDark: theme.colors.isDark, bubbled: entry.renderType == .bubble, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && isIncoming, monospaceFont: ChatMessageItem.historyMonospaceFont(for: chatInteraction.mode)).mutableCopy() as! NSMutableAttributedString
             
             caption.removeWhitespaceFromQuoteAttribute()
             
@@ -328,6 +328,7 @@ public class ChatMediaItem: ChatRowItem {
                     spoilerColor = theme.chat.textColor(isIncoming, entry.renderType == .bubble)
                 }
                 let isSpoilerRevealed = chatInteraction.presentation.interfaceState.revealedSpoilers.contains(message.id)
+                let displayTextTransform = ChatMessageItem.zalgoDisplayTransform(for: message)
                 
                 let textLayout = FoldingTextLayout.make(caption, context: context, revealed: object.additionalData.quoteRevealed, takeLayout: { [chatInteraction] string in
                     let textLayout = TextViewLayout(string, alignment: .left, selectText: theme.chat.selectText(isIncoming, object.renderType == .bubble), strokeLinks: object.renderType == .bubble, alwaysStaticItems: true, disableTooltips: false, mayItems: !message.isCopyProtected(cachedData: chatInteraction.presentation.cachedData), spoilerColor: spoilerColor, isSpoilerRevealed: isSpoilerRevealed, onSpoilerReveal: { [weak chatInteraction] in
@@ -336,7 +337,7 @@ public class ChatMediaItem: ChatRowItem {
                                 $0.withRevealedSpoiler(message.id)
                             })
                         })
-                    })
+                    }, displayTextTransform: displayTextTransform)
                     
                     if let highlightFoundText = object.additionalData.highlightFoundText {
                        if let range = rangeOfSearch(highlightFoundText.query, in: caption.string) {

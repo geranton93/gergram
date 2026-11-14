@@ -41,6 +41,7 @@ public class VideoRecorderModalController: ModalViewController {
 
     public let sendMedia:([MediaSenderContainer])->Void
     public var sendRecordedMedia: (([MediaSenderContainer], AnalyticsRecordingRequest?) -> Void)?
+    public var requestSendAtDurationLimit: (() -> Bool)?
     public let resetState:()->Void
     public init(state: ChatRecordingState, pipeline: VideoRecorderPipeline, sendMedia:@escaping([MediaSenderContainer])->Void, resetState:@escaping()->Void) {
         self.sendMedia = sendMedia
@@ -133,6 +134,9 @@ public class VideoRecorderModalController: ModalViewController {
             self.genericView.updateProgress(Float(duration / VideoRecorderPipeline.videoMessageMaxDuration))
             if duration >= VideoRecorderPipeline.videoMessageMaxDuration, !self.isPaused, !self.didRequestAutomaticSubmission {
                 self.didRequestAutomaticSubmission = true
+                if self.requestSendAtDurationLimit?() == true {
+                    return
+                }
                 let request = self.state.analyticsRecordingJourney?.prepareSubmission(via: .durationLimit)
                 let sendRecordedMedia = self.sendRecordedMedia
                 let sendMedia = self.sendMedia

@@ -1,0 +1,81 @@
+diff --git a/submodules/TelegramCore/Sources/Network/FetchV2.swift b/submodules/TelegramCore/Sources/Network/FetchV2.swift
+index c916f26..47d468e 100644
+--- a/submodules/TelegramCore/Sources/Network/FetchV2.swift
++++ b/submodules/TelegramCore/Sources/Network/FetchV2.swift
+@@ -964,12 +964,13 @@ private final class FetchImpl {
+                         fileReference = info.reference.apiFileReference
+                     }
+                     if let inputLocation = cloudResource.apiInputLocation(fileReference: fileReference) {
++                        let resourceId = cloudResource.id
+                         let queue = self.queue
+                         let throughputMeter = self.network.downloadThroughputMeter
+                         filePartRequest = self.network.multiplexedRequestManager.requestWithAdditionalInfo(
+                             to: .main(sourceDatacenterId),
+                             consumerId: self.consumerId,
+-                            resourceId: self.resource.id.stringRepresentation,
++                            resourceId: resourceId.stringRepresentation,
+                             data: Api.functions.upload.getFile(
+                                 flags: self.fastDownloads && !self.cdnDisabled ? (1 << 1) : 0,
+                                 location: inputLocation,
+@@ -977,12 +978,14 @@ private final class FetchImpl {
+                                 limit: Int32(requestedLength)),
+                             tag: self.parameters?.tag,
+                             continueInBackground: self.continueInBackground,
+-                            onFloodWaitError: { [weak self] error in
++                            onFloodWaitError: { [weak self, weak state, weak part] error in
+                                 queue.async {
+-                                    guard let self else {
++                                    guard let self, let state, let part, self.isCurrent(state),
++                                          self.resource.id == resourceId,
++                                          state.pendingParts.contains(where: { $0 === part }) else {
+                                         return
+                                     }
+-                                    self.processFloodWaitError(error: error)
++                                    self.processFloodWaitError(error: error, resourceId: resourceId)
+                                 }
+                             }, expectedResponseSize: Int32(requestedLength)
+                         )
+@@ -1380,14 +1383,7 @@ private final class FetchImpl {
+-        private func processFloodWaitError(error: String) {
+-            var networkSpeedLimitSubject: NetworkSpeedLimitedEvent.DownloadSubject?
+-            if let location = self.parameters?.location {
+-                if let messageId = location.messageId {
+-                    networkSpeedLimitSubject = .message(messageId)
+-                }
+-            }
+-            if let subject = networkSpeedLimitSubject {
+-                if error.hasPrefix("FLOOD_PREMIUM_WAIT") {
+-                    self.network.addNetworkSpeedLimitedEvent(event: .download(subject))
+-                }
++        private func processFloodWaitError(error: String, resourceId: MediaResourceId) {
++            guard error.hasPrefix("FLOOD_PREMIUM_WAIT"), let messageId = self.parameters?.location?.messageId else {
++                return
+             }
++            self.network.addNetworkSpeedLimitedEvent(event: .download(.message(messageId)), downloadResourceId: resourceId)
+         }
+     }
+diff --git a/submodules/TelegramCore/Sources/Network/Network.swift b/submodules/TelegramCore/Sources/Network/Network.swift
+index d0a36f6..a344e56 100644
+--- a/submodules/TelegramCore/Sources/Network/Network.swift
++++ b/submodules/TelegramCore/Sources/Network/Network.swift
+@@ -954,5 +954,8 @@ public final class Network: NSObject {
+     public var networkSpeedLimitedEvents: Signal<NetworkSpeedLimitedEvent, NoError> {
++        return self.networkSpeedLimitedEventsWithResource |> map { $0.event }
++    }
++    public var networkSpeedLimitedEventsWithResource: Signal<(event: NetworkSpeedLimitedEvent, downloadResourceId: MediaResourceId?), NoError> {
+         return self.networkSpeedLimitedEventPipe.signal()
+     }
+-    private let networkSpeedLimitedEventPipe = ValuePipe<NetworkSpeedLimitedEvent>()
++    private let networkSpeedLimitedEventPipe = ValuePipe<(event: NetworkSpeedLimitedEvent, downloadResourceId: MediaResourceId?)>()
+     private let networkSpeedLimitedEventState = Atomic<NetworkSpeedLimitedEventState>(value: NetworkSpeedLimitedEventState())
+@@ -1465,8 +1468,8 @@ public final class Network: NSObject {
+-    func addNetworkSpeedLimitedEvent(event: NetworkSpeedLimitedEvent) {
++    func addNetworkSpeedLimitedEvent(event: NetworkSpeedLimitedEvent, downloadResourceId: MediaResourceId? = nil) {
+         let notify = self.networkSpeedLimitedEventState.with { state in
+             return state.add(event: event)
+         }
+         if notify {
+-            self.networkSpeedLimitedEventPipe.putNext(event)
++            self.networkSpeedLimitedEventPipe.putNext((event: event, downloadResourceId: downloadResourceId))
+         }
+     }

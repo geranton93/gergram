@@ -14,6 +14,7 @@ let deps: [(String, String)] = [
     ("TelegramMedia", "../TelegramMedia"),
     ("TelegramMediaResources", "../TelegramMediaResources"),
     ("TelegramMediaUtils", "../TelegramMediaUtils"),
+    ("TextRecognizing", "../TextRecognizing"),
     ("MessageUtils", "../MessageUtils"),
     ("GeneralRows", "../GeneralRows"),
     ("InputDataUI", "../InputDataUI"),
@@ -60,10 +61,13 @@ let package = Package(
                 "MediaPaidSetterController.swift",
                 "MediaPreviewRowItem.swift",
                 "PreviewSenderAttachmentEdits.swift",
+                "PreviewSenderAttachmentOrder.swift",
                 "PreviewSenderChildAction.swift",
                 "PreviewSenderController.swift",
                 "PreviewSenderPendingActions.swift",
+                "PreviewSenderStickerImage.swift",
                 "PreviewSenderUIHooks.swift",
             ]),
+        .testTarget(name: "PreviewSenderUITests", dependencies: ["PreviewSenderUI"]),
     ]
 )

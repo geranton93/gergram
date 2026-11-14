@@ -14,6 +14,31 @@ import TelegramContext
 import TelegramMediaUtils
 import TelegramTheme
 
+extension SocialPostPreview {
+    static func prefersLargeMedia(for content: TelegramMediaWebpageLoadedContent) -> Bool {
+        guard content.story == nil, content.type != "telegram_user", content.type != "telegram_ad",
+              content.image != nil || content.file?.isVideo == true else { return false }
+        for attribute in content.attributes {
+            switch attribute {
+            case .stickerPack, .starGift, .giftCollection, .giftAuction, .aiTextStyle:
+                return false
+            default:
+                break
+            }
+        }
+        let size = content.file?.dimensions?.size
+            ?? content.image.flatMap { largestImageRepresentation($0.representations)?.dimensions.size }
+        return hasUsableMediaSize(size) && prefersLargeMedia(for: content.url)
+    }
+
+    static func selectedMediaSize(for content: TelegramMediaWebpageLoadedContent, explicitSize: Bool?) -> Bool? {
+        if prefersLargeMedia(for: content) {
+            return explicitSize ?? true
+        }
+        return content.isMediaLargeByDefault.map { explicitSize ?? $0 }
+    }
+}
+
 public class WPArticleLayout: WPLayout {
     
     
@@ -31,6 +56,7 @@ public class WPArticleLayout: WPLayout {
     private let durationAttributed:NSAttributedString?
     private let fetchDisposable = MetaDisposable()
     private let downloadSettings: AutomaticMediaDownloadSettings
+    private let isSocialPost: Bool
     
     public private(set) var groupLayout: GroupedLayout?
     public private(set) var parameters:[ChatMediaLayoutParameters] = []
@@ -76,6 +102,7 @@ public class WPArticleLayout: WPLayout {
         }
         
         self.downloadSettings = downloadSettings
+        self.isSocialPost = SocialPostPreview.prefersLargeMedia(for: content)
         
         super.init(with: content, context: context, chatInteraction: chatInteraction, parent:parent, fontSize: fontSize, presentation: presentation, approximateSynchronousValue: approximateSynchronousValue, mayCopyText: mayCopyText, entities: entities, adAttribute: adAttribute)
         
@@ -214,10 +241,6 @@ public class WPArticleLayout: WPLayout {
                 return forceLargeMedia
             }
         }
-//        if let value = content.isMediaLargeByDefault {
-//            return value
-//        }
-        
         if content.type == "telegram_ad" {
             return content.isMediaLargeByDefault ?? false
         }
@@ -226,6 +249,10 @@ public class WPArticleLayout: WPLayout {
             return true
         }
        
+        if isSocialPost, adAttribute == nil, SocialPostPreview.hasUsableMediaSize(imageSize) {
+            return true
+        }
+
         let website = content.websiteName?.lowercased()
         if let type = content.type, mediaTypes.contains(type) || (fullSizeSites.contains(website ?? "") || content.instantPage != nil) || content.text == nil  {
             if let imageSize = imageSize {

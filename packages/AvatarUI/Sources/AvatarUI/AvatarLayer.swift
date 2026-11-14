@@ -1,6 +1,7 @@
 #if SHARE
 import TelegramUtilsShare
 #else
+import InAppSettings
 import TelegramUtils
 #endif
 
@@ -55,7 +56,10 @@ final class AvatarImageRenderer {
     private var account: Account?
     private var disableForum: Bool = false
     private var forceCommunityStyle: Bool = false
+    private var forceForumShape: Bool = false
     private var contentScale: CGFloat = 0
+    private var contentSize: CGSize = .zero
+    private var observesAvatarAppearance = false
 
     private var communityStack = false
     private var communityStackLayer: SimpleLayer?
@@ -164,23 +168,35 @@ final class AvatarImageRenderer {
     }
 
     func setState(account: Account, state: AvatarNodeState) {
+        let accountChanged = self.account?.id != account.id
         self.account = account
+        let shapeChanged = forceCommunityStyle || forceForumShape || disableForum
+        disableForum = false
+        self.forceCommunityStyle = false
+        self.forceForumShape = false
         if case let .PeerAvatar(peer, _, _, _, _, _, _, _) = state {
-            setCommunityStack((peer is TelegramCommunity) && !disableForum)
+            setCommunityStack(peer is TelegramCommunity)
         } else {
             setCommunityStack(false)
         }
-        if state != self.state {
+        if state != self.state || accountChanged || shapeChanged {
+            disposable.set(nil)
             contentScale = 0
             self.state = state
             self.updateBacking()
+            if accountChanged, case .Empty = state {
+                self.imageContents = nil
+            }
         }
     }
 
     func setPeer(account: Account, peer: Peer?, message: Message? = nil, size: NSSize? = nil, disableForum: Bool = false, cornerRadius: CGFloat? = nil, forceMonoforum: Bool = false, forceCommunity: Bool = false) {
+        let accountChanged = self.account?.id != account.id
+        let shapeChanged = self.disableForum != disableForum || forceForumShape != forceMonoforum || forceCommunityStyle != forceCommunity
         self.account = account
         self.disableForum = disableForum
         self.forceCommunityStyle = forceCommunity
+        self.forceForumShape = forceMonoforum
         let state: AvatarNodeState
         if let peer = peer {
             state = .PeerAvatar(peer, TelegramUtilsHooks.shared.peerLetters(peer), peer.smallProfileImage, peer.namePeerColor, message, size, ((peer.isForumOrMonoForum || (peer is TelegramCommunity)) && !disableForum) || forceMonoforum || forceCommunity, cornerRadius)
@@ -189,10 +205,14 @@ final class AvatarImageRenderer {
             state = .Empty
             setCommunityStack(false)
         }
-        if self.state != state || self.imageContents == nil {
+        if self.state != state || (peer != nil && self.imageContents == nil && !observesAvatarAppearance) || accountChanged || shapeChanged {
+            disposable.set(nil)
             self.state = state
             contentScale = 0
             self.updateBacking()
+            if peer == nil {
+                self.imageContents = nil
+            }
         }
     }
 
@@ -203,14 +223,18 @@ final class AvatarImageRenderer {
         host.avatarHostLayer?.contentsGravity = .resizeAspectFill
 
         if let account = account, self.state != .Empty {
-            if contentScale != backingScaleFactor {
+            let hostSize = host.avatarHostSize
+            if contentScale != backingScaleFactor || (observesAvatarAppearance && contentSize != hostSize) {
+                disposable.set(nil)
                 contentScale = backingScaleFactor
+                contentSize = hostSize
                 self.displaySuspended = true
                 self.imageContents = nil
                 let photo: PeerPhoto?
-                var updatedSize: NSSize = host.avatarHostSize
+                var updatedSize: NSSize = hostSize
 
                 let _disableForum: Bool
+                var preferenceApplies = false
 
                 switch state {
                 case let .PeerAvatar(peer, letters, representation, nameColor, message, size, isForum, cornerRadius):
@@ -225,6 +249,10 @@ final class AvatarImageRenderer {
                         photo = .peer(peer, representation, nameColor, letters, message, cornerRadius)
                     }
                     updatedSize = size ?? host.avatarHostSize
+                    #if !SHARE
+                    preferenceApplies = cornerRadius == nil && !forceCommunityStyle && !forceForumShape && !(peer is TelegramCommunity)
+                        && (isForum || !peer.isForumOrMonoForum)
+                    #endif
                 case .Empty:
                     photo = nil
                     _disableForum = disableForum
@@ -233,8 +261,30 @@ final class AvatarImageRenderer {
                     _disableForum = disableForum
                 }
                 if let photo = photo {
-                    setSignal(peerAvatarImage(account: account, photo: photo, displayDimensions: updatedSize, scale: backingScaleFactor, font: host.avatarFont, synchronousLoad: attemptLoadNextSynchronous, disableForum: _disableForum, forceForum: self.forceCommunityStyle), force: false)
+                    let size = updatedSize
+                    let font = host.avatarFont
+                    let synchronous = attemptLoadNextSynchronous
+                    let forceForum = self.forceCommunityStyle
+                    observesAvatarAppearance = preferenceApplies
+                    let radius: Signal<CGFloat?, NoError>
+                    #if !SHARE
+                    if observesAvatarAppearance {
+                        radius = AvatarCornerPreferences.shared.signal
+                            |> deliverOnMainQueue
+                            |> map { $0.preferredRadius(for: size, isForum: !_disableForum, explicitRadius: nil, preservesShape: false) }
+                            |> distinctUntilChanged
+                    } else {
+                        radius = .single(nil)
+                    }
+                    #else
+                    radius = .single(nil)
+                    #endif
+                    let image = radius |> mapToSignal { radius in
+                        peerAvatarImage(account: account, photo: photo, displayDimensions: size, scale: backingScaleFactor, font: font, synchronousLoad: synchronous, disableForum: _disableForum, forceForum: forceForum, preferredRadius: radius)
+                    }
+                    setSignal(image, force: false)
                 } else {
+                    observesAvatarAppearance = false
                     let content = self.imageContents
                     self.displaySuspended = false
                     self.imageContents = content
@@ -242,6 +292,7 @@ final class AvatarImageRenderer {
 
             }
         } else {
+            observesAvatarAppearance = false
             self.state = .Empty
         }
     }
@@ -249,6 +300,7 @@ final class AvatarImageRenderer {
     func setSignal(_ signal: Signal<(CGImage?, Bool), NoError>, force: Bool = true) {
         if force {
             self.state = .Empty
+            observesAvatarAppearance = false
             setCommunityStack(false)
         }
         self.disposable.set((signal |> deliverOnMainQueue).start(next: { [weak self] image, animated in
@@ -259,6 +311,12 @@ final class AvatarImageRenderer {
                 }
             }
         }))
+    }
+
+    func updatePreferredSize() {
+        if observesAvatarAppearance {
+            updateBacking()
+        }
     }
 }
 
@@ -351,6 +409,7 @@ open class AvatarControl: NSView, AvatarImageRenderHost {
             super.frame = value
             if updateImage {
                 renderer.layoutCommunityLayers()
+                renderer.updatePreferredSize()
             }
             if updateImage && !renderer.displaySuspended {
                 self.needsDisplay = true
@@ -550,6 +609,7 @@ public final class AvatarImageLayer: SimpleLayer, AvatarImageRenderHost {
 
     public func layoutContent() {
         renderer.layoutCommunityLayers()
+        renderer.updatePreferredSize()
     }
 
     public func hostDidMoveToWindow() {

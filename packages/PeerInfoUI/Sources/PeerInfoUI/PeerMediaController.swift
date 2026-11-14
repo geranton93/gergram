@@ -13,6 +13,7 @@
  import ChatModeTypes
  import ChatUI
  import GeneralRows
+ import InAppSettings
   import InputDataUI
  import LocalAnimations
  import Localization
@@ -935,6 +936,7 @@
     }
     
     private let isProfileIntended: Bool
+    private let appliesProfileStoryVisibility: Bool
      private var initialMode: PeerMediaCollectionMode?
     
     private let editing: ValuePromise<Bool> = ValuePromise(false, ignoreRepeated: true)
@@ -962,6 +964,7 @@
         self.mode = mode
         self.threadInfo = threadInfo
         self.isProfileIntended = isProfileIntended
+        self.appliesProfileStoryVisibility = isProfileIntended && peerId != context.peerId && !isBot
         self.initialMode = mode
         self.starGiftsProfile = starGiftsProfile
         if peerId == context.peerId, !isProfileIntended {
@@ -1582,28 +1585,22 @@
             return general
         }
         
-        let tabSignal = combineLatest(queue: .mainQueue(), mergedTabs, modeValue.get())
-        |> map { tabs, selected -> (tabs: [PeerMediaCollectionMode], selected: PeerMediaCollectionMode?, hasLoaded: Bool) in
-            var selectedValue = selected
-            if selected == nil || !tabs.contains(where: { $0.exists && $0.tag == selected }) {
-                if let selected = selected {
-                    let index = tabsOrder.firstIndex(of: selected)!
-                    var perhapsBest: PeerMediaCollectionMode?
-                    for i in stride(from: index, to: -1, by: -1) {
-                        if tabs.contains(where: { $0.exists && $0.tag == tabsOrder[i] }) {
-                            perhapsBest = tabsOrder[i]
-                            break
-                        }
-                    }
-                    selectedValue = perhapsBest ?? tabs.filter { $0.exists }.last?.tag ?? selected
-                } else {
-                    selectedValue = initialMode ?? tabs.filter { $0.exists }.first?.tag
-                }
-                
+        let hideProfileStories = additionalSettings(accountManager: context.sharedContext.accountManager)
+            |> map { [appliesProfileStoryVisibility] in appliesProfileStoryVisibility && $0.hideProfileStories }
+            |> distinctUntilChanged
+        let tabSignal = combineLatest(queue: .mainQueue(), mergedTabs, modeValue.get(), FastSettings.hideSimilarChannelsTabSignal, hideProfileStories)
+        |> map { allTabs, selectedMode, hideSimilarChannels, hideProfileStories -> (tabs: [PeerMediaCollectionMode], selected: PeerMediaCollectionMode?, hasLoaded: Bool) in
+            func isVisible(_ mode: PeerMediaCollectionMode) -> Bool {
+                return !(hideSimilarChannels && mode == .similarChannels)
+                    && !(hideProfileStories && mode == .stories)
             }
-            return (tabs: tabs.filter { $0.exists }.map { $0.tag }, selected: selectedValue, hasLoaded: tabs.first?.hasLoaded ?? false)
+
+            let tabs = allTabs.filter { isVisible($0.tag) }
+            let visibleModes = tabs.filter { $0.exists }.map { $0.tag }
+            let selectedValue = peerMediaVisibleSelection(selected: selectedMode, initial: initialMode, visible: visibleModes, preferredOrder: tabsOrder, isAllowed: isVisible)
+            return (tabs: visibleModes, selected: selectedValue, hasLoaded: tabs.first?.hasLoaded ?? false)
         }
-        
+
         tabsSignal.set(tabSignal)
         
         let distinctTabs: Signal<(tabs: [PeerMediaCollectionMode], selected: PeerMediaCollectionMode?, hasLoaded: Bool), NoError> = tabsSignal.get()
@@ -1868,6 +1865,13 @@
                 self.genericView.updateEmpty(tabs.isEmpty, animated: !firstTabAppear)
                 if let selected = selected {
                     self.toggle(with: selected, animated: !firstTabAppear)
+                } else if let currentController = self.currentController {
+                    self.currentController = nil
+                    self.mode = nil
+                    currentController.viewWillDisappear(false)
+                    currentController.view.removeFromSuperview()
+                    currentController.viewDidDisappear(false)
+                    self.currentMainTableView?(nil, false, false)
                 }
                 
                 firstTabAppear = false

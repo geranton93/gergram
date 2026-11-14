@@ -9,8 +9,9 @@ error: The macOS deployment target 'MACOSX_DEPLOYMENT_TARGET' is set to 10.13, b
 
 Make the three changes below to build locally. Do not commit them: the shipped app still supports 10.13.
 
-`scripts/xcode27.sh apply` makes all three changes. `scripts/xcode27.sh revert` undoes only those changes, keeping
-any other edits in the same files; run it before you stage any of these files.
+`scripts/xcode27.sh apply` makes all three changes after checking and preparing the required files. Missing inputs
+or unsupported file layouts stop preparation before it edits the checkout. `scripts/xcode27.sh revert` undoes the
+compatibility edits while keeping unrelated edits in the same files. Run it before staging any affected files.
 
 ## 1. Set the minimum macOS version to 12.0
 
@@ -22,7 +23,7 @@ Set **macOS Deployment Target** (`MACOSX_DEPLOYMENT_TARGET`) to **12.0** for eve
 - `submodules/CodeSyntax/CodeSyntax/CodeSyntax.xcodeproj`
 - `submodules/Sparkle/Sparkle.xcodeproj`
 - Before running `scripts/configure_frameworks.sh`, also the native library projects it builds:
-  `core-xprojects/{OpenH264,openssl,libopus,libvpx,Mozjpeg,libwebp,dav1d,ffmpeg,webrtc,tde2e,wallet-engine}/*.xcodeproj`
+  `core-xprojects/{OpenH264,openssl,libopus,libvpx,Mozjpeg,libwebp,dav1d,ffmpeg,webrtc,tde2e,wallet-engine,mtproto-engine}/*.xcodeproj`
 
 Swift packages need no change: Xcode 27 builds them for 12.0 anyway. As a result, a green build no longer catches a
 missing `@available(macOS 10.15, *)`.

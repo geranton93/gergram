@@ -1,4 +1,5 @@
 import Cocoa
+import InAppSettings
 import TGUIKit
 
 public enum MessageBubbleImageNeighbors: Hashable {
@@ -16,6 +17,22 @@ let messageBubbleTailWidth: CGFloat = 6.0
 let messageBubbleDiameter: CGFloat = 32.0
 
 private let minRadiusForFullTailCorner: CGFloat = 14.0
+
+private struct MessageBubbleRadii {
+    let outer: CGFloat
+    let joined: CGFloat
+
+    static func bounded(_ radius: Int) -> Int {
+        let allowed = MessageBubbleRadiusPreferences.allowedRadii
+        return min(max(radius, allowed.lowerBound), allowed.upperBound)
+    }
+
+    init(radius: Int) {
+        let fraction = CGFloat(Self.bounded(radius)) / CGFloat(MessageBubbleRadiusPreferences.defaultRadius)
+        self.outer = (messageBubbleMainRadius * fraction).rounded()
+        self.joined = (messageBubbleAuxiliaryRadius * fraction).rounded()
+    }
+}
 
 func messageBubbleArguments(maxCornerRadius: CGFloat, minCornerRadius: CGFloat, incoming: Bool, neighbors: MessageBubbleImageNeighbors) -> (topLeftRadius: CGFloat, topRightRadius: CGFloat, bottomLeftRadius: CGFloat, bottomRightRadius: CGFloat, drawTail: Bool) {
     var topLeftRadius: CGFloat
@@ -76,8 +93,9 @@ func messageBubbleArguments(maxCornerRadius: CGFloat, minCornerRadius: CGFloat, 
     return (topLeftRadius, topRightRadius, bottomLeftRadius, bottomRightRadius, drawTail)
 }
 
-public func messageBubbleCorners(incoming: Bool, neighbors: MessageBubbleImageNeighbors, inset: CGFloat) -> ImageCorners {
-    let radii = messageBubbleArguments(maxCornerRadius: messageBubbleMainRadius, minCornerRadius: messageBubbleAuxiliaryRadius, incoming: incoming, neighbors: neighbors)
+public func messageBubbleCorners(incoming: Bool, neighbors: MessageBubbleImageNeighbors, inset: CGFloat, radius: Int = MessageBubbleRadiusPreferences.defaultRadius) -> ImageCorners {
+    let cornerSizes = MessageBubbleRadii(radius: radius)
+    let radii = messageBubbleArguments(maxCornerRadius: cornerSizes.outer, minCornerRadius: cornerSizes.joined, incoming: incoming, neighbors: neighbors)
     return ImageCorners(
         topLeft: .Corner(max(0, radii.topLeftRadius - inset)),
         topRight: .Corner(max(0, radii.topRightRadius - inset)),
@@ -86,10 +104,11 @@ public func messageBubbleCorners(incoming: Bool, neighbors: MessageBubbleImageNe
     )
 }
 
-private func drawMessageBubbleForm(_ context: CGContext, neighbors: MessageBubbleImageNeighbors, diameter: CGFloat) {
+private func drawMessageBubbleForm(_ context: CGContext, neighbors: MessageBubbleImageNeighbors, diameter: CGFloat, showsTail: Bool, radius: Int) {
     let fixedMainDiameter = diameter
-    let maxCornerRadius = messageBubbleMainRadius
-    let corners = messageBubbleArguments(maxCornerRadius: maxCornerRadius, minCornerRadius: messageBubbleAuxiliaryRadius, incoming: false, neighbors: neighbors)
+    let radii = MessageBubbleRadii(radius: radius)
+    let maxCornerRadius = min(radii.outer, diameter / 2.0)
+    let corners = messageBubbleArguments(maxCornerRadius: maxCornerRadius, minCornerRadius: min(radii.joined, maxCornerRadius), incoming: false, neighbors: neighbors)
     let topLeftRadius = corners.topLeftRadius
     let topRightRadius = corners.topRightRadius
     let bottomLeftRadius = corners.bottomLeftRadius
@@ -100,18 +119,22 @@ private func drawMessageBubbleForm(_ context: CGContext, neighbors: MessageBubbl
 
     context.setFillColor(NSColor.black.cgColor)
 
-    context.move(to: CGPoint(x: 0.0, y: topLeftRadius))
-    context.addArc(tangent1End: CGPoint(x: 0.0, y: 0.0), tangent2End: CGPoint(x: topLeftRadius, y: 0.0), radius: topLeftRadius)
-    context.addLine(to: CGPoint(x: fixedMainDiameter - topRightRadius, y: 0.0))
-    context.addArc(tangent1End: CGPoint(x: fixedMainDiameter, y: 0.0), tangent2End: CGPoint(x: fixedMainDiameter, y: topRightRadius), radius: topRightRadius)
-    context.addLine(to: CGPoint(x: fixedMainDiameter, y: fixedMainDiameter - bottomRightRadius))
-    context.addArc(tangent1End: CGPoint(x: fixedMainDiameter, y: fixedMainDiameter), tangent2End: CGPoint(x: fixedMainDiameter - bottomRightRadius, y: fixedMainDiameter), radius: bottomRightRadius)
-    context.addLine(to: CGPoint(x: bottomLeftRadius, y: fixedMainDiameter))
-    context.addArc(tangent1End: CGPoint(x: 0.0, y: fixedMainDiameter), tangent2End: CGPoint(x: 0.0, y: fixedMainDiameter - bottomLeftRadius), radius: bottomLeftRadius)
-    context.addLine(to: CGPoint(x: 0.0, y: topLeftRadius))
-    context.fillPath()
+    if maxCornerRadius == 0 {
+        context.fill(CGRect(x: 0, y: 0, width: diameter, height: diameter))
+    } else {
+        context.move(to: CGPoint(x: 0.0, y: topLeftRadius))
+        context.addArc(tangent1End: CGPoint(x: 0.0, y: 0.0), tangent2End: CGPoint(x: topLeftRadius, y: 0.0), radius: topLeftRadius)
+        context.addLine(to: CGPoint(x: fixedMainDiameter - topRightRadius, y: 0.0))
+        context.addArc(tangent1End: CGPoint(x: fixedMainDiameter, y: 0.0), tangent2End: CGPoint(x: fixedMainDiameter, y: topRightRadius), radius: topRightRadius)
+        context.addLine(to: CGPoint(x: fixedMainDiameter, y: fixedMainDiameter - bottomRightRadius))
+        context.addArc(tangent1End: CGPoint(x: fixedMainDiameter, y: fixedMainDiameter), tangent2End: CGPoint(x: fixedMainDiameter - bottomRightRadius, y: fixedMainDiameter), radius: bottomRightRadius)
+        context.addLine(to: CGPoint(x: bottomLeftRadius, y: fixedMainDiameter))
+        context.addArc(tangent1End: CGPoint(x: 0.0, y: fixedMainDiameter), tangent2End: CGPoint(x: 0.0, y: fixedMainDiameter - bottomLeftRadius), radius: bottomLeftRadius)
+        context.addLine(to: CGPoint(x: 0.0, y: topLeftRadius))
+        context.fillPath()
+    }
 
-    if corners.drawTail {
+    if showsTail && corners.drawTail {
         if maxCornerRadius >= minRadiusForFullTailCorner {
             context.move(to: CGPoint(x: bottomEllipse.minX, y: bottomEllipse.midY))
             context.addQuadCurve(to: CGPoint(x: bottomEllipse.midX, y: bottomEllipse.maxY), control: CGPoint(x: bottomEllipse.minX, y: bottomEllipse.maxY))
@@ -128,7 +151,7 @@ private func drawMessageBubbleForm(_ context: CGContext, neighbors: MessageBubbl
     }
 }
 
-func messageBubbleFormImage(incoming: Bool, neighbors: MessageBubbleImageNeighbors, diameter: CGFloat = messageBubbleDiameter, scale: CGFloat = System.backingScale) -> CGImage {
+func messageBubbleFormImage(incoming: Bool, neighbors: MessageBubbleImageNeighbors, diameter: CGFloat = messageBubbleDiameter, scale: CGFloat = System.backingScale, showsTail: Bool = true, radius: Int = MessageBubbleRadiusPreferences.defaultRadius) -> CGImage {
     let size = CGSize(width: diameter + messageBubbleTailWidth, height: diameter)
     return generateImage(size, scale: scale, rotatedContext: { size, context in
         context.clear(CGRect(origin: CGPoint(), size: size))
@@ -136,7 +159,7 @@ func messageBubbleFormImage(incoming: Bool, neighbors: MessageBubbleImageNeighbo
             context.translateBy(x: size.width, y: 0.0)
             context.scaleBy(x: -1.0, y: 1.0)
         }
-        drawMessageBubbleForm(context, neighbors: neighbors, diameter: diameter)
+        drawMessageBubbleForm(context, neighbors: neighbors, diameter: diameter, showsTail: showsTail, radius: radius)
     })!
 }
 
@@ -145,6 +168,8 @@ private struct MessageBubbleImageKey: Hashable {
     let neighbors: MessageBubbleImageNeighbors
     let fillColor: UInt32
     let strokeColor: UInt32
+    let showsTail: Bool
+    let radius: Int
     let scale: CGFloat
 }
 
@@ -163,17 +188,18 @@ public func clearMessageBubbleImageCache() {
 private let messageBubbleMaskFillArgb = NSColor.black.argb
 private let messageBubbleMaskStrokeArgb = NSColor.clear.argb
 
-public func messageBubbleMaskImage(incoming: Bool, neighbors: MessageBubbleImageNeighbors) -> (CGImage, NSEdgeInsets) {
-    return messageBubbleImageModern(incoming: incoming, fillColor: .black, fillArgb: messageBubbleMaskFillArgb, strokeColor: .clear, strokeArgb: messageBubbleMaskStrokeArgb, neighbors: neighbors)
+public func messageBubbleMaskImage(incoming: Bool, neighbors: MessageBubbleImageNeighbors, showsTail: Bool = true, radius: Int = MessageBubbleRadiusPreferences.defaultRadius) -> (CGImage, NSEdgeInsets) {
+    return messageBubbleImageModern(incoming: incoming, fillColor: .black, fillArgb: messageBubbleMaskFillArgb, strokeColor: .clear, strokeArgb: messageBubbleMaskStrokeArgb, neighbors: neighbors, showsTail: showsTail, radius: radius)
 }
 
-public func messageBubbleImageModern(incoming: Bool, fillColor: NSColor, strokeColor: NSColor, neighbors: MessageBubbleImageNeighbors) -> (CGImage, NSEdgeInsets) {
-    return messageBubbleImageModern(incoming: incoming, fillColor: fillColor, fillArgb: fillColor.argb, strokeColor: strokeColor, strokeArgb: strokeColor.argb, neighbors: neighbors)
+public func messageBubbleImageModern(incoming: Bool, fillColor: NSColor, strokeColor: NSColor, neighbors: MessageBubbleImageNeighbors, showsTail: Bool = true, radius: Int = MessageBubbleRadiusPreferences.defaultRadius) -> (CGImage, NSEdgeInsets) {
+    return messageBubbleImageModern(incoming: incoming, fillColor: fillColor, fillArgb: fillColor.argb, strokeColor: strokeColor, strokeArgb: strokeColor.argb, neighbors: neighbors, showsTail: showsTail, radius: radius)
 }
 
-private func messageBubbleImageModern(incoming: Bool, fillColor: NSColor, fillArgb: UInt32, strokeColor: NSColor, strokeArgb: UInt32, neighbors: MessageBubbleImageNeighbors) -> (CGImage, NSEdgeInsets) {
+private func messageBubbleImageModern(incoming: Bool, fillColor: NSColor, fillArgb: UInt32, strokeColor: NSColor, strokeArgb: UInt32, neighbors: MessageBubbleImageNeighbors, showsTail: Bool, radius: Int) -> (CGImage, NSEdgeInsets) {
     let scale = System.backingScale
-    let key = MessageBubbleImageKey(incoming: incoming, neighbors: neighbors, fillColor: fillArgb, strokeColor: strokeArgb, scale: scale)
+    let radius = MessageBubbleRadii.bounded(radius)
+    let key = MessageBubbleImageKey(incoming: incoming, neighbors: neighbors, fillColor: fillArgb, strokeColor: strokeArgb, showsTail: showsTail, radius: radius, scale: scale)
     messageBubbleImageLock.lock()
     if let cached = messageBubbleImageCache[key] {
         messageBubbleImageLock.unlock()
@@ -181,7 +207,7 @@ private func messageBubbleImageModern(incoming: Bool, fillColor: NSColor, fillAr
     }
     messageBubbleImageLock.unlock()
 
-    let form = messageBubbleFormImage(incoming: incoming, neighbors: neighbors, scale: scale)
+    let form = messageBubbleFormImage(incoming: incoming, neighbors: neighbors, scale: scale, showsTail: showsTail, radius: radius)
     let size = CGSize(width: messageBubbleDiameter + messageBubbleTailWidth, height: messageBubbleDiameter)
     let borderWidth = 1.0 / scale + 0.25
 

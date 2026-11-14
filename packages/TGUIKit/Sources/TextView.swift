@@ -201,12 +201,14 @@ public final class TextViewBlockQuote {
     public var frame: CGRect
     public var colors: PeerNameColors.Colors
     public var isCode: Bool
+    public let fillsBackground: Bool
     public var header: (TextNodeLayout, TextNode)?
-    init(frame: CGRect, range: NSRange, colors: PeerNameColors.Colors, isCode: Bool, header: (TextNodeLayout, TextNode)?) {
+    init(frame: CGRect, range: NSRange, colors: PeerNameColors.Colors, isCode: Bool, header: (TextNodeLayout, TextNode)?, fillsBackground: Bool) {
         self.frame = frame
         self.range = range
         self.colors = colors
         self.isCode = isCode
+        self.fillsBackground = fillsBackground
         self.header = header
     }
     
@@ -227,13 +229,15 @@ public final class TextViewBlockQuoteData: NSObject {
     public let isCode: Bool
     public let header: (TextNodeLayout, TextNode)?
     public let collapsable: Bool
-    public init(id: Int, colors: PeerNameColors.Colors, isCode: Bool = false, space: CGFloat = 4, header: (TextNodeLayout, TextNode)? = nil, collapsable: Bool = false) {
+    public let fillsBackground: Bool
+    public init(id: Int, colors: PeerNameColors.Colors, isCode: Bool = false, space: CGFloat = 4, header: (TextNodeLayout, TextNode)? = nil, collapsable: Bool = false, fillsBackground: Bool = true) {
         self.id = id
         self.colors = colors
         self.isCode = isCode
         self.space = space
         self.header = header
         self.collapsable = collapsable
+        self.fillsBackground = fillsBackground
         super.init()
     }
     
@@ -270,7 +274,7 @@ public final class TextViewBlockQuoteData: NSObject {
         if self.space != other.space {
             return false
         }
-        if self.collapsable != other.collapsable {
+        if self.collapsable != other.collapsable || self.fillsBackground != other.fillsBackground {
             return false
         }
         switch (self.header, other.header) {
@@ -293,6 +297,7 @@ public final class TextViewBlockQuoteData: NSObject {
         hasher.combine(space)
         hasher.combine(isCode)
         hasher.combine(collapsable)
+        hasher.combine(fillsBackground)
         if let header {
             hasher.combine(ObjectIdentifier(header.0))
             hasher.combine(ObjectIdentifier(header.1))
@@ -926,6 +931,10 @@ public final class TextViewLayout : Equatable {
     public var string: String {
         return self.attributedString.string
     }
+
+    public var displayString: String {
+        return (displayAttributedString ?? attributedString).string
+    }
     
     public private(set) var layoutSize:NSSize = NSZeroSize
     public private(set) var perfectSize:NSSize = NSZeroSize
@@ -938,18 +947,22 @@ public final class TextViewLayout : Equatable {
     public fileprivate(set) var toolTipRects:[NSRect] = []
     private let disableTooltips: Bool
     private var preparedText: TextViewPreparedText?
+    private let displayTextTransform: ((NSAttributedString) -> NSAttributedString?)?
+    fileprivate var displayAttributedString: NSAttributedString?
     public fileprivate(set) var isBigEmoji: Bool = false
     fileprivate let spoilers:[Spoiler]
     private let onSpoilerReveal: ()->Void
     public private(set) var embeddedItems: [EmbeddedItem] = []
     public var truncatingColor: NSColor? = nil
     
-    public init(_ attributedString:NSAttributedString, constrainedWidth:CGFloat = 0, maximumNumberOfLines:Int32 = INT32_MAX, truncationType: CTLineTruncationType = .end, cutout:TextViewCutout? = nil, alignment:NSTextAlignment = .left, lineSpacing:CGFloat? = nil, selectText: NSColor = presentation.colors.selectText, strokeLinks: Bool = false, alwaysStaticItems: Bool = false, disableTooltips: Bool = true, mayItems: Bool = true, spoilerColor:NSColor = presentation.colors.text, isSpoilerRevealed: Bool = false, onSpoilerReveal: @escaping()->Void = {}, truncatingColor: NSColor? = nil) {
+    public init(_ attributedString:NSAttributedString, constrainedWidth:CGFloat = 0, maximumNumberOfLines:Int32 = INT32_MAX, truncationType: CTLineTruncationType = .end, cutout:TextViewCutout? = nil, alignment:NSTextAlignment = .left, lineSpacing:CGFloat? = nil, selectText: NSColor = presentation.colors.selectText, strokeLinks: Bool = false, alwaysStaticItems: Bool = false, disableTooltips: Bool = true, mayItems: Bool = true, spoilerColor:NSColor = presentation.colors.text, isSpoilerRevealed: Bool = false, onSpoilerReveal: @escaping()->Void = {}, truncatingColor: NSColor? = nil, displayTextTransform: ((NSAttributedString) -> NSAttributedString?)? = nil) {
         self.truncationType = truncationType
         self.maximumNumberOfLines = maximumNumberOfLines
         self.cutout = cutout
         self.disableTooltips = disableTooltips
         self.attributedString = attributedString
+        self.displayTextTransform = displayTextTransform
+        self.displayAttributedString = Self.makeDisplayText(attributedString, transform: displayTextTransform)
         self.constrainedWidth = constrainedWidth
         self.selectText = selectText
         self.alwaysStaticItems = alwaysStaticItems
@@ -993,7 +1006,15 @@ public final class TextViewLayout : Equatable {
     
     public func setAttributedString(_ string: NSAttributedString) {
         self.attributedString = string
+        self.displayAttributedString = Self.makeDisplayText(string, transform: displayTextTransform)
         self.preparedText = nil
+    }
+
+    private static func makeDisplayText(_ source: NSAttributedString, transform: ((NSAttributedString) -> NSAttributedString?)?) -> NSAttributedString? {
+        guard let display = transform?(source), display.length == source.length else {
+            return nil
+        }
+        return display
     }
 
     public func dropLayoutSize() {
@@ -1073,12 +1094,13 @@ public final class TextViewLayout : Equatable {
         let attributedString: NSAttributedString
         let typesetter: CTTypesetter
         let needsRunDecorations: Bool
-        if let prepared = self.preparedText, prepared.matches(self.attributedString) {
+        let displaySource = self.displayAttributedString ?? self.attributedString
+        if let prepared = self.preparedText, prepared.matches(displaySource) {
             attributedString = prepared.attributedString
             typesetter = prepared.typesetter
             needsRunDecorations = prepared.needsRunDecorations
         } else {
-            let source = self.attributedString.copy() as! NSAttributedString
+            let source = displaySource.copy() as! NSAttributedString
             let fullRange = NSMakeRange(0, source.length)
             var embeddedRanges: [NSRange] = []
             source.enumerateAttribute(TextInputAttributes.embedded, in: fullRange, options: [.longestEffectiveRangeNotRequired]) { value, range, _ in
@@ -1526,7 +1548,7 @@ public final class TextViewLayout : Equatable {
                             frame.origin.y -= blockQuote.headerInset
                             frame.size.height += blockQuote.headerInset
                         }
-                        blockQuotes.append(.init(frame: frame, range: NSMakeRange(lineRange.location, lineRange.length), colors: blockQuote.colors, isCode: blockQuote.isCode, header: blockQuote.header))
+                        blockQuotes.append(.init(frame: frame, range: NSMakeRange(lineRange.location, lineRange.length), colors: blockQuote.colors, isCode: blockQuote.isCode, header: blockQuote.header, fillsBackground: blockQuote.fillsBackground))
                     }
 
                     if needsRunDecorations {
@@ -2476,7 +2498,7 @@ public final class TextViewLayout : Equatable {
 }
 
 public func ==(lhs:TextViewLayout, rhs:TextViewLayout) -> Bool {
-    return lhs.constrainedWidth == rhs.constrainedWidth && lhs.attributedString.isEqual(to: rhs.attributedString) && lhs.selectedRange == rhs.selectedRange && lhs.maximumNumberOfLines == rhs.maximumNumberOfLines && lhs.cutout == rhs.cutout && lhs.truncationType == rhs.truncationType && lhs.constrainedWidth == rhs.constrainedWidth
+    return lhs.constrainedWidth == rhs.constrainedWidth && lhs.attributedString.isEqual(to: rhs.attributedString) && lhs.displayAttributedString == rhs.displayAttributedString && lhs.selectedRange == rhs.selectedRange && lhs.maximumNumberOfLines == rhs.maximumNumberOfLines && lhs.cutout == rhs.cutout && lhs.truncationType == rhs.truncationType && lhs.constrainedWidth == rhs.constrainedWidth
 }
 
 public enum CursorSelectAlignment {
@@ -2668,12 +2690,15 @@ private func drawTextViewContent(_ layout: TextViewLayout?, in ctx: CGContext, s
                 let secondaryTintColor = blockQuote.colors.secondary
                 let tertiaryTintColor = blockQuote.colors.tertiary
 
-                if blockAreaIsCleared {
-                    fillBlockBackgroundOnClearedArea(ctx, frame: blockFrame, radius: radius, color: blockColor.withAlphaComponent(blockQuote.isCode ? 0.25 : 0.1).cgColor)
-                } else {
-                    ctx.setFillColor(blockColor.withAlphaComponent(blockQuote.isCode ? 0.25 : 0.1).cgColor)
-                    ctx.addPath(CGPath(roundedRect: blockFrame, cornerWidth: radius, cornerHeight: radius, transform: nil))
-                    ctx.fillPath()
+                if blockQuote.fillsBackground {
+                    let fillColor = blockColor.withAlphaComponent(blockQuote.isCode ? 0.25 : 0.1).cgColor
+                    if blockAreaIsCleared {
+                        fillBlockBackgroundOnClearedArea(ctx, frame: blockFrame, radius: radius, color: fillColor)
+                    } else {
+                        ctx.setFillColor(fillColor)
+                        ctx.addPath(CGPath(roundedRect: blockFrame, cornerWidth: radius, cornerHeight: radius, transform: nil))
+                        ctx.fillPath()
+                    }
                 }
 
                 ctx.setFillColor(tintColor.cgColor)
@@ -3930,7 +3955,7 @@ open class TextView: Control, NSViewToolTipOwner, ViewDisplayDelegate {
     public var isAccessibilitySensitive: Bool = false
 
     private var accessibilityText: String? {
-        guard let text = textLayout?.attributedString.string, !text.isEmpty else {
+        guard let text = textLayout?.displayString, !text.isEmpty else {
             return nil
         }
         if isAccessibilitySensitive, !NSWorkspace.shared.isVoiceOverEnabled {

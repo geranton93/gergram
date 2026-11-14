@@ -24,11 +24,12 @@ let package = Package(
         .package(name: "ObjcUtils", path: "../ObjcUtils"),
     ],
     targets: [
+        .target(name: "LocalMessageRegex", linkerSettings: [.linkedLibrary("icucore")]),
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
         // Targets can depend on other targets in this package, and on products in packages this package depends on.
         .target(
             name: "InAppSettings",
-            dependencies: [.product(name: "SwiftSignalKit", package: "SSignalKit", condition: nil),
+            dependencies: ["LocalMessageRegex", .product(name: "SwiftSignalKit", package: "SSignalKit", condition: nil),
                            .product(name: "Postbox", package: "Postbox", condition: nil),
                            .product(name: "KeyboardKey", package: "KeyboardKey", condition: nil),
                            .product(name: "Strings", package: "Strings", condition: nil),

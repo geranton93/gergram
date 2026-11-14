@@ -14,7 +14,9 @@ python3 "$SCRIPT_DIR/prepare-telegram-api.py"
 
 . "$SCRIPT_DIR/framework-inputs.sh"
 
-
+if [ -z "${GERGRAM_FLATC:-}" ] && [ ! -x "$ROOT_DIR/.build/flatbuffers-24.12.23/flatc" ]; then
+    bash "$SCRIPT_DIR/build-flatc.sh"
+fi
 python3 "$SCRIPT_DIR/prepare-flat-serialization.py"
 
 

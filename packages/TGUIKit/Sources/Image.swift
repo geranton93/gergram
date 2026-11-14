@@ -64,7 +64,7 @@ private func decodedBitmapImage(_ image: CGImage) -> CGImage? {
     return context.makeImage()
 }
 
-public func roundImage(_ data:Data, _ s:NSSize, cornerRadius:CGFloat = -1, reversed:Bool = false, scale:CGFloat = 1.0, bubble: Bool = false) -> CGImage? {
+public func roundImage(_ data:Data, _ s:NSSize, cornerRadius:CGFloat = -1, reversed:Bool = false, scale:CGFloat = 1.0, bubble: Bool = false, radiusUsesImageScale: Bool = false) -> CGImage? {
     return autoreleasepool {
         let image:CGImageSource? = CGImageSourceCreateWithData(data as CFData, nil)
         
@@ -99,6 +99,12 @@ public func roundImage(_ data:Data, _ s:NSSize, cornerRadius:CGFloat = -1, rever
                         ctx.scaleBy(x: 1.0, y: -1.0)
                         ctx.translateBy(x: -rect.midX, y: -rect.midY)
                         ctx.clip()
+                    } else if radiusUsesImageScale {
+                        let radius = min(max(0, cornerRadius * scale), min(size.width, size.height) / 2)
+                        if radius > 0 {
+                            ctx.addPath(CGPath(roundedRect: size.bounds, cornerWidth: radius, cornerHeight: radius, transform: nil))
+                            ctx.clip()
+                        }
                     } else {
                         if cornerRadius == -1 {
                             var startAngle: Float = Float(2 * Double.pi)

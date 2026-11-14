@@ -7,6 +7,8 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--source', type=Path, default=root / 'packages/StoriesUI/Sources/StoriesUI/StoryChatContent.swift')
+parser.add_argument('--signal-kit', type=Path, default=root / 'submodules/telegram-ios/submodules/SSignalKit')
+parser.add_argument('--range-set', type=Path, default=root / 'submodules/telegram-ios/submodules/Utils/RangeSet')
 parser.add_argument('--filter')
 parser.add_argument('--skip')
 args = parser.parse_args()
@@ -20,17 +22,20 @@ def block(marker):
         depth += (source[end] == '{') - (source[end] == '}')
         end += 1
     return source[start:end].replace('public func ', 'func ')
-markers = ['private func storyVideoPreloadRange(', 'private func storyMediaPreload(', 'public func preloadStoryMedia(', 'public func waitUntilStoryMediaPreloaded(']
-production = '\n\n'.join(block(marker) for marker in markers if marker in source)
+markers = ['private func storyVideoPreloadRange(', 'private func storyMediaPreload(', 'public func preloadStoryMedia(', 'private func preloadStoryMedia(', 'public func waitUntilStoryMediaPreloaded(']
+story_sources = root / 'packages/StoriesUI/Sources/StoriesUI'
+helpers = [(story_sources / name).read_text().removeprefix('import TelegramCore\n')
+           for name in ('StoryVideoPreloadRange.swift', 'StorySelectedMedia.swift')]
+production = '\n\n'.join(helpers + [block(marker) for marker in markers if marker in source])
 fixture = Path(__file__).with_name('StoryPreloadTests.swift').read_text().replace('__PRODUCTION__', production)
 with tempfile.TemporaryDirectory(prefix='story-preload-') as directory:
     directory = Path(directory)
-    ssk = json.dumps(str(root / 'submodules/telegram-ios/submodules/SSignalKit'))
-    ranges = json.dumps(str(root / 'submodules/telegram-ios/submodules/Utils/RangeSet'))
+    ssk = json.dumps(str(args.signal_kit.resolve()))
+    ranges = json.dumps(str(args.range_set.resolve()))
     (directory / 'Package.swift').write_text('// swift-tools-version:5.9\nimport PackageDescription\nlet package = Package(name: "StoryPreload", platforms: [.macOS(.v10_13)], dependencies: [.package(path: ' + ssk + '), .package(path: ' + ranges + ')], targets: [.testTarget(name: "StoryPreloadTests", dependencies: [.product(name: "SwiftSignalKit", package: "SSignalKit"), .product(name: "RangeSet", package: "RangeSet")], path: "Tests")])\n')
     (directory / 'Tests').mkdir()
     (directory / 'Tests/StoryPreloadTests.swift').write_text(fixture)
-    command = ['swift', 'test', '--package-path', str(directory), '--disable-sandbox', '--jobs', '4']
+    command = ['swift', 'test', '--package-path', str(directory), '--manifest-cache', 'none', '--disable-sandbox', '--jobs', '4']
     if args.filter: command += ['--filter', args.filter]
     if args.skip: command += ['--skip', args.skip]
     raise SystemExit(subprocess.run(command).returncode)

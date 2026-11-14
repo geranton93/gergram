@@ -14,6 +14,27 @@ final class TextViewUpdateTests: XCTestCase {
         return layout
     }
 
+    func testDisplayTextChangesMeasurementAndPreservesSelectionSource() {
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13)]
+        let source = NSAttributedString(string: String(repeating: "W", count: 80), attributes: attributes)
+        let original = TextViewLayout(source)
+        let projected = TextViewLayout(source, displayTextTransform: { text in
+            NSAttributedString(string: String(repeating: "i", count: text.length), attributes: attributes)
+        })
+        original.measure(width: 2_000)
+        projected.measure(width: 2_000)
+
+        XCTAssertLessThan(projected.layoutSize.width, original.layoutSize.width)
+        XCTAssertNotEqual(projected, original)
+        projected.selectedRange.range = NSRange(location: 1, length: 3)
+        XCTAssertEqual(projected.selectedString.string, "WWW")
+
+        projected.setAttributedString(NSAttributedString(string: "MMMM", attributes: attributes))
+        projected.measure(width: 2_000)
+        XCTAssertEqual(projected.displayString, "iiii")
+        XCTAssertEqual(projected.selectedString.string, "MMM")
+    }
+
     func testRepeatedUpdatesKeepTheLayerOrder() {
         let window = NSWindow(contentRect: NSMakeRect(0, 0, 300, 100), styleMask: [.borderless], backing: .buffered, defer: true)
         window.contentView = NSView(frame: NSMakeRect(0, 0, 300, 100))

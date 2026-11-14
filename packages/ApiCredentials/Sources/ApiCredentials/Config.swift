@@ -1,28 +1,48 @@
 import Cocoa
 
 public final class ApiEnvironment {
-    public static var apiId:Int32 {
-        return 9
+    public static var apiId: Int32 {
+        Configuration.value(for: .apiId).flatMap(Int32.init) ?? 0
     }
-    public static var apiHash:String {
-        return "3975f648bb682ee889f35483bc618d1c"
+
+    public static var apiHash: String {
+        Configuration.value(for: .apiHash) ?? ""
     }
-    
+
+    public static var hasApiCredentials: Bool {
+        let hash = apiHash.utf8
+        return apiId > 0 && hash.count == 32 && hash.allSatisfy { byte in
+            (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte)
+        }
+    }
+
     public static var bundleId: String {
-        return "ru.keepcoder.Telegram"
+        Configuration.value(for: .bundleId) ?? ""
     }
+
     public static var teamId: String {
-        return "6N38VWS5BX"
+        Configuration.value(for: .teamId) ?? ""
     }
-    
-    
-    
+
+    private static var applicationGroupURL: URL? {
+        let bundleId = self.bundleId
+        guard !teamId.isEmpty, !bundleId.isEmpty, !bundleId.lowercased().hasPrefix("ru.keepcoder.telegram"),
+              let currentBundleId = Bundle.main.bundleIdentifier,
+              currentBundleId == bundleId || currentBundleId == bundleId + ".TelegramShare" else {
+            return nil
+        }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+    }
+
     public static var containerURL: URL? {
-        let appGroupName = ApiEnvironment.group
-        let containerUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)?.appendingPathComponent(prefix)
+        let containerUrl = applicationGroupURL?.appendingPathComponent(prefix)
         if let containerUrl = containerUrl {
-            try? FileManager.default.createDirectory(at: containerUrl, withIntermediateDirectories: true, attributes: nil)
-            return containerUrl
+            do {
+                try FileManager.default.createDirectory(at: containerUrl, withIntermediateDirectories: true, attributes: nil)
+                return containerUrl
+            } catch {
+                return nil
+            }
         }
         return nil
     }
@@ -44,9 +64,7 @@ public final class ApiEnvironment {
     }
     
     public static var legacyContainerURL: URL? {
-        let appGroupName = ApiEnvironment.group
-        let containerUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
-        return containerUrl
+        applicationGroupURL
     }
     
     public static var group: String {

@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import CrashReports
 
@@ -61,15 +62,17 @@ final class CrashReportStoreTests: XCTestCase {
         let installed = Date(timeIntervalSince1970: 2_000_000)
         let store = store(now: installed)
         try writeReport(name: "Telegram-1.ips", procPath: executable, date: installed.addingTimeInterval(10))
+        store.rescan()
         let first = store.scan()
         XCTAssertEqual(first.count, 1)
-        store.markHandled(first)
         let handled = expectation(description: "handled")
-        _ = store.reports.start(next: { reports in
+        let observation = store.reports.start(next: { reports in
             if reports.isEmpty {
                 handled.fulfill()
             }
         })
+        defer { observation.dispose() }
+        store.markHandled(first)
         wait(for: [handled], timeout: 5)
         XCTAssertTrue(store.scan().isEmpty)
 
@@ -96,5 +99,54 @@ final class CrashReportStoreTests: XCTestCase {
     func testAMissingDirectoryGivesNoReports() {
         let store = CrashReportStore(handledKey: key, directory: directory.appendingPathComponent("missing"), executablePath: executable, homeDirectory: home, defaults: defaults)
         XCTAssertTrue(store.scan().isEmpty)
+    }
+
+    func testIgnoresSymlinksHardLinksAndSpecialFiles() throws {
+        let installed = Date(timeIntervalSince1970: 5_000_000)
+        let store = store(now: installed)
+        let date = installed.addingTimeInterval(10)
+        let source = try writeReport(name: "Other.ips", procPath: executable, date: date)
+        try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("Telegram-symlink.ips"), withDestinationURL: source)
+        try FileManager.default.linkItem(at: source, to: directory.appendingPathComponent("Telegram-hard-link.ips"))
+        let fifo = directory.appendingPathComponent("Telegram-pipe.ips")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("Telegram-directory.ips"), withIntermediateDirectories: false)
+        try writeReport(name: "Telegram-regular.ips", procPath: executable, date: date)
+
+        XCTAssertEqual(store.scan().map { $0.url.lastPathComponent }, ["Telegram-regular.ips"])
+    }
+
+    func testDoesNotFollowTheReportDirectorySymlink() throws {
+        let installed = Date(timeIntervalSince1970: 6_000_000)
+        try writeReport(name: "Telegram-regular.ips", procPath: executable, date: installed.addingTimeInterval(10))
+        let alias = directory.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
+        let store = CrashReportStore(handledKey: key, directory: alias, executablePath: executable, homeDirectory: home, defaults: defaults, now: installed)
+        XCTAssertTrue(store.scan().isEmpty)
+    }
+
+    func testReportByteLimitAcceptsAnExactBoundary() throws {
+        let installed = Date(timeIntervalSince1970: 7_000_000)
+        let store = store(now: installed)
+        for (name, extraByte) in [("Telegram-limit.ips", 0), ("Telegram-oversized.ips", 1)] {
+            let url = try writeReport(name: name, procPath: executable, date: installed)
+            let bytes = try Data(contentsOf: url)
+            let padded = bytes + Data(repeating: UInt8(ascii: " "), count: CrashReportStore.maxReportBytes - bytes.count + extraByte)
+            try padded.write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: installed.addingTimeInterval(Double(extraByte + 1))], ofItemAtPath: url.path)
+        }
+        XCTAssertEqual(store.scan().map { $0.url.lastPathComponent }, ["Telegram-limit.ips"])
+    }
+
+    func testAReportBeyondTheNewestCandidateWindowIsNotRead() throws {
+        let installed = Date(timeIntervalSince1970: 8_000_000)
+        let store = store(now: installed)
+        try writeReport(name: "Telegram-older.ips", procPath: executable, date: installed.addingTimeInterval(1))
+        for index in 0 ..< CrashReportStore.maxCandidates {
+            try writeReport(name: "Telegram-hang-\(index).ips", procPath: executable, bugType: "288", date: installed.addingTimeInterval(Double(index + 2)))
+        }
+        XCTAssertTrue(store.scan().isEmpty)
+        try writeReport(name: "Telegram-newest.ips", procPath: executable, date: installed.addingTimeInterval(Double(CrashReportStore.maxCandidates + 2)))
+        XCTAssertEqual(store.scan().map { $0.url.lastPathComponent }, ["Telegram-newest.ips"])
     }
 }

@@ -6,6 +6,7 @@ import Postbox
 import SwiftSignalKit
 import ChatModeTypes
 import GeneralRows
+import InAppSettings
 import Localization
 import PremiumUI
 import TelegramTheme
@@ -254,8 +255,10 @@ public class ChatEmptyPeerItem: TableRowItem {
             |> then(getPeerView(peerId: chatInteraction.peerId, postbox: context.account.postbox))
             |> deliverOnMainQueue
 
-        let sticker: Signal<FoundStickerItem?, NoError> = .single(nil)
-            |> then(context.engine.stickers.randomGreetingSticker() |> deliverOnMainQueue)
+        let greeting = ChatGreetingSticker.suggestions(
+            hidden: ChatAffordancePreferences.shared.hidesGreetingStickerSignal |> deliverOnMainQueue,
+            load: { context.engine.stickers.randomGreetingSticker() |> deliverOnMainQueue }
+        )
 
         let managerPeer: Signal<Peer?, NoError> = cachedData |> mapToSignal { cached in
             if let cached = cached as? CachedUserData, let botManagerId = cached.botManagerId {
@@ -264,7 +267,7 @@ public class ChatEmptyPeerItem: TableRowItem {
             return .single(nil)
         }
 
-        peerViewDisposable.set(combineLatest(queue: .mainQueue(), cachedData, peer, sticker, managerPeer).start(next: { [weak self] cached, peer, sticker, managerPeer in
+        peerViewDisposable.set(combineLatest(queue: .mainQueue(), cachedData, peer, greeting, managerPeer).start(next: { [weak self] cached, peer, greeting, managerPeer in
             guard let self else { return }
             guard let cachedData = cached as? CachedUserData,
                   let user = peer,
@@ -281,7 +284,7 @@ public class ChatEmptyPeerItem: TableRowItem {
             } else if cachedData.flags.contains(.premiumRequired), !self.chatInteraction.interactionContext.isPremium {
                 self.applyPremiumRequired(user: user, theme: theme)
             } else if case let .known(intro) = cachedData.businessIntro, let intro = intro {
-                self.applyBusinessIntro(intro: intro, user: user, greetingSticker: sticker, theme: theme)
+                self.applyBusinessIntro(intro: intro, user: user, greetingSticker: greeting.sticker, hidesGreetingSticker: greeting.isHidden, theme: theme)
             }
             self.view?.set(item: self)
         }))
@@ -408,11 +411,13 @@ public class ChatEmptyPeerItem: TableRowItem {
         self.standImage = (TelegramThemeHooks.shared.image(.iconChatPremiumRequired).precomposed(accentTint), Metrics.standImagePremium)
     }
 
-    private func applyBusinessIntro(intro: TelegramBusinessIntro, user: Peer, greetingSticker: FoundStickerItem?, theme: TelegramPresentationTheme) {
+    private func applyBusinessIntro(intro: TelegramBusinessIntro, user: Peer, greetingSticker: FoundStickerItem?, hidesGreetingSticker: Bool, theme: TelegramPresentationTheme) {
         let attr = NSMutableAttributedString()
         attr.append(string: intro.title.isEmpty ? strings().chatEmptyChat : intro.title, color: theme.colors.text, font: .medium(.text))
-        attr.append(string: "\n", color: theme.colors.text, font: .medium(.text))
-        attr.append(string: intro.text.isEmpty ? strings().chatEmptyChatInfo : intro.text, color: theme.colors.text, font: .normal(.text))
+        if !hidesGreetingSticker || !intro.text.isEmpty {
+            attr.append(string: "\n", color: theme.colors.text, font: .medium(.text))
+            attr.append(string: intro.text.isEmpty ? strings().chatEmptyChatInfo : intro.text, color: theme.colors.text, font: .normal(.text))
+        }
 
         self.textViewLayout = TextViewLayout(attr, alignment: .center)
         self.textViewLayout.interactions = LinkHooks.shared.globalLinkExecutor()

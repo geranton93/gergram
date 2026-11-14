@@ -93,86 +93,189 @@ private final class ImageCanvasStickerPickerImpl: EditImageCanvasStickerPicker {
     private let disposable = MetaDisposable()
     private let dragDisposable = MetaDisposable()
     private let visibilityDisposable = MetaDisposable()
+    private weak var pickerInteractions: EntertainmentInteractions?
+    private var pickerOwner: UUID?
+    private var stopAcceptingDrags: (() -> Void)?
+    private var dropDisposable: MetaDisposable?
     var visibilityChanged: ((Bool) -> Void)?
 
     init(context: AccountContext) {
         self.context = context
         self.entertainment = ImageCanvasEntertainment.get(context).entertainment
         visibilityDisposable.set((entertainment.viewOnStage |> deliverOnMainQueue).start(next: { [weak self] isShown in
-            self?.visibilityChanged?(isShown)
+            self?.updatePickerVisibility(isShown)
         }))
+    }
+
+    private func updatePickerVisibility(_ isShown: Bool) {
+        guard let owner = pickerOwner, let interactions = pickerInteractions,
+              entertainment.interactions === interactions, interactions.imageCanvasPickerOwner == owner else { return }
+        if !isShown {
+            invalidateDragRoutes(preservingDrop: true)
+        }
+        visibilityChanged?(isShown)
     }
 
     deinit {
         disposable.dispose()
         dragDisposable.dispose()
+        dropDisposable?.dispose()
         visibilityDisposable.dispose()
-        let interactions = entertainment.interactions
-        interactions?.sendSticker = { _, _, _, _ in }
-        interactions?.sendAnimatedEmoji = { _, _, _, _, _ in }
-        interactions?.sendEmoji = { _, _ in }
-        interactions?.sendGIF = { _, _, _ in }
-        interactions?.dragItem = nil
+        releasePickerOwnership()
     }
 
     func show(for control: Control, select: @escaping (EditImageCanvasStickerPick) -> Void, drag: @escaping (EditImageCanvasStickerDrag) -> Void) {
-        let interactions = entertainment.interactions
-        interactions?.sendSticker = { [weak self] file, _, _, _ in
-            self?.pick(.file(file), disposable: self?.disposable, select: select)
-            self?.entertainment.closePopover()
+        guard let window = control.window as? Window, !window.inLiveSwiping, window.sheets.isEmpty else { return }
+        guard let interactions = entertainment.interactions else { return }
+        invalidateDragRoutes(preservingDrop: false)
+        disposable.set(nil)
+        let owner = claimPickerOwnership(on: interactions)
+        installPickerRoutes(interactions: interactions, owner: owner, select: select, drag: drag)
+        showPopover(for: control, with: entertainment)
+    }
+
+    private func installPickerRoutes(
+        interactions: EntertainmentInteractions,
+        owner: UUID,
+        select: @escaping (EditImageCanvasStickerPick) -> Void,
+        drag: @escaping (EditImageCanvasStickerDrag) -> Void
+    ) {
+        let selectItem = { [weak self, weak interactions] (item: EntertainmentDragItem) in
+            guard let self, self.ownsPicker(owner, on: interactions) else { return }
+            self.pick(item, disposable: self.disposable, select: { [weak self, weak interactions] pick in
+                guard self?.ownsPicker(owner, on: interactions) == true else { return }
+                select(pick)
+            })
+            if self.ownsPicker(owner, on: interactions) {
+                self.entertainment.closePopover()
+            }
         }
-        interactions?.sendAnimatedEmoji = { [weak self] item, _, _, _, _ in
-            self?.pick(.file(item.file._parse()), disposable: self?.disposable, select: select)
-            self?.entertainment.closePopover()
-        }
-        interactions?.sendEmoji = { [weak self] emoji, _ in
-            self?.pick(.emoji(emoji), disposable: self?.disposable, select: select)
-            self?.entertainment.closePopover()
-        }
-        interactions?.sendGIF = { [weak self] file, _, _ in
-            self?.pick(.file(file), disposable: self?.disposable, select: select)
-            self?.entertainment.closePopover()
-        }
+        interactions.sendSticker = { file, _, _, _ in selectItem(.file(file)) }
+        interactions.sendAnimatedEmoji = { item, _, _, _, _ in selectItem(.file(item.file._parse())) }
+        interactions.sendEmoji = { emoji, _ in selectItem(.emoji(emoji)) }
+        interactions.sendGIF = { file, _, _ in selectItem(.file(file)) }
         var dragImage: CGImage?
         var isDragging = false
-        var lastPoint = NSZeroPoint
-        interactions?.dragItem = { [weak self] item, image, phase in
-            guard let self else {
+        var previewGeneration: UInt64 = 0
+        let finishDrag = { [weak self] in
+            guard isDragging else { return }
+            isDragging = false
+            dragImage = nil
+            self?.dragDisposable.set(nil)
+            drag(.ended)
+        }
+        interactions.cancelItemDrag = finishDrag
+        var acceptsDrag = true
+        stopAcceptingDrags = { [weak interactions] in
+            acceptsDrag = false
+            if interactions?.imageCanvasPickerOwner == owner {
+                interactions?.dragItem = nil
+                interactions?.cancelItemDrag = nil
+            }
+            finishDrag()
+        }
+        interactions.dragItem = { [weak self, weak interactions] item, image, phase in
+            guard let self, self.ownsPicker(owner, on: interactions), acceptsDrag else {
                 return
             }
             switch phase {
             case let .moved(point):
-                lastPoint = point
                 if let image = image {
                     dragImage = image
                 }
                 if !isDragging {
                     isDragging = true
+                    previewGeneration &+= 1
+                    self.cancelPendingDrop()
+                    let generation = previewGeneration
                     drag(.moved(dragImage, point))
-                    self.pick(item, disposable: self.dragDisposable, select: { pick in
-                        if isDragging {
-                            dragImage = pick.image
-                            drag(.preview(pick))
-                        }
+                    guard self.ownsPicker(owner, on: interactions), isDragging, previewGeneration == generation else { return }
+                    self.pick(item, disposable: self.dragDisposable, select: { [weak self, weak interactions] pick in
+                        guard self?.ownsPicker(owner, on: interactions) == true, isDragging, previewGeneration == generation else { return }
+                        dragImage = pick.image
+                        drag(.preview(pick))
                     })
                 } else {
                     drag(.moved(dragImage, point))
                 }
             case let .ended(point):
-                isDragging = false
-                dragImage = nil
-                self.dragDisposable.set(nil)
-                drag(.ended)
-                self.pick(item, disposable: self.disposable, select: { pick in
+                guard isDragging else { return }
+                let generation = previewGeneration
+                finishDrag()
+                guard self.ownsPicker(owner, on: interactions), acceptsDrag, previewGeneration == generation else { return }
+                let request = MetaDisposable()
+                self.dropDisposable = request
+                self.pick(item, disposable: request, select: { [weak self, weak interactions, weak request] pick in
+                    guard let self, let request, self.dropDisposable === request else { return }
+                    self.cancelPendingDrop()
+                    guard self.ownsPicker(owner, on: interactions) else { return }
                     drag(.dropped(pick, point))
                 })
             }
         }
-        showPopover(for: control, with: entertainment)
+    }
+
+    private func ownsPicker(_ owner: UUID, on interactions: EntertainmentInteractions?) -> Bool {
+        guard let interactions else { return false }
+        return entertainment.interactions === interactions && interactions.imageCanvasPickerOwner == owner
+    }
+
+    private func claimPickerOwnership(on interactions: EntertainmentInteractions) -> UUID {
+        interactions.retireImageCanvasPicker?()
+        if interactions.imageCanvasPickerOwner != nil {
+            entertainment.closePopover()
+        }
+        let owner = UUID()
+        self.pickerOwner = owner
+        self.pickerInteractions = interactions
+        interactions.imageCanvasPickerOwner = owner
+        interactions.retireImageCanvasPicker = { [weak self, weak interactions] in
+            guard let self, self.pickerOwner == owner, interactions?.imageCanvasPickerOwner == owner else { return }
+            self.invalidateDragRoutes(preservingDrop: false)
+            self.disposable.set(nil)
+        }
+        return owner
+    }
+
+    private func releasePickerOwnership() {
+        let owner = pickerOwner
+        pickerOwner = nil
+        guard let owner, let interactions = pickerInteractions, interactions.imageCanvasPickerOwner == owner else { return }
+        interactions.imageCanvasPickerOwner = nil
+        interactions.retireImageCanvasPicker = nil
+        interactions.sendSticker = { _, _, _, _ in }
+        interactions.sendAnimatedEmoji = { _, _, _, _, _ in }
+        interactions.sendEmoji = { _, _ in }
+        interactions.sendGIF = { _, _, _ in }
+        interactions.dragItem = nil
+        interactions.cancelItemDrag = nil
+    }
+
+    private func invalidateDragRoutes(preservingDrop: Bool) {
+        let stopAcceptingDrags = self.stopAcceptingDrags
+        self.stopAcceptingDrags = nil
+        stopAcceptingDrags?()
+        if !preservingDrop {
+            cancelPendingDrop()
+        }
+    }
+
+    private func cancelPendingDrop() {
+        let disposable = dropDisposable
+        dropDisposable = nil
+        disposable?.dispose()
     }
 
     func close() {
-        entertainment.closePopover()
+        invalidateDragRoutes(preservingDrop: false)
+        disposable.set(nil)
+        guard let owner = pickerOwner, let interactions = pickerInteractions,
+              interactions.imageCanvasPickerOwner == owner else { return }
+        releasePickerOwnership()
+        if entertainment.interactions === interactions {
+            entertainment.closePopover()
+            visibilityChanged?(false)
+        }
     }
 
     private func pick(_ item: EntertainmentDragItem, disposable: MetaDisposable?, select: @escaping (EditImageCanvasStickerPick) -> Void) {

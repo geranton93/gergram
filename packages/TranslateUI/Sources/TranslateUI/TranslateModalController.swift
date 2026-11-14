@@ -112,6 +112,7 @@ private final class Arguments {
     let richPage: InstantPage?
     let updateCustomPrompt:(String)->Void
     var toggleAlwaysUse: (() -> Void)?
+    var updateProvider: ((TranslationProvider) -> Void)?
 
     init(context: any AccountContextProtocol, revealFrom:@escaping()->Void, revealTo:@escaping()->Void, updateFrom:@escaping(String?)->Void, updateTo:@escaping(String)->Void, updateTone:@escaping(String)->Void, copyTranslation:@escaping()->Void, translateEntireChat:(()->Void)? = nil, updateMode:@escaping(TranslateTabMode)->Void = { _ in }, updateStyle:@escaping(String)->Void = { _ in }, toggleEmojify:@escaping()->Void = { }, showStyleTooltip:@escaping()->Void = { }, createNewStyle:@escaping()->Void = { }, styleMenu:@escaping(TranslationStyleItem)->ContextMenu? = { _ in nil }, isInputMode: Bool = false, isRich: Bool = false, richPage: InstantPage? = nil, updateCustomPrompt:@escaping(String)->Void = { _ in }) {
         self.context = context
@@ -141,6 +142,8 @@ private struct ComposeKey: Hashable {
     let styleId: String
     let emojify: Bool
     let toneId: String
+    let provider: TranslationProvider
+    let sourceLanguage: String?
     var prompt: String = ""
 }
 
@@ -177,6 +180,7 @@ private struct State : Equatable {
     var copyRestriction: String? = nil
     var alwaysUse: Bool?
     var restoredStyle: TelegramComposeAIMessageMode.CloudStyle.Reference?
+    var providerSelection = TranslationProviderSelection()
 
     var alwaysUseSettings: ChatAIEditorSettings? {
         switch mode {
@@ -205,7 +209,8 @@ private struct State : Equatable {
     }
 
     var cacheKey: ComposeKey {
-        return ComposeKey(mode: mode, toLang: to, styleId: styleId, emojify: emojify, toneId: toneId, prompt: styleId == "prompt" ? customPrompt : "")
+        let provider = providerSelection.provider
+        return ComposeKey(mode: mode, toLang: to, styleId: styleId, emojify: emojify, toneId: toneId, provider: provider, sourceLanguage: provider == .google ? from : nil, prompt: styleId == "prompt" ? customPrompt : "")
     }
 
     func translatedAttr(context: any AccountContextProtocol) -> NSAttributedString? {
@@ -827,6 +832,18 @@ private func entries(_ state: State, arguments: Arguments) -> [InputDataEntry] {
         sectionId += 1
     }
 
+    if let updateProvider = arguments.updateProvider, state.providerSelection.isGoogleAvailable {
+        let options = [
+            ContextMenuItem("Telegram", handler: { updateProvider(.telegram) }, state: state.providerSelection.provider == .telegram ? .on : nil),
+            ContextMenuItem("Google Translate", handler: { updateProvider(.google) }, state: state.providerSelection.provider == .google ? .on : nil)
+        ]
+        let providerName = state.providerSelection.provider == .telegram ? "Telegram" : "Google Translate"
+        entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: .init("translation_provider"), data: .init(name: localizedString("Gergram.Translate.Provider"), color: theme.colors.text, type: .contextSelector(providerName, options), viewType: .singleItem)))
+        index += 1
+        entries.append(.sectionId(sectionId, type: .normal))
+        sectionId += 1
+    }
+
     if true {
         let showOriginal = !arguments.isInputMode || state.mode == .translate || state.mode == .fix
         let isStyleMode = arguments.isInputMode && state.mode == .style
@@ -900,7 +917,7 @@ private func entries(_ state: State, arguments: Arguments) -> [InputDataEntry] {
                 toneMenu: nil
             )
         } else if isTranslateMode {
-            let isDefaultTone = state.toneId == "neutral"
+            let isDefaultTone = state.toneId == "neutral" || state.providerSelection.provider == .google
             let languageWithTone: String
             if !isDefaultTone {
                 languageWithTone = "\(toName) (\(toneName))"
@@ -913,19 +930,21 @@ private func entries(_ state: State, arguments: Arguments) -> [InputDataEntry] {
                 languageMenu: {
                     var items: [ContextMenuItem] = []
 
-                    let toneItem = ContextMenuItem(strings().translateTone, handler: {}, itemImage: MenuAnimation.menu_tune_fork.value)
-                    let toneSubmenu = ContextMenu()
-                    toneSubmenu.addItem(ContextMenuItem(strings().chatHeaderToneNeutral, handler: {
-                        arguments.updateTone("neutral")
-                    }, state: isDefaultTone ? .on : nil))
-                    for tone in tones where tone.id != "neutral" {
-                        toneSubmenu.addItem(ContextMenuItem(tone.title, handler: {
-                            arguments.updateTone(tone.id)
-                        }, state: state.toneId == tone.id ? .on : nil))
+                    if state.providerSelection.provider == .telegram {
+                        let toneItem = ContextMenuItem(strings().translateTone, handler: {}, itemImage: MenuAnimation.menu_tune_fork.value)
+                        let toneSubmenu = ContextMenu()
+                        toneSubmenu.addItem(ContextMenuItem(strings().chatHeaderToneNeutral, handler: {
+                            arguments.updateTone("neutral")
+                        }, state: isDefaultTone ? .on : nil))
+                        for tone in tones where tone.id != "neutral" {
+                            toneSubmenu.addItem(ContextMenuItem(tone.title, handler: {
+                                arguments.updateTone(tone.id)
+                            }, state: state.toneId == tone.id ? .on : nil))
+                        }
+                        toneItem.submenu = toneSubmenu
+                        items.append(toneItem)
+                        items.append(ContextSeparatorItem())
                     }
-                    toneItem.submenu = toneSubmenu
-                    items.append(toneItem)
-                    items.append(ContextSeparatorItem())
 
                     items.append(contentsOf: languageMenuItems(selectedCode: state.to, update: arguments.updateTo))
                     return items
@@ -1017,36 +1036,36 @@ private func entries(_ state: State, arguments: Arguments) -> [InputDataEntry] {
 
 
 
-func translateBlocks(context: any AccountContextProtocol, from: String?, to: String, blocks: [(String, [MessageTextEntity])], configState: AppConfigTranslateState, tone: TranslationTone = .neutral) -> Signal<(detect: String?, result: String, entities: [MessageTextEntity]), Translate.Error> {
+private enum TranslationRoute {
+    case telegram(TranslationTone)
+    case google(authorize: () -> Signal<Bool, NoError>)
+}
+
+private func containsTranslationSpoiler(_ entities: [MessageTextEntity]) -> Bool {
+    return entities.contains { entity in
+        if case .Spoiler = entity.type { return true }
+        return false
+    }
+}
+
+private func translateBlocks(context: any AccountContextProtocol, from: String?, to: String, blocks: [(String, [MessageTextEntity])], route: TranslationRoute) -> Signal<(detect: String?, result: String, entities: [MessageTextEntity]), Translate.Error> {
     var signals:[Signal<(detect: String?, result: String, entities: [MessageTextEntity]), Translate.Error>] = []
     for block in blocks {
-        switch configState {
-        case .enabled:
-            signals.append(context.engine.messages.translate(text: block.0, toLang: to, entities: block.1, tone: tone) |> `catch` { error in
-                switch error {
-                case .tryAlternative:
-                    return .single(nil)
-                default:
-                    #if DEBUG
-                    return .single(nil)
-                    #endif
-                    return .fail(.generic)
-                }
+        switch route {
+        case let .telegram(tone):
+            signals.append(context.engine.messages.translate(text: block.0, toLang: to, entities: block.1, tone: tone) |> mapError { _ -> Translate.Error in
+                .generic
             } |> mapToSignal { value in
-                if let value = value {
-                    return .single((detect: nil, result: value.0, entities: value.1))
-                } else {
-                    return Translate.translateText(text: block.0, from: from, to: to) |> map {
-                        (detect: $0.detect, result: $0.result, entities: [])
-                    }
+                guard let value else { return .fail(.generic) }
+                return .single((detect: nil, result: value.0, entities: value.1))
+            })
+        case let .google(authorize):
+            signals.append((authorize() |> castError(Translate.Error.self)) |> mapToSignal { allowed in
+                guard allowed else { return .fail(.generic) }
+                return Translate.translateText(text: block.0, from: from, to: to) |> map {
+                    (detect: $0.detect, result: $0.result, entities: [])
                 }
             })
-        case .alternative:
-            signals.append(Translate.translateText(text: block.0, from: from, to: to) |> map {
-                (detect: $0.detect, result: $0.result, entities: [])
-            })
-        case .disabled, .system:
-            continue
         }
         
     }
@@ -1088,6 +1107,8 @@ public func TranslateModalController(context: any AccountContextProtocol, from: 
     let richPage: InstantPage? = richMessagePage ?? richBlocks.flatMap { richTextInstantPage(from: outgoingBlocks(fromSelection: $0), media: [:]) }
 
     let isInputMode = onUse != nil || onUseRich != nil
+    let manualTranslationConfig = AppConfigTranslateState(rawValue: context.appConfiguration.getStringValue("translations_manual_enabled", orElse: "enabled")) ?? .disabled
+    let offersProviderSelection = !isInputMode && !isRichMessage && richPage == nil && canBreak && configState.canTranslate && manualTranslationConfig.canTranslate && !text.isEmpty && messageId != nil && !containsTranslationSpoiler(entities)
 
     let entities = onUse == nil ? entities : entities.filter { entity in
         if case .FormattedDate = entity.type {
@@ -1215,6 +1236,42 @@ public func TranslateModalController(context: any AccountContextProtocol, from: 
     }
 
 
+    let googleTranslationEligibility: () -> Signal<Bool, NoError> = {
+        guard offersProviderSelection, !context.isFrozen, let messageId,
+              messageId.namespace == Namespaces.Message.Cloud, messageId.peerId.namespace != Namespaces.Peer.SecretChat else {
+            return .single(false)
+        }
+        return context.account.postbox.transaction { transaction -> Bool in
+            guard let message = transaction.getMessage(messageId), let peer = transaction.getPeer(messageId.peerId),
+                  message.text == text, !message.containsSecretMedia, !message.isCopyProtected(), !peer.isCopyProtectionEnabled,
+                  message.autoclearTimeout == nil, message.autoremoveAttribute == nil,
+                  message.activeEphemeralReplacementMessage == nil, message.paidContent == nil,
+                  !message.attributes.contains(where: { attribute in
+                      if let textEntities = attribute as? TextEntitiesMessageAttribute {
+                          return containsTranslationSpoiler(textEntities.entities)
+                      }
+                      return attribute is EphemeralMessageAttribute || attribute is RestrictedContentMessageAttribute || attribute is RichTextMessageAttribute
+                  }) else {
+                return false
+            }
+            let cachedData = transaction.getPeerCachedData(peer.id)
+            if peer is TelegramUser, peer.id != context.peerId, !(cachedData is CachedUserData) {
+                return false
+            }
+            return !peer.isCopyProtected(cachedData: cachedData)
+        }
+    }
+
+    if offersProviderSelection {
+        actionsDisposable.add((googleTranslationEligibility() |> deliverOnMainQueue).start(next: { allowed in
+            updateState { current in
+                var current = current
+                current.providerSelection.setGoogleAvailability(allowed)
+                return current
+            }
+        }))
+    }
+
     let request:()->Void = {
         let presentation = getAnalyticsContext().beginPresentation()
         defer { presentation.end() }
@@ -1223,6 +1280,7 @@ public func TranslateModalController(context: any AccountContextProtocol, from: 
         if state.limitExceeded {
             return
         }
+        disposable.set(nil)
 
         let promptIsEmpty = state.styleId == "prompt" && state.customPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if isInputMode && state.mode == .style && (state.styleId.isEmpty || promptIsEmpty) && !state.emojify {
@@ -1238,7 +1296,7 @@ public func TranslateModalController(context: any AccountContextProtocol, from: 
         }
 
         let key = state.cacheKey
-        if let cached = state.cache[key] {
+        if state.providerSelection.provider == .telegram, let cached = state.cache[key] {
             updateState { current in
                 var current = current
                 current.translated = cached.text
@@ -1370,6 +1428,28 @@ public func TranslateModalController(context: any AccountContextProtocol, from: 
             |> map { result -> (detect: String?, result: String, entities: [MessageTextEntity]) in
                 return (detect: nil, result: result.0, entities: result.1)
             }
+        } else if state.providerSelection.provider == .google {
+            let authorize: () -> Signal<Bool, NoError> = {
+                googleTranslationEligibility() |> take(1) |> deliverOnMainQueue |> map { eligible in
+                    let allowed = eligible && !context.isFrozen
+                    if !allowed {
+                        updateState { current in
+                            var current = current
+                            current.providerSelection.setGoogleAvailability(false)
+                            return current
+                        }
+                    }
+                    return allowed
+                }
+            }
+            if let cached = state.cache[key] {
+                signal = (authorize() |> castError(Translate.Error.self)) |> mapToSignal { allowed in
+                    allowed ? .single((detect: nil, result: cached.text, entities: cached.entities)) : .fail(.generic)
+                }
+            } else {
+                signal = translateBlocks(context: context, from: state.from, to: state.to, blocks: blocks, route: .google(authorize: authorize))
+                |> deliverOnMainQueue
+            }
         } else if let messageId = messageId {
             signal = context.engine.messages.translate(text: text, toLang: stateValue.with { $0.to }, tone: stateValue.with { $0.tone }, messageId: messageId)
             |> mapError { _ -> Translate.Error in
@@ -1383,7 +1463,14 @@ public func TranslateModalController(context: any AccountContextProtocol, from: 
                 }
             }
         } else {
-            signal = translateBlocks(context: context, from: stateValue.with { $0.from }, to: stateValue.with { $0.to }, blocks: blocks, configState: configState, tone: stateValue.with { $0.tone })
+            switch configState {
+            case .enabled:
+                signal = translateBlocks(context: context, from: state.from, to: state.to, blocks: blocks, route: .telegram(state.tone))
+            case .alternative:
+                signal = .fail(.generic)
+            case .disabled, .system:
+                signal = .single((detect: nil, result: "", entities: []))
+            }
         }
         disposable.set(getAnalyticsContext().preservingPresentation(signal).start(next: { result in
             updateState { current in
@@ -1615,6 +1702,40 @@ public func TranslateModalController(context: any AccountContextProtocol, from: 
         }
     })
     
+    if offersProviderSelection {
+        var consentIsOpen = false
+        arguments.updateProvider = { provider in
+            let selection = stateValue.with { $0.providerSelection }
+            guard selection.isGoogleAvailable, selection.provider != provider, !context.isFrozen else { return }
+
+            let select: (Bool) -> Void = { confirmed in
+                guard getController?()?.tableView.window != nil, !context.isFrozen else { return }
+                var updatedSelection = stateValue.with { $0.providerSelection }
+                guard updatedSelection.select(provider, confirmedGoogleConsent: confirmed) else { return }
+                updateState { current in
+                    var current = current
+                    current.providerSelection = updatedSelection
+                    current.translated = nil
+                    current.translatedEntities = []
+                    return current
+                }
+                request()
+            }
+
+            switch provider {
+            case .telegram:
+                select(false)
+            case .google:
+                guard !consentIsOpen else { return }
+                consentIsOpen = true
+                verifyAlert(for: context.window, header: localizedString("Gergram.Translate.GoogleConsentTitle"),
+                            information: localizedString("Gergram.Translate.GoogleConsentText"),
+                            ok: localizedString("Gergram.Translate.GoogleConsentAccept"),
+                            successHandler: { _ in select(true) }, onDeinit: { consentIsOpen = false })
+            }
+        }
+    }
+
     if let alwaysUsePeerId {
         arguments.toggleAlwaysUse = {
             updateState { current in
@@ -1693,7 +1814,13 @@ public func TranslateModalController(context: any AccountContextProtocol, from: 
         return .fail(.none)
     }
 
-    if alwaysUsePeerId != nil {
+    if offersProviderSelection {
+        controller.willDisappear = { _ in
+            if stateValue.with({ $0.providerSelection.provider == .google }) {
+                disposable.set(nil)
+            }
+        }
+    } else if alwaysUsePeerId != nil {
         controller.willDisappear = { controller in
             let table = controller.tableView
             if let index = table.index(hash: InputDataEntryId.general(alwaysUseIdentifier)),

@@ -11,10 +11,12 @@ import GeneralRows
 public struct SidebarState {
     public let tabs: [ChatListFilter]
     public let selectedFilterId: Int32
+    public let hideUnreadCounters: Bool
 
-    public init(tabs: [ChatListFilter], selectedFilterId: Int32) {
+    public init(tabs: [ChatListFilter], selectedFilterId: Int32, hideUnreadCounters: Bool = false) {
         self.tabs = tabs
         self.selectedFilterId = selectedFilterId
+        self.hideUnreadCounters = hideUnreadCounters
     }
 }
 

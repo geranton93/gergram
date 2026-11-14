@@ -5,6 +5,7 @@ import SwiftSignalKit
 import TGUIKit
 import Postbox
 import AppKit
+import InAppSettings
 import TelegramMedia
 import LocalAnimations
 import Localization
@@ -66,6 +67,10 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
         }
         
         public func photos(_ message: Message) -> [Peer] {
+            return photos(message, excluding: [])
+        }
+
+        func photos(_ message: Message, excluding hidden: Set<PeerId>) -> [Peer] {
             switch self {
             case .loading:
                 return []
@@ -75,12 +80,12 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                     return []
                 }
                 if let reactions = reactions {
-                    photos = Array(reactions.items.map { $0.peer._asPeer() }.prefix(3))
+                    photos = Array(reactions.items.lazy.filter { !hidden.contains($0.peer.id) }.prefix(3).map { $0.peer._asPeer() })
                 }
                 if photos.isEmpty {
                     if photos.count < 3, let read = read {
                         let read = read.filter { read in
-                            return !photos.contains(where: { $0.id == read.id })
+                            return !hidden.contains(read.id) && !photos.contains(where: { $0.id == read.id })
                         }
                         photos += Array(read.prefix(3 - photos.count))
                     }
@@ -98,23 +103,46 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
         }
         
         public var peers:[(Peer, MessageReaction.Reaction?, Int32?)] {
+            return peers(excluding: [])
+        }
+
+        func peers(excluding hidden: Set<PeerId>) -> [(Peer, MessageReaction.Reaction?, Int32?)] {
             switch self {
             case let .stats(read, readTimestamps, reactions, _):
-                let readPeers = read ?? []
-                let reactionPeers = reactions?.items.map { ($0.peer._asPeer(), $0.reaction, $0.timestamp ?? readTimestamps[$0.peer.id]) } ?? []
-                let read:[(Peer, MessageReaction.Reaction?, Int32?)] = readPeers.map { ($0, nil, readTimestamps[$0.id]) }.filter({ value in
-                    return !reactionPeers.contains(where: {
-                        $0.0.id == value.0.id
-                    })
-                })
+                let reactionPeers = reactions?.items.filter { !hidden.contains($0.peer.id) }.map { ($0.peer._asPeer(), $0.reaction, $0.timestamp ?? readTimestamps[$0.peer.id]) } ?? []
+                let reactorIds = Set(reactionPeers.map { $0.0.id })
+                let read: [(Peer, MessageReaction.Reaction?, Int32?)] = (read ?? [])
+                    .filter { !hidden.contains($0.id) && !reactorIds.contains($0.id) }
+                    .map { ($0, nil, readTimestamps[$0.id]) }
                 return reactionPeers + read
             default:
                 return []
             }
         }
+
+        var participantIds: Set<PeerId> {
+            guard case let .stats(read, _, reactions, _) = self else { return [] }
+            var ids = Set((read ?? []).map(\.id))
+            if let reactions {
+                ids.formUnion(reactions.items.map { $0.peer.id })
+            }
+            return ids
+        }
+
+        func showsPagination(excluding hidden: Set<PeerId>) -> Bool {
+            guard !hidden.isEmpty, case let .stats(_, _, reactions?, _) = self else { return false }
+            return ChatParticipantVisibility.showsPagination(
+                canLoadMore: reactions.canLoadMore,
+                hasHiddenParticipants: reactions.items.contains { hidden.contains($0.peer.id) }
+            )
+        }
  
         
         public func text(_ message: Message, context: any AccountContextProtocol) -> String {
+            return text(message, relativeTo: context.timestamp, excluding: [], showsTimestampSeconds: FastSettings.showMessageTimestampSeconds)
+        }
+
+        func text(_ message: Message, relativeTo timestamp: Int32, excluding hidden: Set<PeerId>, showsTimestampSeconds: Bool) -> String {
             switch self {
             case let .stats(read, readTimestamps, reactions, _):
                 if let reactions = reactions, !reactions.items.isEmpty {
@@ -130,9 +158,9 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                         } else {
                             return strings().chatMessageReadStatsEmptyViews
                         }
-                    } else if peers.count == 1 {
-                        if message.id.peerId.namespace == Namespaces.Peer.CloudUser, let readTimestamp = readTimestamps[peers[0].id] {
-                            return stringForRelativeTimestamp(relativeTimestamp: readTimestamp, relativeTo: context.timestamp)
+                    } else if peers.count == 1 && !hidden.contains(peers[0].id) {
+                        if message.id.peerId.namespace == Namespaces.Peer.CloudUser, let readTimestamp = readTimestamps[peers[0].id], readTimestamp > 0 {
+                            return relativeTimestampText(readTimestamp, relativeTo: timestamp, showsSeconds: showsTimestampSeconds)
                         }
                         return peers[0].compactDisplayTitle.prefixWithDots(20)
                     } else {
@@ -177,7 +205,7 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
         if self.state.isEmpty {
             return value
         }
-        if state.photos(message).isEmpty {
+        if visiblePhotos.isEmpty {
             return value
         }
         return value - 60
@@ -187,13 +215,20 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
     fileprivate let context: any AccountContextProtocol
     private let disposable = MetaDisposable()
     private let chatInteraction: ChatInteraction
+    private var timestampPrecisionDisposable: Disposable?
+    private var showsTimestampSeconds = FastSettings.showMessageTimestampSeconds
     
     fileprivate var state: State = .loading
+    fileprivate var visiblePhotos: [Peer] { state.photos(message, excluding: hiddenParticipants) }
+    fileprivate var visibleText: String {
+        state.text(message, relativeTo: context.timestamp, excluding: hiddenParticipants, showsTimestampSeconds: showsTimestampSeconds)
+    }
+    fileprivate private(set) var hiddenParticipants: Set<PeerId> = []
     private let availableReactions: AvailableReactions?
     private let reactions: EngineMessageReactionListContext
 
     public override var accessibilityLabel: String? {
-        let text = state.text(message, context: context)
+        let text = visibleText
         return text.isEmpty ? strings().voiceOverCommonLoading : text
     }
     
@@ -209,6 +244,16 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
         self.availableReactions = availableReactions
         super.init(.zero, item: item, interaction: interaction, presentation: presentation)
         
+        if message.id.peerId.namespace == Namespaces.Peer.CloudUser {
+            timestampPrecisionDisposable = (FastSettings.showMessageTimestampSecondsSignal |> deliverOnMainQueue).start(next: { [weak self] showsSeconds in
+                guard let self, self.showsTimestampSeconds != showsSeconds else { return }
+                self.showsTimestampSeconds = showsSeconds
+                let title = self.visibleText
+                if self.item.title != title {
+                    self.item.title = title
+                }
+            })
+        }
         self.load()
     }
     
@@ -242,14 +287,22 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                 }
             }
 
-        disposable.set(readStats.start(next: { [weak self] state in
-            self?.updateState(state, animated: true)
+        let visibleStats = ChatParticipantVisibility.observe(
+            readStats,
+            chatPeerId: message.id.peerId,
+            context: context,
+            participants: \.participantIds
+        )
+        disposable.set(visibleStats.start(next: { [weak self] state, hidden in
+            self?.updateState(state, hidden: hidden, animated: true)
         }))
     }
     
-    private func updateState(_ state: State, animated: Bool) {
+    private func updateState(_ state: State, hidden: Set<PeerId>, animated: Bool) {
         
+        let hiddenChanged = hiddenParticipants != hidden
         self.state = state
+        self.hiddenParticipants = hidden
         
         let chatInteraction = self.chatInteraction
         let message = self.message
@@ -284,30 +337,30 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
             let item = ReactionPeerMenu(title: title, handler: {
                 chatInteraction?.openInfo(peer.0.id, false, nil, nil)
             }, peer: peer.0, context: context, reaction: reaction, readTimestamp: peer.2, message: message, canDelete: canDeleteReactions)
-            let signal:Signal<(CGImage?, Bool), NoError>
-            signal = peerAvatarImage(account: context.account, photo: .peer(peer.0, peer.0.smallProfileImage, peer.0.namePeerColor, TelegramUtilsHooks.shared.peerLetters(peer.0), nil, nil), displayDimensions: NSMakeSize(18 * System.backingScale, 18 * System.backingScale), font: .avatar(13), genCap: true, synchronousLoad: false) |> deliverOnMainQueue
-            _ = signal.start(next: { [weak item] image, _ in
-                if let image = image {
-                    item?.image = NSImage(cgImage: image, size: NSMakeSize(18, 18))
-                }
-            })
             return item
         }
        
-        var items = state.peers.map {
-            makeItem($0)
+        let peers = state.peers(excluding: hidden)
+        let hasReactions = peers.contains(where: { $0.1 != nil })
+        let hasRead = peers.contains(where: { $0.2 != nil })
+        let showsPagination = state.showsPagination(excluding: hidden)
+        let loadMore: () -> Void = { [weak self] in
+            guard let self, case let .stats(_, _, reactions?, _) = self.state, reactions.canLoadMore else { return }
+            self.reactions.loadMore()
         }
-        
-        let hasReactions = state.peers.contains(where: { $0.1 != nil })
-        let hasRead = state.peers.contains(where: { $0.2 != nil })
+        var items = peers.map(makeItem)
+        if showsPagination {
+            items.append(ChatParticipantVisibility.paginationItem(title: strings().chatRichTextShowMore, loadMore: loadMore))
+        }
 
-        if items.count > 1 || hasReactions || hasRead, message.id.peerId.namespace != Namespaces.Peer.CloudUser {
+        if items.count > 1 || hasReactions || hasRead || showsPagination, message.id.peerId.namespace != Namespaces.Peer.CloudUser {
             
             let references:[StickerPackReference] = state.emojiReferences.uniqueElements
             
             if !references.isEmpty {
-                
-                items.append(ContextSeparatorItem())
+                if !items.isEmpty {
+                    items.append(ContextSeparatorItem())
+                }
                 
                 let sources:[ChatMediaStickerPackPreviewSource] = references.map {
                     .emoji($0)
@@ -332,21 +385,12 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                 self.interaction?.presentSubmenu(self.item)
             }
             
-            menu.loadMore = { [weak self] in
-                if let state = self?.state {
-                    switch state {
-                    case let .stats(_, _, reactions, _):
-                        if let reactions = reactions, reactions.canLoadMore {
-                            self?.reactions.loadMore()
-                        }
-                    default:
-                        break
-                    }
-                }
-            }
+            menu.loadMore = showsPagination ? nil : loadMore
             self.item.handler = nil
         } else {
             self.item.submenu = nil
+            menu.loadMore = nil
+            menu.items = []
             self.interaction?.cancelSubmenu(self.item)
             if let item = items.first {
                 self.item.handler = item.handler
@@ -356,7 +400,10 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
             
         }
         
-        self.item.title = state.text(self.message, context: context)
+        self.item.title = visibleText
+        if hiddenChanged {
+            redraw(animated: false)
+        }
         
         
         
@@ -364,6 +411,7 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
     
     deinit {
         disposable.dispose()
+        timestampPrecisionDisposable?.dispose()
     }
     
     public override var effectiveSize: NSSize {
@@ -504,23 +552,24 @@ private final class MessageReadMenuItemView : AppMenuRowView {
         }
         let avatars: AvatarContentView?
         
-        let photos = item.state.photos(item.message)
+        let photos = item.visiblePhotos
         
         let updated = photos.map { $0.id }
         if updated != self.photos || self.isLoading != item.state.isLoading(item.message, context: item.context), item.message.id.peerId.namespace != Namespaces.Peer.CloudUser {
+            let hidesDisplayedPeer = self.photos?.contains(where: item.hiddenParticipants.contains) == true
             self.photos = updated
             self.isLoading = item.state.isLoading(item.message, context: item.context)
             if self.isLoading {
                 avatars = .init(context: item.context, message: item.message, peers: nil, size: NSMakeSize(18, 18))
             } else {
-                if !item.state.isEmpty {
-                    avatars = .init(context: item.context, message: item.message, peers: item.state.photos(item.message), size: NSMakeSize(18, 18))
+                if !photos.isEmpty {
+                    avatars = .init(context: item.context, message: item.message, peers: photos, size: NSMakeSize(18, 18))
                 } else {
                     avatars = nil
                 }
             }
             if let avatars = self.avatars {
-                performSubviewRemoval(avatars, animated: animated)
+                performSubviewRemoval(avatars, animated: animated && !hidesDisplayedPeer)
             }
             self.avatars = avatars
             if let avatars = avatars {
@@ -1020,6 +1069,11 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
         }
     }
     
+    fileprivate var timestampText: String? {
+        guard let readTimestamp, readTimestamp > 0 else { return nil }
+        return relativeTimestampText(readTimestamp, relativeTo: context.timestamp, showsSeconds: FastSettings.showMessageTimestampSeconds)
+    }
+
     override var accessibilityValue: String? {
         var parts: [String] = []
         if let reaction {
@@ -1032,8 +1086,8 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
                 parts.append(strings().voiceOverCommonStars)
             }
         }
-        if let readTimestamp {
-            parts.append(stringForRelativeTimestamp(relativeTimestamp: readTimestamp, relativeTo: context.timestamp))
+        if let timestampText {
+            parts.append(timestampText)
         }
         if let value = super.accessibilityValue {
             parts.append(value)
@@ -1042,9 +1096,8 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
     }
 
     override var textSize: CGFloat {
-        if let readTimestamp = self.readTimestamp {
-            let string = stringForRelativeTimestamp(relativeTimestamp: readTimestamp, relativeTo: context.timestamp)
-            let attr: NSAttributedString = .initialize(string: string, color: presentation.textColor, font: .medium(.text))
+        if let timestampText {
+            let attr: NSAttributedString = .initialize(string: timestampText, color: presentation.textColor, font: .medium(.text))
             let size = attr.sizeFittingWidth(.greatestFiniteMagnitude)
             return max(size.width + leftInset * 2 + innerInset * 2, super.textSize)
         } else {
@@ -1075,24 +1128,20 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
 
 
 public func stringForRelativeTimestamp(relativeTimestamp: Int32, relativeTo timestamp: Int32) -> String {
-    var t: time_t = time_t(relativeTimestamp)
-    var timeinfo: tm = tm()
-    localtime_r(&t, &timeinfo)
-    
-    var now: time_t = time_t(timestamp)
-    var timeinfoNow: tm = tm()
-    localtime_r(&now, &timeinfoNow)
-    
-    let dayDifference = timeinfo.tm_yday - timeinfoNow.tm_yday
-    
-    let hours = timeinfo.tm_hour
-    let minutes = timeinfo.tm_min
-    
-    if dayDifference == 0 {
-        return strings().timeTodayAt(stringForShortTimestamp(hours: hours, minutes: minutes))
-    } else {
-        return DateSelectorUtil.chatFullDateFormatter.string(from: Date.init(timeIntervalSince1970: TimeInterval(relativeTimestamp)))
+    relativeTimestampText(relativeTimestamp, relativeTo: timestamp, showsSeconds: nil)
+}
+
+private func relativeTimestampText(_ relativeTimestamp: Int32, relativeTo timestamp: Int32, showsSeconds: Bool?) -> String {
+    let date = Date(timeIntervalSince1970: TimeInterval(relativeTimestamp))
+    let reference = Date(timeIntervalSince1970: TimeInterval(timestamp))
+    guard Calendar.current.isDate(date, inSameDayAs: reference) else {
+        return ChatDisplayTimestamp.fullDate(for: date, showsSeconds: showsSeconds ?? true)
     }
+    if showsSeconds == true {
+        return strings().timeTodayAt(ChatDisplayTimestamp.time(for: date, showsSeconds: true))
+    }
+    let time = Calendar.current.dateComponents([.hour, .minute], from: date)
+    return strings().timeTodayAt(stringForShortTimestamp(hours: Int32(time.hour ?? 0), minutes: Int32(time.minute ?? 0)))
 }
 
 private final class ReadTimestampView : View {
@@ -1110,9 +1159,8 @@ private final class ReadTimestampView : View {
         fatalError("init(coder:) has not been implemented")
     }
     
-    func update(timestamp: Int32, relativeTo: Int32, maxSize: NSSize, context: any AccountContextProtocol, presentation: AppMenu.Presentation, isReaction: Bool) -> NSSize {
-        let string = stringForRelativeTimestamp(relativeTimestamp: timestamp, relativeTo: relativeTo)
-        let textLayout = TextViewLayout(.initialize(string: string, color: presentation.textColor, font: .medium(.text)), maximumNumberOfLines: 1)
+    func update(text: String, maxSize: NSSize, context: any AccountContextProtocol, presentation: AppMenu.Presentation, isReaction: Bool) -> NSSize {
+        let textLayout = TextViewLayout(.initialize(string: text, color: presentation.textColor, font: .medium(.text)), maximumNumberOfLines: 1)
         textLayout.measure(width: maxSize.width - 20)
         self.textView.update(textLayout)
         
@@ -1208,7 +1256,7 @@ private final class ReactionPeerMenuItemView : AppMenuRowView {
         guard let item = self.item as? ReactionPeerMenuItem else {
             return
         }
-        if state == .Hover, let timestamp = item.readTimestamp {
+        if state == .Hover, let timestampText = item.timestampText {
             contentView.change(pos: NSMakePoint(0, -contentView.frame.height), animated: true, duration: 0.35, timingFunction: .spring)
             contentView.change(opacity: 0, animated: true)
 
@@ -1220,7 +1268,7 @@ private final class ReactionPeerMenuItemView : AppMenuRowView {
                 self.timestamp = current
                 self.containerView.addSubview(current)
                 
-                let size = current.update(timestamp: timestamp, relativeTo: item.context.timestamp, maxSize: NSMakeSize(item.textMaxWidth, contentView.frame.height), context: item.context, presentation: item.presentation, isReaction: item.reaction != nil)
+                let size = current.update(text: timestampText, maxSize: NSMakeSize(item.textMaxWidth, contentView.frame.height), context: item.context, presentation: item.presentation, isReaction: item.reaction != nil)
                 current.frame = CGRect(origin: CGPoint(x: self.textX, y: focus(size).minY), size: size)
                 
                 current.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)

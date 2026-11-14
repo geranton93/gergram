@@ -260,6 +260,7 @@ public final class ChatReactionsLayout {
             lhs.minimumSize == rhs.minimumSize &&
             lhs.source == rhs.source &&
             lhs.mode == rhs.mode &&
+            lhs.avatars == rhs.avatars &&
             lhs.rect == rhs.rect &&
             lhs.message.id == rhs.message.id &&
             lhs.message.containsSecretMedia == rhs.message.containsSecretMedia &&
@@ -302,8 +303,8 @@ public final class ChatReactionsLayout {
                         self.text?.measure(width: .greatestFiniteMagnitude)
 
                     } else {
-                        if recentPeers.isEmpty, mode != .tag {
-                            self.text = .init(.initialize(string: Int(value.count).prettyNumber, color: value.isSelected ? presentation.textSelectedColor : presentation.textColor, font: .normal(.text)))
+                        if mode != .tag, let count = ChatReactionAvatarVisibility.countText(value, hasAvatars: !recentPeers.isEmpty) {
+                            self.text = .init(.initialize(string: count, color: value.isSelected ? presentation.textSelectedColor : presentation.textColor, font: .normal(.text)))
                             self.text?.measure(width: .greatestFiniteMagnitude)
                         } else {
                             self.text = nil
@@ -358,11 +359,19 @@ public final class ChatReactionsLayout {
         private var menu: ContextMenu?
         
         private var reactions: EngineMessageReactionListContext?
-        private let avatarDisposable = MetaDisposable()
         
         public func cancelMenu() {
             delayDisposable.set(nil)
+            if menu?.isShown != true {
+                resetParticipantMenu()
+            }
+        }
+
+        private func resetParticipantMenu() {
+            guard message.id.peerId != context.peerId else { return }
             disposable.set(nil)
+            state = nil
+            menu = nil
         }
         
         public func loadMenu() -> ContextMenu? {
@@ -421,6 +430,12 @@ public final class ChatReactionsLayout {
             } else {
                 let menu = ContextMenu()
                 self.menu = menu
+                if System.legacyMenu {
+                    menu.delegate = menu
+                }
+                menu.onClose = { [weak self] in
+                    self?.resetParticipantMenu()
+                }
                 let current: EngineMessageReactionListContext
                 if let reactions = reactions {
                     current = reactions
@@ -428,9 +443,14 @@ public final class ChatReactionsLayout {
                     current = context.engine.messages.messageReactionList(message: .init(self.message), readStats: nil, reaction: self.value.value)
                     self.reactions = current
                 }
-                let signal = current.state |> deliverOnMainQueue
-                self.disposable.set(origin.preservingPresentation(signal).start(next: { [weak self] state in
-                    self?.applyState(state)
+                let signal = ChatParticipantVisibility.observe(
+                    current.state,
+                    chatPeerId: message.id.peerId,
+                    context: context,
+                    participants: { Set($0.items.map { $0.peer.id }) }
+                )
+                self.disposable.set(origin.preservingPresentation(signal).start(next: { [weak self] state, hidden in
+                    self?.applyState(state, hidden: hidden)
                 }))
                 
                 return menu
@@ -438,11 +458,14 @@ public final class ChatReactionsLayout {
         }
         private var state: EngineMessageReactionListContext.State?
         public func applyState(_ state: EngineMessageReactionListContext.State) {
+            applyState(state, hidden: [])
+        }
+
+        private func applyState(_ state: EngineMessageReactionListContext.State, hidden: Set<PeerId>) {
             let origin = Analytics.shared.captureContext(engine: self.context.engine, peerId: self.message.id.peerId, inherited: self.analyticsContext)
             let presentation = origin.beginPresentation()
             defer { presentation.end() }
             self.state = state
-            let account = self.context.account
             let context = self.context
             let source: ReactionPeerMenu.Source
             switch self.source {
@@ -456,43 +479,44 @@ public final class ChatReactionsLayout {
             weak let weakSelf = self
             let message = self.message
             let canDeleteReactions = canDeleteReactionsInChat(message: self.message)
-            let avatarDisposables = DisposableSet()
-            self.avatarDisposable.set(avatarDisposables)
             let makeItem:(_ peer: Peer, _ readTimestamp: Int32?) -> ContextMenuItem = { peer, readTimestamp in
                 let peerOrigin = origin.restricting(peerId: peer.id)
                 let presentation = peerOrigin.beginPresentation()
                 defer { presentation.end() }
                 let title = peer.displayTitle.prefixWithDots(25)
-                let item = ReactionPeerMenu(title: title, handler: {
+                return ReactionPeerMenu(title: title, handler: {
                     let presentation = peerOrigin.beginPresentation()
                     defer { presentation.end() }
                     weakSelf?.openInfo(peer.id)
                 }, peer: peer, context: context, reaction: source, readTimestamp: readTimestamp, message: message, canDelete: canDeleteReactions, analyticsContext: peerOrigin)
                 
-                let signal:Signal<(CGImage?, Bool), NoError>
-                signal = peerAvatarImage(account: account, photo: .peer(peer, peer.smallProfileImage, peer.namePeerColor, TelegramUtilsHooks.shared.peerLetters(peer), nil, nil), displayDimensions: NSMakeSize(18 * System.backingScale, 18 * System.backingScale), font: .avatar(13), genCap: true, synchronousLoad: false) |> deliverOnMainQueue
-                avatarDisposables.add(peerOrigin.preservingPresentation(signal).start(next: { [weak item] image, _ in
-                    if let image = image {
-                        item?.image = NSImage(cgImage: image, size: NSMakeSize(18, 18))
-                    }
-                }))
-                return item
             }
-            menu?.loadMore = { [weak self] in
+            let loadMore: () -> Void = { [weak self] in
                 guard let self, self.state?.canLoadMore == true else { return }
                 let presentation = origin.beginPresentation()
                 defer { presentation.end() }
                 self.reactions?.loadMore()
             }
             
-            var items = state.items.map {
-                return makeItem($0.peer._asPeer(), $0.timestamp)
+            let visible = state.items.filter { !hidden.contains($0.peer.id) }
+            let showsPagination = ChatParticipantVisibility.showsPagination(
+                canLoadMore: state.canLoadMore,
+                hasHiddenParticipants: visible.count != state.items.count
+            )
+            menu?.loadMore = showsPagination ? nil : loadMore
+            var items = visible.map {
+                makeItem($0.peer._asPeer(), $0.timestamp)
+            }
+            if showsPagination {
+                items.append(ChatParticipantVisibility.paginationItem(title: strings().chatRichTextShowMore, loadMore: loadMore))
             }
             
             switch source {
             case let .custom(_, file):
                 if let reference = file?.emojiReference {
-                    items.append(ContextSeparatorItem())
+                    if !items.isEmpty {
+                        items.append(ContextSeparatorItem())
+                    }
                     
                     let sources:[ChatMediaStickerPackPreviewSource] = [.emoji(reference)]
                     let text = strings().chatContextMessageContainsEmojiOther(1)
@@ -508,13 +532,17 @@ public final class ChatReactionsLayout {
             default:
                 break
             }
+            if items.isEmpty, !hidden.isEmpty {
+                let empty = ContextMenuItem(localizedString("Gergram.Chat.Participants.NoVisible"))
+                empty.isEnabled = false
+                items.append(empty)
+            }
             menu?.items = items
         }
 
         deinit {
             delayDisposable.dispose()
             disposable.dispose()
-            avatarDisposable.dispose()
         }
     }
     fileprivate let context: any AccountContextProtocol
@@ -538,7 +566,7 @@ public final class ChatReactionsLayout {
     public let mode: Mode
     
     
-    public init(context: any AccountContextProtocol, message: Message, available: AvailableReactions?, peerAllowed: PeerAllowedReactions?, savedMessageTags: SavedMessageTags?, engine:Reactions, theme: TelegramPresentationTheme, renderType: ChatItemRenderType, currentTag: MessageReaction.Reaction?, isIncoming: Bool, isOutOfBounds: Bool, hasWallpaper: Bool, stateOverlayTextColor: NSColor, canSendReactions: @escaping () -> Bool, sendStars: @escaping () -> Void, openInfo:@escaping(PeerId)->Void, runEffect: @escaping(MessageReaction.Reaction, Bool)->Void, tagAction:@escaping(MessageReaction.Reaction)->Void, starReact:@escaping()->Void, reactionsDisabled:@escaping()->Void = {}, analyticsContext: AnalyticsContext? = nil) {
+    public init(context: any AccountContextProtocol, message: Message, available: AvailableReactions?, peerAllowed: PeerAllowedReactions?, savedMessageTags: SavedMessageTags?, engine:Reactions, theme: TelegramPresentationTheme, renderType: ChatItemRenderType, currentTag: MessageReaction.Reaction?, isIncoming: Bool, isOutOfBounds: Bool, hasWallpaper: Bool, stateOverlayTextColor: NSColor, canSendReactions: @escaping () -> Bool, sendStars: @escaping () -> Void, openInfo:@escaping(PeerId)->Void, runEffect: @escaping(MessageReaction.Reaction, Bool)->Void, tagAction:@escaping(MessageReaction.Reaction)->Void, starReact:@escaping()->Void, reactionsDisabled:@escaping()->Void = {}, analyticsContext: AnalyticsContext? = nil, hiddenReactionAvatarPeerIds: Set<PeerId> = []) {
         
         let inherited = message.containsSecretMedia ? Analytics.shared.unresolvedContext() : (analyticsContext ?? Analytics.shared.unresolvedContext())
         let origin = Analytics.shared.captureContext(engine: context.engine, peerId: message.id.peerId, inherited: inherited)
@@ -575,6 +603,9 @@ public final class ChatReactionsLayout {
         }
         
         let sorted = reactions.reactions.sorted(by: <)
+        let showsRecentPeers = mode == .full
+            && message.peers[message.id.peerId]?.isChannel != true
+            && ChatReactionAvatarVisibility.eligibleReactionCounts(reactions.reactions)
         
         
         self.reactions = sorted.compactMap { reaction in
@@ -594,23 +625,11 @@ public final class ChatReactionsLayout {
             }
             
             if let source = source {
-                var recentPeers:[Peer] = reactions.recentPeers.filter { recent in
-                    return recent.value == reaction.value
-                }.compactMap {
-                    message.peers[$0.peerId]
-                }
-                if recentPeers.count < reaction.count {
-                    recentPeers = []
-                }
-                if let peer = message.peers[message.id.peerId], peer.isChannel {
-                    recentPeers = []
-                }
-                if reactions.reactions.reduce(0, { $0 + $1.count }) > 3 {
-                    recentPeers = []
-                }
-                if mode == .tag {
-                    recentPeers = []
-                }
+                var recentPeers = showsRecentPeers ? ChatReactionAvatarVisibility.resolvedPeers(
+                    for: reaction,
+                    recentPeers: reactions.recentPeers,
+                    resolve: { message.peers[$0] }
+                ) : []
                 
                 if message.id.peerId.namespace == Namespaces.Peer.CloudUser {
                     if mode == .full {
@@ -631,6 +650,7 @@ public final class ChatReactionsLayout {
                         }
                     }
                 }
+                recentPeers = ChatReactionAvatarVisibility.visiblePeers(recentPeers, excluding: hiddenReactionAvatarPeerIds)
                 
                 let presentation: Theme = .Current(theme: theme, renderType: renderType, isIncoming: isIncoming, isOutOfBounds: isOutOfBounds, hasWallpaper: hasWallpaper, stateOverlayTextColor: stateOverlayTextColor, mode: mode, isStars: reaction.value == .stars)
                 

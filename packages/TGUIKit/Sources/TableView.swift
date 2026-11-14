@@ -66,6 +66,8 @@ public enum TableBackgroundMode: Equatable {
 public class TableResortController {
     fileprivate let startTimeout: Double
     public var completeDelay: Double = 0.4
+    public var canContinueResorting: () -> Bool = { true }
+    public var requiresStableSourceRow = false
     public fileprivate(set) var resortRow: Int?
     internal fileprivate(set) var resortView: TableRowView? {
         didSet {
@@ -724,13 +726,15 @@ class TGFlipableTableView : NSTableView, CALayerDelegate {
     }
 
     private var beforeRange: NSRange = NSMakeRange(NSNotFound, 0)
+    private weak var beforeResortItem: TableRowItem?
     private var offsetOfStartItem: NSPoint = .zero
     private var mouseDown: Bool = false
     override func mouseDragged(with event: NSEvent) {
         super.mouseDragged(with: event)
         
-        if let resortController = table?.resortController, beforeRange.length > 0, mouseDown {
-            if resortController.resortRange.indexIn(beforeRange.location) {
+        if let table, let resortController = table.resortController, beforeRange.length > 0, mouseDown {
+            let sourceIsCurrent = beforeResortItem != nil && table.optionalItem(at: beforeRange.location) === beforeResortItem
+            if (!resortController.requiresStableSourceRow || sourceIsCurrent), resortController.resortRange.indexIn(beforeRange.location) {
                 let point = self.convert(event.locationInWindow, from: nil)
                 let afterRange = self.rows(in: NSMakeRect(point.x, point.y, 1, 1))
                 if afterRange != beforeRange {
@@ -746,9 +750,13 @@ class TGFlipableTableView : NSTableView, CALayerDelegate {
             let point = self.convert(event.locationInWindow, from: nil)
             let beforeRange = self.rows(in: NSMakeRect(point.x, point.y, 1, 1))
             self.beforeRange = beforeRange
+            beforeResortItem = nil
             if beforeRange.length > 0 {
                 if let resortController = table?.resortController{
                     if resortController.resortRange.indexIn(beforeRange.location) {
+                        if resortController.requiresStableSourceRow {
+                            beforeResortItem = table?.optionalItem(at: beforeRange.location)
+                        }
                         self.offsetOfStartItem = point
                     } else if let table = table, !table.alwaysOpenRowsOnMouseUp {
                         sdelegate?.selectRow(index: beforeRange.location)
@@ -2467,13 +2475,18 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
         guard let window = _window else {return}
         
         let point = tableView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        if range.length > 0, let controller = resortController, controller.canResort(range.location), let view = viewNecessary(at: range.location) {
+        if range.length > 0, let controller = resortController, controller.canResort(range.location),
+           (!controller.requiresStableSourceRow || !controller.isResorting), let view = viewNecessary(at: range.location) {
             controller.resortRow = range.location
             controller.currentHoleIndex = range.location
             controller.resortView = view
             controller.startLocation = NSMakePoint(round(point.y), round(point.y))
             controller.startRowLocation = view.frame.origin.offsetBy(dx: 0, dy: round(offset.y))
             controller.start(range.location)
+            guard controller.canContinueResorting() else {
+                controller.clear()
+                return
+            }
    
             view.frame = convert(view.frame, from: view.superview)
             
@@ -2491,6 +2504,10 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
             
             window.set(mouseHandler: { [weak self] event -> KeyHandlerResult in
                 if let controller = self?.resortController, let view = controller.resortView, let `self` = self {
+                    guard controller.canContinueResorting() else {
+                        self.stopResorting()
+                        return .invoked
+                    }
                     
                     self.contentView.autoscroll(with: event)
                     
@@ -2534,7 +2551,7 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
             
             
             NSAnimationContext.runAnimationGroup({ ctx in
-                if self.isResortRangeValid(controller) {
+                if controller.canContinueResorting(), self.isResortRangeValid(controller) {
                     var y: CGFloat = 0
                     for i in 0 ..< controller.resortRange.location {
                         y += self.list[i].heightValue
@@ -2567,7 +2584,7 @@ open class TableView: ScrollView, NSTableViewDelegate,NSTableViewDataSource,Sele
                     self.tableView.addSubview(view)
                 }
                 
-                let isValidDrop = controller.canResort(start) && controller.canResort(current) && start < self.list.count && current < self.list.count
+                let isValidDrop = controller.canContinueResorting() && controller.canResort(start) && controller.canResort(current) && start < self.list.count && current < self.list.count
 
                 self.beginTableUpdates()
 

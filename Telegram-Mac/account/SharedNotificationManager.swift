@@ -8,6 +8,7 @@ import ObjcUtils
 import InAppSettings
 import PasscodeCore
 import WalletContext
+import CaptureExclusion
 
 func getNotificationMessageId(userInfo:[AnyHashable: Any], for prefix: String) -> MessageId? {
     if let msgId = userInfo["\(prefix).message.id"] as? Int32, let msgNamespace = userInfo["\(prefix).message.namespace"] as? Int32, let namespace = userInfo["\(prefix).peer.namespace"] as? Int32, let id = userInfo["\(prefix).peer.id"] as? Int64 {
@@ -160,6 +161,8 @@ final class SharedNotificationManager : NSObject, NSUserNotificationCenterDelega
     private let disposableDict: DisposableDict<AccountRecordId> = DisposableDict()
     private let storyDisposableDict: DisposableDict<AccountRecordId> = DisposableDict()
     private let inAppSettingsDisposable = MetaDisposable()
+    private var appNotificationSettingsValue = InAppNotificationSettings.defaultSettings
+    private let pendingMessageNotifications = PendingMessageNotifications()
     private let lockTimeoutDisposable = MetaDisposable()
     let accountManager: AccountManager<TelegramAccountManagerTypes>
     var resignTimestamp:Int32? = nil
@@ -187,6 +190,10 @@ final class SharedNotificationManager : NSObject, NSUserNotificationCenterDelega
         inAppSettingsDisposable.set((appNotificationSettings(accountManager: accountManager) |> deliverOnMainQueue).start(next: { [weak self] inAppSettings in
             self?.showNotificationsOutOfFocus = inAppSettings.showNotificationsOutOfFocus
             self?.requestUserAttention = inAppSettings.requestUserAttention
+            self?.appNotificationSettingsValue = inAppSettings
+            if !inAppSettings.enabled {
+                self?.pendingMessageNotifications.removeAll()
+            }
         }))
 
         UNUserNotifications.current?.authorize(completion: { value in
@@ -260,6 +267,7 @@ final class SharedNotificationManager : NSObject, NSUserNotificationCenterDelega
             for (id, _) in self.activeAccounts.accounts where !activeIds.contains(id) {
                 self.disposableDict.set(nil, forKey: id)
                 self.storyDisposableDict.set(nil, forKey: id)
+                self.pendingMessageNotifications.remove(accountId: id)
             }
             for account in accounts.accounts {
                 self.startNotifyListener(with: account.1, primary: account.0 == accounts.primary?.id)
@@ -377,6 +385,14 @@ final class SharedNotificationManager : NSObject, NSUserNotificationCenterDelega
     private(set) var showNotificationsOutOfFocus: Bool = true
     private(set) var requestUserAttention: Bool = false
     
+    private struct TimingContext {
+        let presenceDeadline: Int32
+        let isLocallyOnline: Bool
+        let configuration: NotificationDeliveryTiming?
+
+        static let initial = Self(presenceDeadline: 0, isLocallyOnline: false, configuration: nil)
+    }
+
     enum Source {
         case messages([Message], PeerGroupId, MessageHistoryThreadData?)
         case reaction(Message, Peer, MessageReaction.Reaction, Int32, TelegramMediaFile?, MessageHistoryThreadData?)
@@ -494,9 +510,19 @@ final class SharedNotificationManager : NSObject, NSUserNotificationCenterDelega
             }
         })
         
+        let listener = DisposableSet()
+        let timingContext = Atomic(value: TimingContext.initial)
+        listener.add(combineLatest(
+            account.stateManager.notificationPresenceDeadline,
+            .single(false) |> then(account.shouldKeepOnlinePresence.get()),
+            notificationDeliveryTiming(postbox: account.postbox)
+        ).start(next: { deadline, isLocallyOnline, configuration in
+            _ = timingContext.swap(TimingContext(presenceDeadline: deadline, isLocallyOnline: isLocallyOnline, configuration: configuration))
+        }))
+
         let notificationMessages: Signal<[([Message], PeerGroupId, Bool, MessageHistoryThreadData?)], NoError> = .single([]) |> then(account.stateManager.notificationMessages |> filter { !$0.isEmpty })
         
-        disposableDict.set((combineLatest(notificationMessages, reactions) |> mapToSignal { messages, reactions -> Signal<([Source], InAppNotificationSettings), NoError> in
+        listener.add((combineLatest(notificationMessages, reactions) |> mapToSignal { messages, reactions -> Signal<([Source], InAppNotificationSettings), NoError> in
             return appNotificationSettings(accountManager: self.accountManager) |> take(1) |> mapToSignal { inAppSettings -> Signal<([Source], InAppNotificationSettings), NoError> in
                 if inAppSettings.enabled && inAppSettings.muteUntil < Int32(Date().timeIntervalSince1970) {
                     
@@ -815,23 +841,101 @@ final class SharedNotificationManager : NSObject, NSUserNotificationCenterDelega
                             
                             notification.userInfo = dict
                             
-                            self.deliver(notification)
+                            let isForwarded: Bool
+                            let requiresUnread: Bool
+                            switch source {
+                            case .messages:
+                                isForwarded = message.forwardInfo != nil
+                                requiresUnread = !message.wasScheduled
+                            case .reaction:
+                                isForwarded = false
+                                requiresUnread = false
+                            }
+                            let timing = timingContext.with { $0 }
+                            let globalTime = account.network.globalTime
+                            let timestamp = globalTime > 0 ? globalTime : Date().timeIntervalSince1970
+                            let delay = inAppSettings.notificationTiming.delayMilliseconds(
+                                isForwarded: isForwarded,
+                                presenceRemaining: Double(timing.presenceDeadline) - timestamp,
+                                isLocallyOnline: timing.isLocallyOnline,
+                                cloudDelay: timing.configuration?.cloudDelayMilliseconds,
+                                defaultDelay: timing.configuration?.defaultDelayMilliseconds
+                            )
+                            if delay == 0 {
+                                self.deliver(notification)
+                            } else {
+                                self.schedule(notification, account: account, message: message, requiresUnread: requiresUnread, delay: delay, key: notifiedKey)
+                            }
                         }
                     }
                 }
-            }), forKey: account.id)
+            }))
+        disposableDict.set(listener, forKey: account.id)
         
         startStoryNotifyListener(with: account, primary: primary)
     }
     
-    private func deliver(_ notification: NSUserNotification) {
+    private func schedule(_ notification: NSUserNotification, account: Account, message: Message, requiresUnread: Bool, delay: Int32, key: String) {
+        let accountId = account.id
+        let messageId = message.id
+        let stableVersion = message.stableVersion
+        let wasScheduled = message.wasScheduled
+        pendingMessageNotifications.schedule(accountId: accountId, key: key, delay: Double(delay) / 1000) { [weak self, weak account] in
+            guard let self, let account else { return }
+            self.deliver(notification, delayedValidation: { [weak self, weak account] deliver in
+                guard let self, let account else { return }
+                let check = account.postbox.transaction { transaction -> (valid: Bool, displayContents: Bool) in
+                    guard let current = transaction.getMessage(messageId), current.stableVersion == stableVersion else { return (false, false) }
+                    guard requiresUnread else { return (true, true) }
+                    if let threadId = current.threadId,
+                       let thread = transaction.getMessageHistoryThreadInfo(peerId: messageId.peerId, threadId: threadId)?.data.get(MessageHistoryThreadData.self),
+                       thread.maxIncomingReadId >= messageId.id {
+                        return (false, false)
+                    }
+                    let presentation = messagesForNotification(transaction: transaction, id: messageId, alwaysReturnMessage: false)
+                    return (presentation.notify, presentation.displayContents)
+                }
+                _ = (check |> deliverOnMainQueue).start(next: { [weak self, weak account] result in
+                    guard result.valid, let self, let account, !StreamerModeController.shared.isEnabled,
+                          self.activeAccounts.accounts.contains(where: { $0.1 === account }),
+                          self.appNotificationSettingsValue.enabled,
+                          Double(self.appNotificationSettingsValue.muteUntil) < Date().timeIntervalSince1970,
+                          self.appNotificationSettingsValue.notifyAllAccounts || self.activeAccounts.primary?.id == accountId,
+                          self.shouldPresent(accountId: accountId, wasScheduled: wasScheduled) else { return }
+                    if self.isLocked || !self.appNotificationSettingsValue.displayPreviews || !result.displayContents {
+                        notification.informativeText = strings().notificationLockedPreview
+                        notification.subtitle = nil
+                    }
+                    if self.isLocked {
+                        notification.title = appName
+                        notification.contentImage = nil
+                        notification.hasReplyButton = false
+                        notification.soundName = nil
+                    }
+                    deliver()
+                })
+            })
+        }
+    }
+
+    private func deliver(_ notification: NSUserNotification, delayedValidation: ((@escaping () -> Void) -> Void)? = nil) {
+        let add: (UNUserNotifications) -> Void = { manager in
+            if let delayedValidation {
+                delayedValidation { manager.add(notification) }
+            } else {
+                manager.add(notification)
+            }
+        }
+        guard !StreamerModeController.shared.isEnabled else { return }
         _ = UNUserNotifications.authorizationStatus.start(next: { status in
+            guard !StreamerModeController.shared.isEnabled else { return }
             switch status {
             case .authorized:
-                UNUserNotifications.current?.add(notification)
+                if let manager = UNUserNotifications.current { add(manager) }
             case .notDetermined:
                 UNUserNotifications.current?.authorize { manager in
-                    manager.add(notification)
+                    guard !StreamerModeController.shared.isEnabled else { return }
+                    add(manager)
                 }
             default:
                 break
@@ -1011,4 +1115,46 @@ final class SharedNotificationManager : NSObject, NSUserNotificationCenterDelega
     }
 
     
+}
+
+
+private final class PendingMessageNotifications {
+    private struct Key: Hashable {
+        let accountId: AccountRecordId
+        let value: String
+    }
+
+    private var timers: [Key: SwiftSignalKit.Timer] = [:]
+
+    deinit {
+        removeAll()
+    }
+
+    func schedule(accountId: AccountRecordId, key: String, delay: Double, action: @escaping () -> Void) {
+        let key = Key(accountId: accountId, value: key)
+        guard timers[key] == nil else { return }
+        guard timers.count < 64 else {
+            action()
+            return
+        }
+        let timer = SwiftSignalKit.Timer(timeout: delay, repeat: false, completion: { [weak self] in
+            guard self?.timers.removeValue(forKey: key) != nil else { return }
+            action()
+        }, queue: .mainQueue())
+        timers[key] = timer
+        timer.start()
+    }
+
+    func remove(accountId: AccountRecordId) {
+        for key in timers.keys.filter({ $0.accountId == accountId }) {
+            timers.removeValue(forKey: key)?.invalidate()
+        }
+    }
+
+    func removeAll() {
+        for timer in timers.values {
+            timer.invalidate()
+        }
+        timers.removeAll()
+    }
 }

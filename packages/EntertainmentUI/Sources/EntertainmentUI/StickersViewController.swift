@@ -474,7 +474,7 @@ private func stickersEntries(view: ItemCollectionsView?, context: any AccountCon
                             }
                         }
                     }
-                    if files.count == 20 {
+                    if !settings.showsAllRecentStickers && files.count == 20 {
                         break
                     }
                 }
@@ -1400,7 +1400,7 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
             if let chatInteraction = self.chatInteraction, let slowMode = chatInteraction.presentationSlowMode, slowMode.hasLocked {
                 showSlowModeTimeoutTooltip(slowMode, for: view)
             } else if let file = media as? TelegramMediaFile {
-                if !schedule, let chatInteraction = self.chatInteraction, let window = view.window {
+                if !schedule, let chatInteraction = self.chatInteraction, let window = view.window, !chatInteraction.shouldDeferFileSendFlight(file) {
                     let point = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
                     if let layer = view.layer?.sublayers?.last(where: { !$0.isHidden && $0.frame.contains(point) }) {
                         EntertainmentUIHooks.shared.launchSendFlight(chatInteraction, view, layer.frame, layer)
@@ -1538,6 +1538,22 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
         let searchInputs = positionedSearchInputs |> distinctUntilChanged(isEqual: { previous, next in
             return previous.0 == next.0 && previous.1 == next.1 && previous.2 == next.2
         })
+        let settings = stickerSettings(postbox: context.account.postbox)
+        let showsOnlyAddedPacks = settings |> map { $0.showsOnlyAddedPacks } |> distinctUntilChanged
+        let installedPacksKey = PostboxViewKey.itemCollectionInfos(namespaces: [Namespaces.ItemCollection.CloudStickerPacks])
+        let installedPackIds: Signal<Set<ItemCollectionId>?, NoError> = .single(nil) |> then(
+            context.account.postbox.combinedView(keys: [installedPacksKey]) |> map { view -> Set<ItemCollectionId>? in
+                guard let infos = view.views[installedPacksKey] as? ItemCollectionInfosView,
+                      let entries = infos.entriesByNamespace[Namespaces.ItemCollection.CloudStickerPacks] else {
+                    return nil
+                }
+                return Set(entries.map(\.id))
+            }
+        ) |> distinctUntilChanged
+        let packVisibility = showsOnlyAddedPacks |> mapToSignal { enabled -> Signal<(Bool, Set<ItemCollectionId>?), NoError> in
+            guard enabled, mode == .common else { return .single((false, nil)) }
+            return installedPackIds |> map { (true, $0) }
+        }
         let featuredForUnread = Promise<[FeaturedStickerPackItem]>()
         featuredForUnread.set(context.account.viewTracker.featuredStickerPacks())
         let signal = searchInputs |> mapToSignal { values -> Signal<StickerPacksUpdateData, NoError> in
@@ -1548,7 +1564,6 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
             if values.0.isEmpty && values.2 == nil {
                 var firstTime: Bool = true
                 
-                let settings = stickerSettings(postbox: context.account.postbox)
                 switch values.1 {
                 case .initial:
                     let packsView = context.account.postbox.itemCollectionsView(orderedItemListCollectionIds: [Namespaces.OrderedItemList.CloudRecentStickers, Namespaces.OrderedItemList.CloudSavedStickers], namespaces: [Namespaces.ItemCollection.CloudStickerPacks], aroundIndex: nil, count: count)
@@ -1582,8 +1597,8 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
                 case let .navigate(index):
                     let featuredView = context.account.viewTracker.featuredStickerPacks()
                     let packsView = context.account.postbox.itemCollectionsView(orderedItemListCollectionIds: [Namespaces.OrderedItemList.CloudRecentStickers, Namespaces.OrderedItemList.CloudSavedStickers], namespaces: [Namespaces.ItemCollection.CloudStickerPacks], aroundIndex: index.packIndex, count: count)
-                    return combineLatest(packsView, featuredView, statePromise.get())
-                        |> mapToSignal { view, featured, state in
+                    return combineLatest(packsView, featuredView, settings, statePromise.get())
+                        |> mapToSignal { view, featured, settings, state in
                             return specificPackData |> map { specificPack in
                                 let update: StickerPacksUpdate
                                 if firstTime {
@@ -1592,7 +1607,7 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
                                 } else {
                                     update = .generic(animated: true, scrollToTop: false)
                                 }
-                                return StickerPacksUpdateData(view: view, update: update, specificPack: specificPack, hasUnread: false, featured: featured, mode: mode, state: state)
+                                return StickerPacksUpdateData(view: view, update: update, specificPack: specificPack, hasUnread: false, featured: featured, settings: settings, mode: mode, state: state)
                             }
                     } 
                 case .loadFeaturedMore:
@@ -1642,7 +1657,8 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
                 }
                 let relatedResults = Signal<([FoundStickerItem], Bool), NoError>.single(([], false)) |> then(emojiRelated |> delay(0.15, queue: prepareQueue))
 
-                return combineLatest(searchLocal, searchRemote, relatedResults, statePromise.get(), premiumStickers) |> map { local, remote, emojiRelated, state, premiumStickers in
+                return combineLatest(searchLocal, searchRemote, relatedResults, statePromise.get(), premiumStickers, packVisibility)
+                |> map { local, remote, emojiRelated, state, premiumStickers, packVisibility in
                     var value = FoundStickerSets()
                     if let local = local {
                         value = value.merge(with: local)
@@ -1651,6 +1667,8 @@ public class NStickersViewController<Context: AccountContextProtocol>: TelegramG
                         value = value.merge(with: remote)
                     }
                     
+                    let (showsOnlyAddedPacks, installedIds) = packVisibility
+                    value = panelStickerSearchPacks(value, showsOnlyAddedPacks: showsOnlyAddedPacks, installedIds: installedIds)
                     let searchData = StickerPacksSearchData(sets: value, loading: (values.2 == nil ? remote == nil || !emojiRelated.1 : !emojiRelated.1) && value.entries.isEmpty && emojiRelated.0.isEmpty && premiumStickers.isEmpty, basicFeaturedCount: 0, emojiRelated: emojiRelated.0, premiumStickers: premiumStickers)
                     return StickerPacksUpdateData(view: nil, update: .generic(animated: true, scrollToTop: nil), specificPack: nil, searchData: searchData, hasUnread: false, featured: [], mode: mode, state: state)
                 }

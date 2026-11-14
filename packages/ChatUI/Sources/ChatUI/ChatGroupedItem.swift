@@ -102,7 +102,7 @@ public class ChatGroupedItem: ChatRowItem {
                 }
                 if hasEntities {
                     
-                    caption = ChatMessageItem.applyMessageEntities(with: attributes, for: text, message: message, context: context, fontSize: theme.fontSize, openInfo:chatInteraction.openInfo, botCommand:chatInteraction.sendPlainText, hashtag: chatInteraction.hashtag, applyProxy: chatInteraction.applyProxy, textColor: theme.chat.textColor(isIncoming, entry.renderType == .bubble), linkColor: theme.chat.linkColor(isIncoming, entry.renderType == .bubble), monospacedPre: theme.chat.monospacedPreColor(isIncoming, entry.renderType == .bubble), monospacedCode: theme.chat.monospacedCodeColor(isIncoming, entry.renderType == .bubble), openBank: chatInteraction.openBank, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: message.isIncoming(context.account, entry.renderType == .bubble), bubbled: entry.renderType == .bubble), isDark: theme.colors.isDark, bubbled: entry.renderType == .bubble, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && isIncoming).mutableCopy() as! NSMutableAttributedString
+                    caption = ChatMessageItem.applyMessageEntities(with: attributes, for: text, message: message, context: context, fontSize: theme.fontSize, openInfo:chatInteraction.openInfo, botCommand:chatInteraction.sendPlainText, hashtag: chatInteraction.hashtag, applyProxy: chatInteraction.applyProxy, textColor: theme.chat.textColor(isIncoming, entry.renderType == .bubble), linkColor: theme.chat.linkColor(isIncoming, entry.renderType == .bubble), monospacedPre: theme.chat.monospacedPreColor(isIncoming, entry.renderType == .bubble), monospacedCode: theme.chat.monospacedCodeColor(isIncoming, entry.renderType == .bubble), openBank: chatInteraction.openBank, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: message.isIncoming(context.account, entry.renderType == .bubble), bubbled: entry.renderType == .bubble), fillsQuoteBackground: !ChatReplyAppearancePreferences.shared.isSimplified, isDark: theme.colors.isDark, bubbled: entry.renderType == .bubble, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && isIncoming, monospaceFont: ChatMessageItem.historyMonospaceFont(for: chatInteraction.mode)).mutableCopy() as! NSMutableAttributedString
                     caption.removeWhitespaceFromQuoteAttribute()
 
                 }
@@ -123,6 +123,7 @@ public class ChatGroupedItem: ChatRowItem {
                     spoilerColor = theme.chat.textColor(isIncoming, entry.renderType == .bubble)
                 }
                 let isSpoilerRevealed = chatInteraction.presentation.interfaceState.revealedSpoilers.contains(message.id)
+                let displayTextTransform = ChatMessageItem.zalgoDisplayTransform(for: message)
                 
                 
                 let textLayout = FoldingTextLayout.make(caption, context: context, revealed: entry.additionalData.quoteRevealed, takeLayout: { [chatInteraction] string in
@@ -132,7 +133,7 @@ public class ChatGroupedItem: ChatRowItem {
                                 $0.withRevealedSpoiler(message.id)
                             })
                         })
-                    })
+                    }, displayTextTransform: displayTextTransform)
                     return textLayout
                 })
                 
@@ -172,11 +173,12 @@ public class ChatGroupedItem: ChatRowItem {
         }
                 
         for (i, message) in layout.messages.enumerated() {
+            let isRevealed = entry.additionalData(message.id).isRevealed
             
             switch layout.type {
             case .files:
                 
-                let parameters = ChatMediaLayoutParameters.layout(for: (message.anyMedia as! TelegramMediaFile), isWebpage: chatInteraction.isLogInteraction, chatInteraction: chatInteraction, presentation: .make(for: message, account: context.account, renderType: entry.renderType, theme: theme), automaticDownload: downloadSettings.isDownloable(message), isIncoming: message.isIncoming(context.account, entry.renderType == .bubble), autoplayMedia: entry.autoplayMedia, isRevealed: entry.additionalData.isRevealed)
+                let parameters = ChatMediaLayoutParameters.layout(for: (message.anyMedia as! TelegramMediaFile), isWebpage: chatInteraction.isLogInteraction, chatInteraction: chatInteraction, presentation: .make(for: message, account: context.account, renderType: entry.renderType, theme: theme), automaticDownload: downloadSettings.isDownloable(message), isIncoming: message.isIncoming(context.account, entry.renderType == .bubble), autoplayMedia: entry.autoplayMedia, isRevealed: isRevealed)
                 
                 parameters.showMedia = { [weak self] message in
                     guard let `self` = self else {return}
@@ -214,7 +216,7 @@ public class ChatGroupedItem: ChatRowItem {
                     
                     }, showMessage: { [weak self] message in
                         self?.chatInteraction.focusMessageId(nil, .init(messageId: message.id, string: nil), .CenterEmpty)
-                    }, isWebpage: chatInteraction.isLogInteraction, presentation: .make(for: message, account: context.account, renderType: entry.renderType, theme: theme), media: message.anyMedia!, automaticDownload: downloadSettings.isDownloable(message), autoplayMedia: entry.autoplayMedia, isRevealed: entry.isRevealed))
+                    }, isWebpage: chatInteraction.isLogInteraction, presentation: .make(for: message, account: context.account, renderType: entry.renderType, theme: theme), media: message.anyMedia!, automaticDownload: downloadSettings.isDownloable(message), autoplayMedia: entry.autoplayMedia, isRevealed: isRevealed))
             }
             self.parameters[i].automaticDownloadFunc = { message in
                 return entry.additionalData.automaticDownload.isDownloable(message)

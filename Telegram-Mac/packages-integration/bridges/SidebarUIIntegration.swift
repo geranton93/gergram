@@ -43,7 +43,7 @@ func shareFolderPremiumLimits(context: AccountContext, current: ChatListFilter, 
 
 extension LeftSidebarController {
     convenience init(_ context: AccountContext, filterData: Signal<FilterData, NoError>, updateFilter: @escaping (_ f: (FilterData) -> FilterData) -> Void) {
-        self.init(context, environment: AppSidebarUIEnvironment(context), filterData: filterData |> distinctUntilChanged(isEqual: { lhs, rhs in lhs.tabs == rhs.tabs && lhs.filter.id == rhs.filter.id }) |> map { SidebarState(tabs: $0.tabs, selectedFilterId: $0.filter.id) }, badges: chatListFilterItems(engine: context.engine, accountManager: context.sharedContext.accountManager))
+        self.init(context, environment: AppSidebarUIEnvironment(context), filterData: filterData |> distinctUntilChanged(isEqual: { lhs, rhs in lhs.visibleTabs == rhs.visibleTabs && lhs.filter.id == rhs.filter.id && lhs.folderPresentation.hideUnreadCounters == rhs.folderPresentation.hideUnreadCounters }) |> map { SidebarState(tabs: $0.visibleTabs, selectedFilterId: $0.filter.id, hideUnreadCounters: $0.folderPresentation.hideUnreadCounters) }, badges: chatListFilterItems(engine: context.engine, accountManager: context.sharedContext.accountManager))
     }
 }
 

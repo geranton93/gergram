@@ -309,11 +309,37 @@ public class ChatMessageItem: ChatRowItem {
                 
                 messageAttr = ChatMessageItem.applyMessageEntities(with: attributes, for: text, message: message, context: context, fontSize: theme.fontSize, openInfo:openInfo, botCommand:chatInteraction.sendPlainText, hashtag: chatInteraction.hashtag, applyProxy: chatInteraction.applyProxy, textColor: theme.chat.textColor(isIncoming, entry.renderType == .bubble), linkColor: theme.chat.linkColor(isIncoming, entry.renderType == .bubble), monospacedPre: theme.chat.monospacedPreColor(isIncoming, entry.renderType == .bubble), monospacedCode: theme.chat.monospacedCodeColor(isIncoming, entry.renderType == .bubble), mediaDuration: mediaDuration, timecode: { timecode in
                     openSpecificTimecodeFromReply?(timecode)
-                }, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: isIncoming, bubbled: entry.renderType == .bubble), isDark: theme.colors.isDark, bubbled: entry.renderType == .bubble, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && isIncoming).mutableCopy() as! NSMutableAttributedString
+                }, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: isIncoming, bubbled: entry.renderType == .bubble), fillsQuoteBackground: !ChatReplyAppearancePreferences.shared.isSimplified, isDark: theme.colors.isDark, bubbled: entry.renderType == .bubble, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && isIncoming, monospaceFont: ChatMessageItem.historyMonospaceFont(for: chatInteraction.mode)).mutableCopy() as! NSMutableAttributedString
                 
              }
              
             let copy = messageAttr.mutableCopy() as! NSMutableAttributedString
+            let canOpenSharedFilterLink = chatInteraction.supportsLocalMessageVisibility
+                && !chatInteraction.presentation.searchMode.inSearch
+                && !entry.isFakeMessage && entry.additionalData.eventLog == nil
+                && entry.additionalData.canHighlightLinks
+                && message.id.namespace == Namespaces.Message.Cloud
+                && message.id.peerId.namespace != Namespaces.Peer.SecretChat
+                && !message.flags.contains(.Failed) && !message.flags.contains(.Unsent) && !message.flags.contains(.Sending)
+                && message.adAttribute == nil && message.media.isEmpty
+                && message.autoclearTimeout == nil && message.autoremoveAttribute == nil
+                && !message.containsSecretMedia && !message.isCopyProtected(cachedData: chatInteraction.presentation.cachedData)
+                && message.restrictedText(context.contentSettings) == nil
+                && ChatHistoryUIHooks.shared.openSharedMessageFilterLink != nil
+                && message.attributes.allSatisfy { !($0 is RichTextMessageAttribute) && !($0 is TypingDraftMessageAttribute) }
+                && (message.textEntities?.entities.allSatisfy({ entity in
+                    switch entity.type {
+                    case .Url:
+                        return entity.range.lowerBound == 0 && entity.range.upperBound == copy.length
+                    case let .TextUrl(url):
+                        return entity.range.lowerBound == 0 && entity.range.upperBound == copy.length
+                            && url.utf8.elementsEqual(message.text.utf8)
+                    default:
+                        return false
+                    }
+                }) ?? true)
+            let sharedFilterLink = canOpenSharedFilterLink
+                ? ChatSharedMessageFilterLink(messageText: message.text, displayedText: copy.string) : nil
              
 
             if let peer = message.peers[message.id.peerId] {
@@ -356,6 +382,13 @@ public class ChatMessageItem: ChatRowItem {
            
              
              InlineStickerItem.apply(to: copy, associatedMedia: message.associatedMedia)
+             if let sharedFilterLink {
+                 copy.addAttributes([
+                     .link: sharedFilterLink,
+                     .foregroundColor: theme.chat.linkColor(isIncoming, entry.renderType == .bubble),
+                     .cursor: NSCursor.pointingHand
+                 ], range: copy.range)
+             }
 
 //             copy.fixUndefinedEmojies()
 
@@ -384,6 +417,7 @@ public class ChatMessageItem: ChatRowItem {
              
              let isRichMessage = message.attributes.contains(where: { $0 is RichTextMessageAttribute })
              let isStreaming = !isRichMessage && message.attributes.contains(where: { $0 is TypingDraftMessageAttribute }) && message.adAttribute == nil
+             let displayTextTransform = ChatMessageItem.zalgoDisplayTransform(for: message)
              let existingState: FoldingTextLayout.StreamingState?
              if isStreaming, let state = _streamingStates.with({ $0[message.id]?.value }), self.messageText.string.hasPrefix(state.previousString) {
                  existingState = state
@@ -398,7 +432,7 @@ public class ChatMessageItem: ChatRowItem {
                              $0.withRevealedSpoiler(message.id)
                          })
                      })
-                 })
+                 }, displayTextTransform: displayTextTransform)
                  textLayout.mayBlocked = true
 
                  if let highlightFoundText = entry.additionalData.highlightFoundText {
@@ -584,6 +618,29 @@ public class ChatMessageItem: ChatRowItem {
                     chatInteraction?.markAdAction(adAttribute.opaqueId, adAttribute.hasContentMedia)
                     LinkHooks.shared.globalLinkExecutor().processURL(link)
                 }
+            } else if sharedFilterLink != nil {
+                interactions.processURL = { [weak self, weak chatInteraction, weak context] link in
+                    if let link = link as? ChatSharedMessageFilterLink {
+                        guard let self, let context, let row = self.view, row.item === self,
+                              let window = row.window as? Window, window === context.window,
+                              window.isVisible, window.isKeyWindow, window.attachedSheet == nil else { return }
+                        let expectedURL = link.rawValue
+                        let isActive = { [weak self, weak row, weak window, weak chatInteraction] in
+                            guard let self, let row, let window, let chatInteraction else { return false }
+                            return row.item === self && row.window === window && !chatInteraction.presentation.searchMode.inSearch
+                                && !row.isHiddenOrHasHiddenAncestor && !row.visibleRect.isEmpty
+                                && chatInteraction.canInspectMessageDetails()
+                                && self.messageText.string.utf8.elementsEqual(expectedURL.utf8)
+                        }
+                        guard isActive() else { return }
+                        ChatHistoryUIHooks.shared.openSharedMessageFilterLink?(expectedURL, context, window, isActive)
+                    } else {
+                        LinkHooks.shared.globalLinkExecutor().processURL(link)
+                    }
+                }
+                interactions.resolveLink = { link in
+                    (link as? ChatSharedMessageFilterLink)?.rawValue ?? LinkHooks.shared.globalLinkExecutor().resolveLink(link)
+                }
             }
             interactions.copy = {
                 selectManager.copy(selectManager)
@@ -652,12 +709,16 @@ public class ChatMessageItem: ChatRowItem {
     }
     
     
+    var messageWidth = ChatMessageWidthPreferences.shared.width
+
     public override var min_block_width: CGFloat {
         if webpageLayout != nil {
             return 340
-        } else {
+        }
+        if self is ChatRichTextRowItem || papercutLayout != nil || message?.adAttribute != nil {
             return super.min_block_width
         }
+        return messageWidth.maximumBubbleWidth
     }
     
     
@@ -782,8 +843,25 @@ public class ChatMessageItem: ChatRowItem {
     public override func viewClass() -> AnyClass {
         return ChatMessageView.self
     }
+
+    static func zalgoDisplayTransform(for message: Message) -> ((NSAttributedString) -> NSAttributedString?)? {
+        guard FastSettings.filterZalgoText, message.adAttribute == nil,
+              !message.attributes.contains(where: { $0 is RichTextMessageAttribute || $0 is TypingDraftMessageAttribute }) else {
+            return nil
+        }
+        return ChatZalgoTextFilter.presentation(for:)
+    }
     
-    public static func applyMessageEntities(with attributes:[MessageAttribute], for sourceText:String, message: Message?, context: any AccountContextProtocol, fontSize: CGFloat, openInfo:@escaping (PeerId, Bool, MessageId?, ChatInitialAction?)->Void, botCommand:@escaping (String)->Void = { _ in }, hashtag:@escaping (String)->Void = { _ in }, applyProxy:@escaping (ProxyServerSettings)->Void = { _ in }, textColor: NSColor = theme.colors.text, linkColor: NSColor = theme.colors.link, monospacedPre:NSColor = theme.colors.monospacedPre, monospacedCode: NSColor = theme.colors.monospacedCode, mediaDuration: Double? = nil, timecode: @escaping(Double?)->Void = { _ in }, openBank: @escaping(String)->Void = { _ in }, underlineLinks: Bool = false, blockColor: PeerNameColors.Colors = .init(main: theme.colors.accent), isDark: Bool, bubbled: Bool, codeSyntaxData: [CodeSyntaxKey : CodeSyntaxResult] = [:], loadCodeSyntax: @escaping(MessageId, NSRange, String, String, ChatInterfaceSyntaxTheme)->Void = { _, _, _, _, _ in }, openPhoneNumber: ((String)->Void)? = nil, openTonAddress: ((String)->Void)? = nil, confirm: Bool = true, ignoreLinks: Bool = false) -> NSAttributedString {
+    static func historyMonospaceFont(for mode: ChatMode) -> ChatMonospaceFont {
+        switch mode {
+        case .history, .thread, .pinned, .scheduled, .preview:
+            return ChatMonospaceFontPreferences.shared.font
+        case .customChatContents, .customLink:
+            return .system
+        }
+    }
+
+    public static func applyMessageEntities(with attributes:[MessageAttribute], for sourceText:String, message: Message?, context: any AccountContextProtocol, fontSize: CGFloat, openInfo:@escaping (PeerId, Bool, MessageId?, ChatInitialAction?)->Void, botCommand:@escaping (String)->Void = { _ in }, hashtag:@escaping (String)->Void = { _ in }, applyProxy:@escaping (ProxyServerSettings)->Void = { _ in }, textColor: NSColor = theme.colors.text, linkColor: NSColor = theme.colors.link, monospacedPre:NSColor = theme.colors.monospacedPre, monospacedCode: NSColor = theme.colors.monospacedCode, mediaDuration: Double? = nil, timecode: @escaping(Double?)->Void = { _ in }, openBank: @escaping(String)->Void = { _ in }, underlineLinks: Bool = false, blockColor: PeerNameColors.Colors = .init(main: theme.colors.accent), fillsQuoteBackground: Bool = true, isDark: Bool, bubbled: Bool, codeSyntaxData: [CodeSyntaxKey : CodeSyntaxResult] = [:], loadCodeSyntax: @escaping(MessageId, NSRange, String, String, ChatInterfaceSyntaxTheme)->Void = { _, _, _, _, _ in }, openPhoneNumber: ((String)->Void)? = nil, openTonAddress: ((String)->Void)? = nil, confirm: Bool = true, ignoreLinks: Bool = false, monospaceFont: ChatMonospaceFont = .system) -> NSAttributedString {
         var sourceEntities: [MessageTextEntity] = []
         for attribute in attributes {
             if let attribute = attribute as? TextEntitiesMessageAttribute {
@@ -982,7 +1060,7 @@ public class ChatMessageItem: ChatRowItem {
                     string.addAttribute(NSAttributedString.Key.link, value: LinkHooks.shared.callbackLink(nsString!.substring(with: range), openTonAddress), range: range)
                 }
             case let .BlockQuote(collapsable):
-                string.addAttribute(TextInputAttributes.quote, value: TextViewBlockQuoteData(id: Int(arc4random64()), colors: blockColor, space: 4, collapsable: collapsable), range: range)
+                string.addAttribute(TextInputAttributes.quote, value: TextViewBlockQuoteData(id: Int(arc4random64()), colors: blockColor, space: 4, collapsable: collapsable, fillsBackground: fillsQuoteBackground), range: range)
             case let .CustomEmoji(_, fileId: fileId):
                 string.addAttribute(TextInputAttributes.customEmoji, value: TextInputTextCustomEmojiAttribute(fileId: fileId, file: nil, emoji: string.attributedSubstring(from: range).string), range: range)
             case let .FormattedDate(format, date):
@@ -1063,11 +1141,17 @@ public class ChatMessageItem: ChatRowItem {
                 break
             }
         }
+        var codeFont: NSFont?
         for (range, attr) in fontAttributes {
             var font: NSFont?
 
             switch attr {
-            case .monospace, .blockQuote:
+            case .monospace:
+                if codeFont == nil {
+                    codeFont = ChatCodeFont.resolve(monospaceFont, size: fontSize)
+                }
+                font = codeFont
+            case .blockQuote:
                 font = .code(fontSize)
             case .italic:
                 font = .italic(fontSize)

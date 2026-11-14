@@ -61,7 +61,13 @@ class Window {
     func removeAllHandlers(for object: NSObject) { handlerRemovals += 1 }
     var isFullScreen = false; var toggles = 0; func toggleFullScreen(_ sender: Any?) { toggles += 1; isFullScreen.toggle() } }
 func hasModals(_ window: Window) -> Bool { false }
-final class WebappBrowser: Window { init(parent: Window) {} }
+__MINI_APP_SIZE_PREFERENCES__
+final class WebappBrowser: Window {
+    let usesMiniAppSize: Bool
+    init(parent: Window, sizePreferences: MiniAppWindowSizePreferences?) {
+        usesMiniAppSize = sizePreferences != nil
+    }
+}
 struct Bar { let height: Int }
 class ViewController: NSObject {
     var analyticsContext: AnalyticsContext?
@@ -585,6 +591,13 @@ extension BrowserTests {
         let observed = WebappBrowserController(context: context, initialTab: tab(3), analyticsContext: AnalyticsContext())
         state.show(observed)
         XCTAssertEqual(Set(observed.webpages.keys), [3]); XCTAssertNil(observed.initialUniqueId)
+    }
+
+    func testOnlyMiniAppTabsChooseTheMiniAppWindowSize() {
+        let context = Context()
+        XCTAssertTrue(WebappBrowserController(context: context, initialTab: tab()).browser.usesMiniAppSize)
+        XCTAssertFalse(WebappBrowserController(context: context, initialTab: .tonsite(url: "https://example.invalid")).browser.usesMiniAppSize)
+        XCTAssertFalse(WebappBrowserController(context: context).browser.usesMiniAppSize)
     }
 }
 extension BrowserTests {

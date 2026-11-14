@@ -99,6 +99,7 @@ let package = Package(
                 .product(name: "TelegramTheme", package: "TelegramTheme"),
                 .product(name: "ColorPalette", package: "ColorPalette"),
                 .product(name: "InAppSettings", package: "InAppSettings"),
+                .product(name: "SwiftSignalKit", package: "SSignalKit"),
                 .product(name: "ThemeSettings", package: "ThemeSettings"),
                 .product(name: "Localization", package: "Localization"),
                 .product(name: "TelegramUtils", package: "TelegramUtils"),

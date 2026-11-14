@@ -443,20 +443,25 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
     
     private struct ReorderState {
         let file: TelegramMediaFile
-        let layer: InlineStickerItemLayer
+        let layer: SimpleLayer
         let start: NSPoint
         let origin: NSPoint
         var order: [TelegramMediaFile]
         var isDragging: Bool
     }
     
-    private var inlineStickerItemViews: [InlineStickerItemLayer.Key: InlineStickerItemLayer] = [:]
+    private struct StickerTile {
+        let artwork: InlineStickerItemLayer
+        let layer: SimpleLayer
+    }
+
+    private var stickerTiles: [InlineStickerItemLayer.Key: StickerTile] = [:]
     private var editBadges: [InlineStickerItemLayer.Key: SimpleLayer] = [:]
     private var reorderState: ReorderState?
     private var addTileView: ImageButton?
     private var previewAnchor: NSView?
     
-    private func previewAnchor(for layer: InlineStickerItemLayer) -> NSView {
+    private func previewAnchor(for layer: CALayer) -> NSView {
         let anchor: NSView
         if let current = self.previewAnchor {
             anchor = current
@@ -472,8 +477,8 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
     
     func fileAtPoint(_ point: NSPoint) -> (QuickPreviewMedia, NSView?)? {
         
-        if let (layer, file) = itemUnderMouse {
-            let view = previewAnchor(for: layer)
+        if let (tile, file) = itemUnderMouse {
+            let view = previewAnchor(for: tile.layer)
             let reference = file.stickerReference != nil ? FileMediaReference.stickerPack(stickerPack: file.stickerReference!, media: file) : FileMediaReference.standalone(media: file)
             if file.isVideoSticker && !file.isWebm {
                 return (.file(reference, EntertainmentUIHooks.shared.previewViewType(.gif)), view)
@@ -535,13 +540,13 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
         return (item as? StickerPackPanelRowItem)?.editing?.isEditing == true
     }
     
-    private var currentDownItem: (InlineStickerItemLayer, TelegramMediaFile, Bool)?
+    private var currentDownItem: (StickerTile, TelegramMediaFile, Bool)?
     private let dragTracker = EntertainmentDragTracker()
     private func updateDown() {
         if isEditing {
-            if let (layer, file) = itemUnderMouse, let item = item as? StickerPackPanelRowItem, let window = window {
+            if let (tile, file) = itemUnderMouse, let item = item as? StickerPackPanelRowItem, let window = window {
                 let point = contentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-                reorderState = ReorderState(file: file, layer: layer, start: point, origin: layer.position, order: item.files.map { $0.0 }, isDragging: false)
+                reorderState = ReorderState(file: file, layer: tile.layer, start: point, origin: tile.layer.position, order: item.files.map { $0.0 }, isDragging: false)
             }
             return
         }
@@ -550,7 +555,7 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
             self.dragTracker.down(in: window)
         }
         if let itemUnderMouse = self.currentDownItem {
-            itemUnderMouse.0.animateScale(from: 1, to: 0.95, duration: 0.2, removeOnCompletion: false)
+            itemUnderMouse.0.layer.animateScale(from: 1, to: 0.95, duration: 0.2, removeOnCompletion: false)
         }
     }
     private func updateDragging() {
@@ -563,10 +568,10 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
         }
         if let current = self.currentDownItem {
             if self.itemUnderMouse?.1 != current.1, current.2  {
-                current.0.animateScale(from: 0.95, to: 1, duration: 0.2, removeOnCompletion: true)
+                current.0.layer.animateScale(from: 0.95, to: 1, duration: 0.2, removeOnCompletion: true)
                 self.currentDownItem?.2 = false
             } else if !current.2, self.itemUnderMouse?.1 == current.1 {
-                current.0.animateScale(from: 1, to: 0.95, duration: 0.2, removeOnCompletion: false)
+                current.0.layer.animateScale(from: 1, to: 0.95, duration: 0.2, removeOnCompletion: false)
                 self.currentDownItem?.2 = true
             }
         }
@@ -585,7 +590,7 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
             return
         }
         if let itemUnderMouse = self.currentDownItem {
-            itemUnderMouse.0.animateScale(from: 0.95, to: 1, duration: 0.2, removeOnCompletion: true)
+            itemUnderMouse.0.layer.animateScale(from: 0.95, to: 1, duration: 0.2, removeOnCompletion: true)
             if itemUnderMouse.1 == self.itemUnderMouse?.1 {
                 self.click()
             }
@@ -598,12 +603,12 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
             return false
         }
         return dragTracker.dragged(in: window, begin: { point in
-            let image = current.0.contents.flatMap { CFGetTypeID($0 as CFTypeRef) == CGImage.typeID ? ($0 as! CGImage) : nil }
+            let image = current.0.artwork.contents.flatMap { CFGetTypeID($0 as CFTypeRef) == CGImage.typeID ? ($0 as! CGImage) : nil }
             guard dragSticker(current.1, image, .moved(point)) else {
                 return false
             }
             if current.2 {
-                current.0.animateScale(from: 0.95, to: 1, duration: 0.2, removeOnCompletion: true)
+                current.0.layer.animateScale(from: 0.95, to: 1, duration: 0.2, removeOnCompletion: true)
             }
             return true
         }, move: { point in
@@ -646,7 +651,7 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
         if let target = item.slotIndex(at: point), let current = state.order.firstIndex(where: { $0.fileId == state.file.fileId }), target != current {
             state.order.insert(state.order.remove(at: current), at: target)
             for (index, file) in state.order.enumerated() where file.fileId != state.file.fileId {
-                if let layer = inlineStickerItemViews[InlineStickerItemLayer.Key(id: file.fileId.id, index: 0)], let position = slotPosition(file, index: index, item: item) {
+                if let layer = stickerTiles[InlineStickerItemLayer.Key(id: file.fileId.id, index: 0)]?.layer, let position = slotPosition(file, index: index, item: item) {
                     move(layer, to: position)
                 }
             }
@@ -701,7 +706,8 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
         layer.add(animation, forKey: "shaking_rotation")
     }
     
-    private func updateEditBadge(_ layer: InlineStickerItemLayer, key: InlineStickerItemLayer.Key, visible: Bool, animated: Bool) {
+    private func updateEditBadge(_ tile: StickerTile, key: InlineStickerItemLayer.Key, visible: Bool, animated: Bool) {
+        let artwork = tile.artwork
         if visible {
             guard editBadges[key] == nil else {
                 return
@@ -709,7 +715,7 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
             let badge = SimpleLayer()
             badge.zPosition = 1
             badge.frame = NSMakeRect(3, 3, 20, 20)
-            layer.addSublayer(badge)
+            tile.layer.addSublayer(badge)
             editBadges[key] = badge
 
             let apply: (CGImage) -> Bool = { [weak badge] image in
@@ -719,19 +725,19 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
                 badge.contents = stickerEditBadgeImage(color)
                 return true
             }
-            if let contents = layer.contents, apply(contents as! CGImage) {
+            if let contents = artwork.contents, apply(contents as! CGImage) {
                 if animated {
                     badge.animateScale(from: 0.01, to: 1, duration: 0.2)
                 }
             } else {
-                layer.contentDidUpdate = { [weak layer] image in
+                artwork.contentDidUpdate = { [weak artwork] image in
                     if apply(image) {
-                        layer?.contentDidUpdate = nil
+                        artwork?.contentDidUpdate = nil
                     }
                 }
             }
         } else if let badge = editBadges.removeValue(forKey: key) {
-            layer.contentDidUpdate = nil
+            artwork.contentDidUpdate = nil
             performSublayerRemoval(badge, animated: animated, scale: true)
         }
     }
@@ -773,7 +779,7 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
 
     }
     
-    private var itemUnderMouse: (InlineStickerItemLayer, TelegramMediaFile)? {
+    private var itemUnderMouse: (StickerTile, TelegramMediaFile)? {
         guard let window = self.window, let item = self.item as? StickerPackPanelRowItem else {
             return nil
         }
@@ -782,12 +788,12 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
         let firstItem = item.files.first(where: {
             return NSPointInRect(point, CGRect.init(origin: $0.1, size: NSMakeSize(60, 60)))
         })?.0
-        let firstLayer = self.inlineStickerItemViews.first(where: { layer in
-            return NSPointInRect(point, layer.1.frame)
+        let firstTile = self.stickerTiles.first(where: { tile in
+            return NSPointInRect(point, tile.value.layer.frame)
         })?.value
         
-        if let firstItem = firstItem, let firstLayer = firstLayer {
-            return (firstLayer, firstItem)
+        if let firstItem = firstItem, let firstTile = firstTile {
+            return (firstTile, firstItem)
         }
         
         return nil
@@ -804,8 +810,8 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
             }
         }
         let visibleRect = contentView.visibleRect
-        for (_, layer) in self.inlineStickerItemViews {
-            layer.isPlayable = isKeyWindow && NSIntersectsRect(layer.frame, visibleRect)
+        for tile in self.stickerTiles.values {
+            tile.artwork.isPlayable = isKeyWindow && NSIntersectsRect(tile.layer.frame, visibleRect)
         }
     }
     
@@ -852,43 +858,49 @@ private final class StickerPackPanelRowView : TableRowView, ModalPreviewRowViewP
 
             let rect = CGRect(origin: item.1, size: NSMakeSize(60, 60))
 
-            let view: InlineStickerItemLayer
-            if let current = self.inlineStickerItemViews[id], current.frame.size == rect.size {
-                view = current
+            let tile: StickerTile
+            if let current = self.stickerTiles[id], current.layer.bounds.size == rect.size {
+                tile = current
             } else {
-                if let layer = self.inlineStickerItemViews[id] {
-                    performSublayerRemoval(layer, animated: animated, scale: true)
+                if let previous = self.stickerTiles[id] {
+                    performSublayerRemoval(previous.layer, animated: animated, scale: true)
+                    self.editBadges.removeValue(forKey: id)
                 }
-                view = InlineStickerItemLayer(account: context.account, file: item.0, size: rect.size)
-                view.masksToBounds = true
-                view.superview = contentView
-                self.inlineStickerItemViews[id] = view
-                contentView.layer?.addSublayer(view)
+                let file = item.0
+                let artwork = InlineStickerItemLayer(account: context.account, file: file, size: rect.size)
+                artwork.superview = contentView
+                let fittedSize = file.dimensions?.size.aspectFitted(rect.size) ?? rect.size
+                let isSticker = file.isSticker || file.isAnimatedSticker || file.isVideoSticker
+                let roundsArtwork = isSticker && !file.isCustomEmoji && !file.isInstantVideo && file.maskData == nil
+                let layer = StickerPackArtworkClipping.tile(for: artwork, fittedSize: roundsArtwork ? fittedSize : nil)
+                tile = StickerTile(artwork: artwork, layer: layer)
+                self.stickerTiles[id] = tile
+                contentView.layer?.addSublayer(layer)
                 if animated {
-                    view.animateScale(from: 0.1, to: 1, duration: 0.2)
+                    layer.animateScale(from: 0.1, to: 1, duration: 0.2)
                 }
             }
             index += 1
 
-            view.frame = rect
+            tile.layer.frame = rect
             
             if editing?.isEditing == true {
-                startShaking(view)
+                startShaking(tile.layer)
             } else {
-                view.removeAnimation(forKey: "shaking_rotation")
+                tile.layer.removeAnimation(forKey: "shaking_rotation")
             }
-            updateEditBadge(view, key: id, visible: editing?.isEditing == true, animated: animated)
+            updateEditBadge(tile, key: id, visible: editing?.isEditing == true, animated: animated)
         }
 
         var removeKeys: [InlineStickerItemLayer.Key] = []
-        for (key, itemLayer) in self.inlineStickerItemViews {
+        for (key, tile) in self.stickerTiles {
             if !validIds.contains(key) {
                 removeKeys.append(key)
-                performSublayerRemoval(itemLayer, animated: animated, scale: true)
+                performSublayerRemoval(tile.layer, animated: animated, scale: true)
             }
         }
         for key in removeKeys {
-            self.inlineStickerItemViews.removeValue(forKey: key)
+            self.stickerTiles.removeValue(forKey: key)
             self.editBadges.removeValue(forKey: key)
         }
         self.updateAnimatableContent()

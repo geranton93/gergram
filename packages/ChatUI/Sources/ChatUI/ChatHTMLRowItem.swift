@@ -1,3 +1,4 @@
+import InAppSettings
 import Cocoa
 import TGUIKit
 import TelegramCore
@@ -96,7 +97,7 @@ public final class ChatHTMLRowItem: ChatRowItem, HTMLTwidgetRow {
             }
         }
         let caption = ChatMessageItem.applyMessageEntities(with: [TextEntitiesMessageAttribute(entities: entities)], for: text, message: message, context: context, fontSize: theme.fontSize, openInfo: chatInteraction.openInfo, botCommand: chatInteraction.sendPlainText, hashtag: chatInteraction.hashtag, applyProxy: chatInteraction.applyProxy, textColor: theme.chat.textColor(incoming, bubbled), linkColor: theme.chat.linkColor(incoming, bubbled), monospacedPre: theme.chat.monospacedPreColor(incoming, bubbled), monospacedCode: theme.chat.monospacedCodeColor(incoming, bubbled), mediaDuration: nil, timecode: { _ in
-        }, openBank: chatInteraction.openBank, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: incoming, bubbled: bubbled), isDark: theme.colors.isDark, bubbled: bubbled, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && incoming).mutableCopy() as! NSMutableAttributedString
+        }, openBank: chatInteraction.openBank, blockColor: theme.chat.blockColor(context.peerNameColors, message: message, isIncoming: incoming, bubbled: bubbled), fillsQuoteBackground: !ChatReplyAppearancePreferences.shared.isSimplified, isDark: theme.colors.isDark, bubbled: bubbled, codeSyntaxData: entry.additionalData.codeSyntaxData, loadCodeSyntax: chatInteraction.interactionEnqueueCodeSyntax, openPhoneNumber: chatInteraction.openPhoneNumberContextMenu, openTonAddress: chatInteraction.openTonAddressContextMenu, ignoreLinks: !entry.additionalData.canHighlightLinks && incoming).mutableCopy() as! NSMutableAttributedString
         caption.removeWhitespaceFromQuoteAttribute()
         InlineStickerItem.apply(to: caption, associatedMedia: message.associatedMedia, entities: entities, isPremium: context.isPremium)
         let spoilerColor = bubbled ? theme.chat.grayText(incoming, bubbled) : theme.chat.textColor(incoming, bubbled)

@@ -1,0 +1,39 @@
+diff --git a/submodules/TelegramCore/Sources/PendingMessages/PendingMessageUploadedContent.swift b/submodules/TelegramCore/Sources/PendingMessages/PendingMessageUploadedContent.swift
+index 6585a8a..03328ed 100644
+--- a/submodules/TelegramCore/Sources/PendingMessages/PendingMessageUploadedContent.swift
++++ b/submodules/TelegramCore/Sources/PendingMessages/PendingMessageUploadedContent.swift
+@@ -258,6 +258,34 @@ func mediaContentToUpload(accountPeerId: PeerId, network: Network, postbox: Post
+             return .single(.content(PendingMessageUploadedContentAndReuploadInfo(content: .secretMedia(.inputEncryptedFile(.init(id: resource.fileId, accessHash: resource.accessHash)), resource.decryptedSize, resource.key), reuploadInfo: nil, cacheReferenceKey: nil)))
+         }
+         if peerId.namespace != Namespaces.Peer.SecretChat, let reference = image.reference, case let .cloud(id, accessHash, maybeFileReference) = reference, let fileReference = maybeFileReference {
++            #if os(macOS)
++            let sourceReference = mediaReference?.partial ?? explicitPartialReference
++            if forceReupload, !isGrouped, let sourceReference,
++               case let .message(messageReference) = sourceReference,
++               let sourceId = messageReference.id, sourceId.peerId == peerId,
++               sourceId.namespace == Namespaces.Message.Cloud, sourceId.id > 0,
++               messageReference.isIncoming == false, messageReference.isSecret == false,
++               let resource = largest.resource as? CloudPhotoSizeMediaResource,
++               resource.photoId == id, resource.accessHash == accessHash {
++                let photo = image.withUpdatedPartialReference(sourceReference)
++                let reference = AnyMediaReference.message(message: messageReference, media: photo)
++                return revalidateMediaResourceReference(accountPeerId: accountPeerId, postbox: postbox, network: network, revalidationContext: revalidationContext, info: TelegramCloudMediaResourceFetchInfo(reference: reference.resourceReference(resource), preferBackgroundReferenceRevalidation: false, continueInBackground: false), resource: resource)
++                |> timeout(15.0, queue: Queue.concurrentDefaultQueue(), alternate: .fail(.generic))
++                |> mapError { _ -> PendingMessageUploadError in
++                    return .generic
++                }
++                |> mapToSignal { result -> Signal<PendingMessageUploadedContentResult, PendingMessageUploadError> in
++                    guard let refreshed = result.updatedResource as? CloudPhotoSizeMediaResource,
++                          refreshed.photoId == id, refreshed.accessHash == accessHash,
++                          refreshed.sizeSpec == resource.sizeSpec,
++                          let freshReference = refreshed.fileReference, !freshReference.isEmpty,
++                          freshReference != fileReference else {
++                        return .fail(.generic)
++                    }
++                    return .single(.content(PendingMessageUploadedContentAndReuploadInfo(content: .media(Api.InputMedia.inputMediaPhoto(.init(flags: 0, id: Api.InputPhoto.inputPhoto(.init(id: id, accessHash: accessHash, fileReference: Buffer(data: freshReference))), ttlSeconds: nil, video: nil)), text), reuploadInfo: nil, cacheReferenceKey: nil)))
++                }
++            }
++            #endif
+             return .single(.content(PendingMessageUploadedContentAndReuploadInfo(content: .media(Api.InputMedia.inputMediaPhoto(.init(flags: 0, id: Api.InputPhoto.inputPhoto(.init(id: id, accessHash: accessHash, fileReference: Buffer(data: fileReference))), ttlSeconds: nil, video: nil)), text), reuploadInfo: nil, cacheReferenceKey: nil)))
+         } else {
+             return uploadedMediaImageContent(network: network, postbox: postbox, transformOutgoingMessageMedia: transformOutgoingMessageMedia, messageMediaPreuploadManager: messageMediaPreuploadManager, forceReupload: forceReupload, isGrouped: isGrouped, peerId: peerId, image: image, messageId: messageId, text: text, attributes: attributes, autoremoveMessageAttribute: autoremoveMessageAttribute, autoclearMessageAttribute: autoclearMessageAttribute, auxiliaryMethods: auxiliaryMethods)

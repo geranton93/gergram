@@ -1484,6 +1484,9 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     
     private static var eventProcessed: String? = nil
     private static var spotlightAction: SpotlightIdentifier? = nil
+    private var pendingExternalFilterPreview: (() -> Void)?
+    private var externalFilterPreviewId = UUID()
+    private let externalFilterWindowObservation = MetaDisposable()
 
     @objc func handleURLEvent(_ event:NSAppleEventDescriptor, with replyEvent:NSAppleEventDescriptor) {
         let url = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue
@@ -1494,7 +1497,8 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         if let url, GergramSettingsRoute.recognizesScheme(url) {
             let settingsRoute = GergramSettingsRoute(url: url)
             let peerRoute = GergramPeerRoute(url: url)
-            guard settingsRoute != nil || peerRoute != nil else { return }
+            let isSharedFilterLink = LocalMessageFilterTransfer.recognizesSharedRulesLink(url)
+            guard settingsRoute != nil || peerRoute != nil || isSharedFilterLink else { return }
             AppDelegate.eventProcessed = url
 
             var activeContext = self.contextValue?.context
@@ -1502,6 +1506,13 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                 self.enumerateAccountContexts { context in
                     if context.window === keyWindow {
                         activeContext = context
+                    }
+                }
+                if isSharedFilterLink {
+                    self.enumerateExternalChatContexts { context in
+                        if context.window === keyWindow {
+                            activeContext = context
+                        }
                     }
                 }
             }
@@ -1514,6 +1525,8 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                     execute(inapp: .settings(link: url, context: activeContext, section: .gergram(settingsRoute)), isExternal: true)
                 } else if let peerRoute {
                     execute(inapp: .gergramPeer(link: url, context: activeContext, route: peerRoute), isExternal: true)
+                } else if isSharedFilterLink {
+                    openExternalFilterPreview(url, context: activeContext)
                 }
             } else {
                 self.window.deminiaturize(self)
@@ -1568,6 +1581,74 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             }
         }
     }
+
+    private func openExternalFilterPreview(_ url: String, context: AccountContext) {
+        let requestId = UUID()
+        externalFilterPreviewId = requestId
+        clearPendingExternalFilterPreview()
+        guard !isLockedValue(), !context.isFrozen else { return }
+        let window = context.window
+        let isAccountWindowCurrent = { [weak self, weak context, weak window] in
+            guard let self, let context, let window, self.externalFilterPreviewId == requestId else { return false }
+            guard !self.isLockedValue(), !context.isFrozen, context.window === window else { return false }
+            if context.isExternal {
+                var found = false
+                self.enumerateExternalChatContexts { candidate in
+                    found = found || candidate === context
+                }
+                return found
+            }
+            return (context.isCurrent || context.isSupport) && self.accountContext(for: context.account.id) === context
+        }
+        let isActive = { [weak window] in
+            guard let window else { return false }
+            return isAccountWindowCurrent() && NSApp.isActive && window.isKeyWindow
+                && window.attachedSheet == nil && !hasModals(window)
+        }
+        let canConfirm = { [weak window] in
+            guard let window, isAccountWindowCurrent(), NSApp.isActive else { return false }
+            if let keyWindow = NSApp.keyWindow {
+                return keyWindow === window || keyWindow === window.attachedSheet
+            }
+            return NSApp.mainWindow === window
+        }
+        pendingExternalFilterPreview = { [weak self, weak context, weak window] in
+            guard let self, self.externalFilterPreviewId == requestId else { return }
+            guard let context, let window, isAccountWindowCurrent() else {
+                self.clearPendingExternalFilterPreview()
+                return
+            }
+            guard NSApp.isActive, window.isKeyWindow else { return }
+            self.clearPendingExternalFilterPreview()
+            guard isActive() else { return }
+            previewExternalSharedMessageFilterLink(url, context: context, window: window, isActive: isActive, canConfirm: canConfirm)
+        }
+        let center = NotificationCenter.default
+        let observer = center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+            guard let self, self.externalFilterPreviewId == requestId else { return }
+            self.runPendingExternalFilterPreview()
+        }
+        externalFilterWindowObservation.set(ActionDisposable { center.removeObserver(observer) })
+        window.makeKeyAndOrderFront(self)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.externalFilterPreviewId == requestId else { return }
+            self.runPendingExternalFilterPreview()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.externalFilterPreviewId == requestId else { return }
+            self.clearPendingExternalFilterPreview()
+        }
+    }
+
+    private func clearPendingExternalFilterPreview() {
+        pendingExternalFilterPreview = nil
+        externalFilterWindowObservation.set(nil)
+    }
+
+    private func runPendingExternalFilterPreview() {
+        let preview = pendingExternalFilterPreview
+        preview?()
+    }
     
     private func hangKeybind(_ sharedContext: SharedAccountContext) {
         let signal = combineLatest(queue: .mainQueue(), voiceCallSettings(sharedContext.accountManager), sharedContext.groupCallContext)
@@ -1608,6 +1689,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         Analytics.shared.startSession()
         analyticsForegroundStart = Analytics.shared.now
         Analytics.shared.send(AnalyticsEvents.appForeground())
+        runPendingExternalFilterPreview()
     }
     
     func tryApplyAutologinToken(_ url: String) -> String? {
@@ -1724,6 +1806,8 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     
     func applicationDidResignActive(_ notification: Notification) {
         updatePeerPresence()
+        clearPendingExternalFilterPreview()
+        externalFilterPreviewId = UUID()
         if let start = analyticsForegroundStart {
             analyticsForegroundStart = nil
             Analytics.shared.send(AnalyticsEvents.appBackground(durationMs: Int(((Analytics.shared.now - start) * 1000).rounded())))
@@ -1736,6 +1820,8 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     
     func applicationWillTerminate(_ notification: Notification) {
         self.terminated = true
+        clearPendingExternalFilterPreview()
+        externalFilterPreviewId = UUID()
         disarmCrashMarker()
         if let containerUrl = self.containerUrl {
             clearCrashMarker(folder: containerUrl)

@@ -15,6 +15,10 @@ public func previewSharedMessageFilterLink(_ link: String, context: any AccountC
     LocalMessageFilterTransferActions.previewSharedRulesLink(link, context: context, window: window, isActive: isActive)
 }
 
+public func previewExternalSharedMessageFilterLink(_ link: String, context: any AccountContextProtocol, window: Window, isActive: @escaping () -> Bool, canConfirm: @escaping () -> Bool) {
+    LocalMessageFilterTransferActions.previewSharedRulesLink(link, context: context, window: window, allowsSecondaryAccountWindow: true, isActive: isActive, canConfirm: canConfirm)
+}
+
 enum LocalMessageFilterTransferActions {
     static func importRules(context: any AccountContextProtocol) {
         guard (context.isCurrent || context.isExternal), !context.isFrozen else { return }
@@ -104,15 +108,21 @@ enum LocalMessageFilterTransferActions {
         previewSharedRulesLink(link, context: context, window: window)
     }
 
-    static func previewSharedRulesLink(_ link: String, context: any AccountContextProtocol, window: Window, isActive: @escaping () -> Bool = { true }) {
-        guard isTransferCurrent(context, window: window), isActive() else { return }
+    static func previewSharedRulesLink(_ link: String, context: any AccountContextProtocol, window: Window, allowsSecondaryAccountWindow: Bool = false, isActive: @escaping () -> Bool = { true }, canConfirm: (() -> Bool)? = nil) {
+        let isCurrent: (any AccountContextProtocol, Window) -> Bool = { context, window in
+            isTransferCurrent(context, window: window, allowsSecondaryAccountWindow: allowsSecondaryAccountWindow) && isActive()
+        }
+        let canApply: (any AccountContextProtocol, Window) -> Bool = { context, window in
+            isTransferCurrent(context, window: window, allowsSecondaryAccountWindow: allowsSecondaryAccountWindow) && (canConfirm ?? isActive)()
+        }
+        guard isCurrent(context, window) else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak context, weak window] in
             let result = Result { try LocalMessageFilterTransfer.decodeSharedRulesLink(link) }
             DispatchQueue.main.async {
-                guard let context, let window, isTransferCurrent(context, window: window), isActive() else { return }
+                guard let context, let window, isCurrent(context, window) else { return }
                 switch result {
                 case let .success(backup):
-                    preview(.sharedRules(backup), context: context, window: window, showsRuleDetails: true, isActive: isActive)
+                    preview(.sharedRules(backup), context: context, window: window, showsRuleDetails: true, isCurrent: isCurrent, canApply: canApply)
                 case let .failure(error):
                     showError(error, window: window)
                 }
@@ -148,14 +158,15 @@ enum LocalMessageFilterTransferActions {
         return try LocalMessageFilterTransfer.decodeImport(data, accountPeerId: accountPeerId)
     }
 
-    private static func isTransferCurrent(_ context: any AccountContextProtocol, window: Window) -> Bool {
-        context.window === window && window.isVisible && (context.isCurrent || context.isExternal) && !context.isFrozen
+    private static func isTransferCurrent(_ context: any AccountContextProtocol, window: Window, allowsSecondaryAccountWindow: Bool = false) -> Bool {
+        context.window === window && window.isVisible && !context.isFrozen
+            && (context.isCurrent || context.isExternal || (allowsSecondaryAccountWindow && context.isSupport))
     }
 
-    private static func preview(_ imported: LocalMessageFilterTransfer.Import, context: any AccountContextProtocol, window: Window, showsRuleDetails: Bool = false, isActive: @escaping () -> Bool = { true }) {
+    private static func preview(_ imported: LocalMessageFilterTransfer.Import, context: any AccountContextProtocol, window: Window, showsRuleDetails: Bool = false, isCurrent: @escaping (any AccountContextProtocol, Window) -> Bool = { isTransferCurrent($0, window: $1) }, canApply: ((any AccountContextProtocol, Window) -> Bool)? = nil) {
         let postbox = context.account.postbox
         _ = (localMessageFilterPreferences(postbox) |> take(1) |> deliverOnMainQueue).startStandalone(next: { [weak context, weak window] previous in
-            guard let context, let window, isTransferCurrent(context, window: window), isActive() else { return }
+            guard let context, let window, isCurrent(context, window) else { return }
             let updated: LocalMessageFilterPreferences
             let description: String
             let confirmTitle: String
@@ -182,14 +193,14 @@ enum LocalMessageFilterTransferActions {
                 }
             }
             let apply = { [weak context, weak window] in
-                guard let context, let window, isTransferCurrent(context, window: window), isActive() else { return }
+                guard let context, let window, (canApply ?? isCurrent)(context, window) else { return }
                 let update = updateLocalMessageFilterPreferences(postbox) { current -> Bool in
                     guard current == previous else { return false }
                     current = updated
                     return true
                 }
                 _ = (update |> deliverOnMainQueue).startStandalone(next: { [weak context, weak window] applied in
-                    guard !applied, let context, let window, isTransferCurrent(context, window: window), isActive() else { return }
+                    guard !applied, let context, let window, isCurrent(context, window) else { return }
                     let key = showsRuleDetails ? "Gergram.Chat.FilterTransferLinkStale" : "Gergram.Chat.FilterTransferStale"
                     alert(for: window, header: title, info: localizedString(key))
                 })

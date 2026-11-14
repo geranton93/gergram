@@ -78,6 +78,9 @@ public class ChatInputActionsView: View, Notifable {
     private let keyboard:ImageButton = ImageButton()
     private let gift:ImageButton = ImageButton()
     private let suggestPost:ImageButton = ImageButton()
+    private let giftButtonPreferenceDisposable = MetaDisposable()
+
+    var giftButtonVisibilityChanged: (() -> Void)?
 
     public var scheduled:ImageButton?
     private var secretTimer:ImageButton?
@@ -147,8 +150,21 @@ public class ChatInputActionsView: View, Notifable {
         entertaiments.canHighlight = false
 
         updateLocalizationAndTheme(theme: theme)
-        
-        
+        giftButtonPreferenceDisposable.set((ComposerGiftButtonPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] hidden in
+            guard let self else { return }
+            if self.updateGiftButton(self.chatInteraction.presentation, hidesGiftButton: hidden, animated: false) {
+                self.updateLayout(size: self.frame.size, transition: .immediate)
+                self.giftButtonVisibilityChanged?()
+            }
+        }))
+    }
+
+    @discardableResult
+    private func updateGiftButton(_ value: ChatPresentationInterfaceState, hidesGiftButton: Bool, animated: Bool) -> Bool {
+        let hidden = !value.showsComposerGiftButton(hidesGiftButton: hidesGiftButton, accountPeerId: chatInteraction.interactionContext.peerId)
+        guard gift.controlIsHidden != hidden else { return false }
+        setExtraButton(gift, hidden: hidden, animated: animated)
+        return true
     }
 
     public override func updateLocalizationAndTheme(theme: PresentationTheme) {
@@ -256,11 +272,12 @@ public class ChatInputActionsView: View, Notifable {
     }
 
     deinit {
-
+        giftButtonPreferenceDisposable.dispose()
     }
 
     public func notify(with value: Any, oldValue: Any, animated: Bool) {
         if let value = value as? ChatPresentationInterfaceState, let oldValue = oldValue as? ChatPresentationInterfaceState {
+            let giftChanged = updateGiftButton(value, hidesGiftButton: ComposerGiftButtonPreferences.shared.hidesButton, animated: animated)
             if value.interfaceState != oldValue.interfaceState || !animated || value.inputQueryResult != oldValue.inputQueryResult || value.inputContext != oldValue.inputContext || value.sidebarEnabled != oldValue.sidebarEnabled || value.sidebarShown != oldValue.sidebarShown || value.layout != oldValue.layout || value.isKeyboardActive != oldValue.isKeyboardActive || value.isKeyboardShown != oldValue.isKeyboardShown || value.slowMode != oldValue.slowMode || value.hasScheduled != oldValue.hasScheduled || value.messageSecretTimeout != oldValue.messageSecretTimeout || value.boostNeed != oldValue.boostNeed || value.restrictedByBoosts != oldValue.restrictedByBoosts || value.interfaceState.messageEffect != oldValue.interfaceState.messageEffect || value.sendPaidMessageStars != oldValue.sendPaidMessageStars || value.hasGift != oldValue.hasGift || value.allowPostSuggestion != oldValue.allowPostSuggestion || value.interfaceState.suggestPost != oldValue.interfaceState.suggestPost {
 
                 if chatInteraction.hasSetDestructiveTimer, value.interfaceState.messageEffect == nil {
@@ -311,8 +328,6 @@ public class ChatInputActionsView: View, Notifable {
                 entertaiments.isSelected = ChatInputUIHooks.shared.isEntertainmentSidebarVisible(self.window)
 
                 setExtraButton(keyboard, hidden: !value.isKeyboardActive, animated: animated)
-                let inputIsEmpty = value.effectiveInput.inputText.isEmpty
-                setExtraButton(gift, hidden: !value.hasGift || !inputIsEmpty, animated: animated)
                 setExtraButton(suggestPost, hidden: !value.allowPostSuggestion || value.interfaceState.suggestPost != nil, animated: animated)
 
                 if let keyboardMessage = value.keyboardButtonsMessage {
@@ -343,9 +358,14 @@ public class ChatInputActionsView: View, Notifable {
 
                 updateLayout(size: frame.size, transition: .immediate)
 
-            } else if value.isEmojiSection != oldValue.isEmojiSection {
-                updateEntertainmentIcon()
+            } else if value.isEmojiSection != oldValue.isEmojiSection || giftChanged {
+                if value.isEmojiSection != oldValue.isEmojiSection {
+                    updateEntertainmentIcon()
+                }
                 updateLayout(size: frame.size, transition: .immediate)
+            }
+            if giftChanged {
+                giftButtonVisibilityChanged?()
             }
         }
     }

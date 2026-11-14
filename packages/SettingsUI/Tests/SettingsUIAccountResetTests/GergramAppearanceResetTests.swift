@@ -16,6 +16,7 @@ final class GergramAppearanceResetTests: XCTestCase {
         ChatWallpaperVisibilityPreferences(defaults: defaults).setHidden(true)
         ComposerEmojiHoverPreferences(defaults: defaults).setEnabled(false)
         ComposerBotCommandsPreferences(defaults: defaults).setHidden(true)
+        ComposerGiftButtonPreferences(defaults: defaults).setHidden(true)
         StreamerModeMenuBarPreferences(defaults: defaults).setVisible(false)
         PremiumStatusVisibilityPreferences(defaults: defaults).setHidden(true)
         ChatReplyAppearancePreferences(defaults: defaults).setSimplified(true)
@@ -32,7 +33,7 @@ final class GergramAppearanceResetTests: XCTestCase {
         AvatarCornerPreferences(defaults: defaults).setRadius(0)
         AvatarCornerPreferences(defaults: defaults).setUsesSingleRadius(true)
         let changed = defaults.persistentDomain(forName: name) ?? [:]
-        XCTAssertEqual(changed.count - initial.count, 20)
+        XCTAssertEqual(changed.count - initial.count, 21)
         defaults.set("archive data", forKey: "gergram.archive.synthetic")
         defaults.set("native palette", forKey: "telegram.appearance.synthetic")
 

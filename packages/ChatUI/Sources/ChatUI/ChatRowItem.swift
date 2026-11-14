@@ -2781,7 +2781,8 @@ public class ChatRowItem: TableRowItem {
             if editedAttribute != nil || message.id.namespace == Namespaces.Message.Cloud {
                 if isEditMarkVisible || isUnsent, message.id.peerId != context.peerId, let editedMessage {
                     let editedAttribute = editedMessage.attribute
-                    let style = entry.additionalData(editedMessage.id).editedIndicatorStyle
+                    let editedIndicator = entry.additionalData(editedMessage.id).editedIndicator
+                    let style = editedIndicator.style
                     let color = isStateOverlayLayout ? stateOverlayTextColor : !hasBubble ? theme.colors.grayText : theme.chat.grayText(isIncoming, object.renderType == .bubble)
                     let font: NSFont = renderType == .bubble ? .normal(.small) : .normal(.short)
                     var relativeDate: String?
@@ -2797,7 +2798,7 @@ public class ChatRowItem: TableRowItem {
                         } else {
                             time = DateUtils.string(forLastSeen: editedAttribute.date)
                         }
-                        let dateText = style == .text ? time : relativeDate.map { "\($0) \(time)" } ?? time
+                        let dateText = style == .text && editedIndicator.customText == nil ? time : relativeDate.map { "\($0) \(time)" } ?? time
                         let timeAttr: NSAttributedString = .initialize(string: dateText, color: color, font: font)
                         self.date = TextViewLayout(timeAttr, maximumNumberOfLines: 1)
                         self.date?.measure(width: .greatestFiniteMagnitude)
@@ -2806,10 +2807,11 @@ public class ChatRowItem: TableRowItem {
                     announcesEdit = style != .hidden
                     switch style {
                     case .text:
-                        let string = relativeDate.map { strings().chatRowEdited($0) } ?? strings().chatMessageEdited
+                        let string = editedIndicator.customText ?? relativeDate.map { strings().chatRowEdited($0) } ?? strings().chatMessageEdited
                         let attr: NSAttributedString = .initialize(string: string, color: color, font: font)
                         editedLabel = TextViewLayout(attr, maximumNumberOfLines: 1)
-                        editedLabel?.measure(width: .greatestFiniteMagnitude)
+                        let maximumLabelWidth: CGFloat = editedIndicator.customText == nil ? .greatestFiniteMagnitude : 88
+                        editedLabel?.measure(width: maximumLabelWidth)
                     case .icon:
                         editedIcon = chatEditedIndicatorImage.precomposed(color)
                     case .hidden:

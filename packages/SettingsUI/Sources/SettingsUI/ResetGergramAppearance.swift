@@ -3,7 +3,7 @@ import InAppSettings
 import TGUIKit
 
 func resetGergramAppearance(defaults: UserDefaults? = nil) {
-    (defaults.map(ChatEditedIndicatorPreferences.init) ?? .shared).set(.text)
+    (defaults.map(ChatEditedIndicatorPreferences.init) ?? .shared).reset()
     (defaults.map(ProfileJoinDatePreferences.init) ?? .shared).setVisible(false)
     (defaults.map(ChatWallpaperVisibilityPreferences.init) ?? .shared).setHidden(false)
     (defaults.map(ComposerEmojiHoverPreferences.init) ?? .shared).setEnabled(true)

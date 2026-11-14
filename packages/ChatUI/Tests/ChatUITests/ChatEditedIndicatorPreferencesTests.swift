@@ -66,4 +66,67 @@ final class ChatEditedIndicatorPreferencesTests: XCTestCase {
             XCTAssertNil(weakSubscriber)
         }
     }
+
+    func testCustomLabelAndStylePersistAndPublishTogether() throws {
+        try withDefaults { defaults in
+            let preferences = ChatEditedIndicatorPreferences(defaults: defaults)
+            var labels: [String?] = []
+            var styles: [ChatEditedIndicatorStyle] = []
+            let disposable = preferences.appearanceSignal.start(next: {
+                labels.append($0.customText)
+                styles.append($0.style)
+            })
+            defer { disposable.dispose() }
+
+            XCTAssertTrue(preferences.setCustomText("  revised  "))
+            XCTAssertTrue(preferences.setCustomText("revised"))
+            preferences.set(.icon)
+            preferences.set(.text)
+            XCTAssertEqual(labels, [nil, "revised", "revised", "revised"])
+            XCTAssertEqual(styles, [.text, .text, .icon, .text])
+            XCTAssertEqual(ChatEditedIndicatorPreferences(defaults: defaults).appearance.customText, "revised")
+        }
+    }
+
+    func testCustomLabelRejectsMultilineBidiAndOversizedText() throws {
+        try withDefaults { defaults in
+            let preferences = ChatEditedIndicatorPreferences(defaults: defaults)
+            XCTAssertTrue(preferences.setCustomText("👩🏽‍💻 revised"))
+            for value in ["line\nbreak", "left\u{202e}right", String(repeating: "x", count: 17),
+                          String(repeating: "👩🏽‍💻", count: 7)] {
+                XCTAssertFalse(preferences.setCustomText(value))
+                XCTAssertEqual(preferences.appearance.customText, "👩🏽‍💻 revised")
+            }
+            XCTAssertTrue(preferences.setCustomText("  "))
+            XCTAssertNil(ChatEditedIndicatorPreferences(defaults: defaults).appearance.customText)
+        }
+    }
+
+    func testCustomLabelAllowsEmojiWithinBothLimits() throws {
+        try withDefaults { defaults in
+            let preferences = ChatEditedIndicatorPreferences(defaults: defaults)
+            let label = String(repeating: "👩🏽‍💻", count: 6)
+            XCTAssertGreaterThan(label.utf16.count, ChatEditedIndicatorPreferences.maximumCustomTextLength)
+            XCTAssertLessThanOrEqual(label.utf16.count, ChatEditedIndicatorPreferences.maximumCustomTextUTF16Length)
+            XCTAssertTrue(preferences.setCustomText(label))
+            XCTAssertEqual(preferences.appearance.customText, label)
+        }
+    }
+
+    func testResetPublishesOneDefaultAndClearsCustomLabel() throws {
+        try withDefaults { defaults in
+            let preferences = ChatEditedIndicatorPreferences(defaults: defaults)
+            preferences.set(.icon)
+            XCTAssertTrue(preferences.setCustomText("revised"))
+            var updates: [ChatEditedIndicatorAppearance] = []
+            let disposable = preferences.appearanceSignal.start(next: { updates.append($0) })
+            defer { disposable.dispose() }
+            preferences.reset()
+            XCTAssertEqual(updates.map(\.style), [.icon, .text])
+            XCTAssertEqual(updates.map(\.customText), ["revised", nil])
+            let reloaded = ChatEditedIndicatorPreferences(defaults: defaults).appearance
+            XCTAssertEqual(reloaded.style, .text)
+            XCTAssertNil(reloaded.customText)
+        }
+    }
 }

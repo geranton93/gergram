@@ -71,6 +71,7 @@ The changes below are implemented within the listed scopes. Each row still needs
 | C17 | Default-off confirmations cover file-backed sticker and GIF sends, inline GIF results, voice messages and round videos. Canceling a recording prompt preserves the paused draft. | Verify actual prompt presentation and exactly one enqueue after approval. Eligible pending picker sends skip optimistic animations. Verify the inline result path with real schedule and payment transitions. |
 | C18 | **Send as Sticker** prepares one eligible local PNG or JPEG as a native static sticker in the attachment preview. The original file remains available. | Verify actual upload, scheduled and paid sends, and file fallback in app. |
 | C19 | **Show All Recent Stickers** displays eligible recents present in the synced account list beyond the default limit of 20. | Verify live list refresh and switching. Upstream local writes can temporarily trim the cached list. Installed-only pack discovery also needs live app verification. |
+| C20 | Click or drag the active voice waveform to seek through the native player. Stale gestures cancel on row, resource or player replacement. | Verify live playback and accessibility. Round-video ring seek and GIF gesture parity remain open. |
 | C21 | Inline callback display and copy with binary-safe representation. | Exercise a real inline keyboard and confirm that inspecting a payload leaves the bot action inactive. |
 | C23 | The profile music strip picks the first decodable cached still among four candidates and can adapt to an earlier preview when it becomes available. | Verify actual profile layout, cache refresh, fallback and playback navigation. |
 | C24 | Typed gergram settings links open the message context menu, hidden senders, filters, local archive, bubble corners or transcription language. Settings Search indexes the account privacy screens. | Verify external URL delivery and account switching in app. Message menu visibility can be reset with confirmation. Broader reset remains open. |
@@ -196,3 +197,5 @@ The archive storage fixture applies the tracked patch to the exact pinned Postbo
 
 - Five avatar appearance and 22 scoped cache AppKit cases passed normally and with Address Sanitizer. The tests cover all 24 radius levels, forum defaults, 1× and 2× pixels, observer disposal, and deliberate cache-key collision isolation.
 - Seven profile cover cases passed normally and with Address Sanitizer. A first-only mutation reproduced the missing fallback when the earlier cached preview was invalid.
+
+- Nineteen focused AppKit waveform event cases passed normally and with Address Sanitizer. The existing audio seek fixture passed 12 cases. The terminal fixture uses production gesture callbacks and a synthetic player.

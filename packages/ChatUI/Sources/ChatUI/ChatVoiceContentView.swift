@@ -31,8 +31,12 @@ public class ChatVoiceContentView: ChatAudioContentView {
     }
     
     public let waveformView:AudioWaveformView
-    private var acceptDragging: Bool = false
-    private var playAfterDragging: Bool = false
+    private struct WaveformSeek {
+        weak var controller: APController?
+        weak var song: APSongItem?
+        var lastProgress: Float?
+    }
+    private var waveformSeek: WaveformSeek?
     private var transcribeAudio: TranscribeAudioTextView?
 
     private var unreadView: View?
@@ -43,6 +47,7 @@ public class ChatVoiceContentView: ChatAudioContentView {
         super.init(frame: frameRect)
         textView.removeFromSuperview()
         durationView.userInteractionEnabled = false
+        waveformView.isEventLess = true
         addSubview(waveformView)
     }
     
@@ -100,7 +105,7 @@ public class ChatVoiceContentView: ChatAudioContentView {
                     case let .playing(current, _, progress):
                         waveformView.set(foregroundColor: wForegroundColor, backgroundColor: wBackgroundColor)
                         let width = floorToScreenPixels(backingScaleFactor, parameters.waveformWidth * CGFloat(progress))
-                        waveformView.updateForegroundClip(size: NSMakeSize(width, waveformView.frame.height), animated: animated && !acceptDragging)
+                        waveformView.updateForegroundClip(size: NSMakeSize(width, waveformView.frame.height), animated: animated && waveformSeek == nil)
                         let layout = parameters.duration(for: current)
                         layout.measure(width: frame.width - 50)
                         durationView.update(layout)
@@ -108,7 +113,7 @@ public class ChatVoiceContentView: ChatAudioContentView {
                     case let .fetching(progress):
                         waveformView.set(foregroundColor: wForegroundColor, backgroundColor: wBackgroundColor)
                         let width = floorToScreenPixels(backingScaleFactor, parameters.waveformWidth * CGFloat(progress))
-                        waveformView.updateForegroundClip(size: NSMakeSize(width, waveformView.frame.height), animated: animated && !acceptDragging)
+                        waveformView.updateForegroundClip(size: NSMakeSize(width, waveformView.frame.height), animated: animated && waveformSeek == nil)
                         durationView.update(parameters.durationLayout)
                     case .stoped, .waiting:
                         waveformView.set(foregroundColor: isIncomingConsumed ? wBackgroundColor : wForegroundColor, backgroundColor: wBackgroundColor)
@@ -117,7 +122,7 @@ public class ChatVoiceContentView: ChatAudioContentView {
                     case let .paused(current, _, progress):
                         waveformView.set(foregroundColor: wForegroundColor, backgroundColor: wBackgroundColor)
                         let width = floorToScreenPixels(backingScaleFactor, parameters.waveformWidth * CGFloat(progress))
-                        waveformView.updateForegroundClip(size: NSMakeSize(width, waveformView.frame.height), animated: animated && !acceptDragging)
+                        waveformView.updateForegroundClip(size: NSMakeSize(width, waveformView.frame.height), animated: animated && waveformSeek == nil)
                         let layout = parameters.duration(for: current)
                         layout.measure(width: frame.width - 50)
                         durationView.update(layout)
@@ -141,43 +146,83 @@ public class ChatVoiceContentView: ChatAudioContentView {
     }
     
     public override func mouseDragged(with event: NSEvent) {
-        super.mouseDragged(with: event)
-        
-        if acceptDragging, let parent = parent, let controller = ChatMediaUIHooks.shared.getAudioPlayer(context), let song = controller.currentSong {
-            if song.entry.isEqual(to: parent) {
-                let point = waveformView.convert(event.locationInWindow, from: nil)
-                let progress = Float(min(max(point.x, 0), waveformView.frame.width)/waveformView.frame.width)
-                switch song.state {
-                case .playing:
-                    _ = controller.pause()
-                    playAfterDragging = true
-                default:
-                    break
-                }
-                controller.set(trackProgress: progress)
-            } else {
-                super.mouseDragged(with: event)
-            }
+        guard waveformSeek != nil else {
+            super.mouseDragged(with: event)
+            return
         }
+        seekWaveform(at: event)
     }
-    
+
     public override func mouseDown(with event: NSEvent) {
-        acceptDragging = waveformView.mouseInside()
-        if !acceptDragging {
+        waveformSeek = nil
+        let point = waveformView.convert(event.locationInWindow, from: nil)
+        guard userInteractionEnabled, !event.modifierFlags.contains(.control),
+              waveformView.bounds.contains(point),
+              let parent, parent.autoclearTimeout == nil || parent.id.peerId.namespace == Namespaces.Peer.SecretChat,
+              let controller = ChatMediaUIHooks.shared.getAudioPlayer(context), let song = controller.currentSong,
+              song.entry.isEqual(to: parent), song.status.duration.isFinite, song.status.duration > 0 else {
+            super.mouseDown(with: event)
+            return
+        }
+        switch song.state {
+        case .playing, .paused:
+            waveformSeek = WaveformSeek(controller: controller, song: song)
+        case .waiting, .fetching, .stoped:
             super.mouseDown(with: event)
         }
     }
-    
+
     public override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-        if acceptDragging && playAfterDragging {
-            _ = ChatMediaUIHooks.shared.getAudioPlayer(context)?.play()
+        guard waveformSeek != nil else {
+            super.mouseUp(with: event)
+            return
         }
-        playAfterDragging = false
-        acceptDragging = false
+        seekWaveform(at: event)
+        waveformSeek = nil
+    }
+
+    private func seekWaveform(at event: NSEvent) {
+        guard userInteractionEnabled, let parent, let gesture = waveformSeek,
+              let controller = gesture.controller, controller === ChatMediaUIHooks.shared.getAudioPlayer(context),
+              let song = gesture.song, controller.currentSong === song, song.entry.isEqual(to: parent) else {
+            return
+        }
+        guard song.state != .stoped else { return }
+        let bounds = waveformView.bounds
+        let x = waveformView.convert(event.locationInWindow, from: nil).x - bounds.minX
+        guard bounds.width.isFinite, bounds.width > 0, x.isFinite else {
+            return
+        }
+        let progress = Float(min(max(x / bounds.width, 0), 1))
+        guard gesture.lastProgress != progress else { return }
+        if controller.set(trackProgress: progress) {
+            waveformSeek?.lastProgress = progress
+        }
+    }
+
+    private func cancelWaveformSeek() {
+        // The matching mouse-up still belongs to this view after reuse or removal.
+        waveformSeek?.controller = nil
+        waveformSeek?.song = nil
+    }
+
+    public override func willRemove() {
+        cancelWaveformSeek()
+        super.willRemove()
+    }
+
+    public override func viewWillMove(toSuperview newSuperview: NSView?) {
+        if newSuperview == nil {
+            cancelWaveformSeek()
+        }
+        super.viewWillMove(toSuperview: newSuperview)
     }
     
     public override func update(with media: Media, size: NSSize, context: any AccountContextProtocol, parent: Message?, table: TableView?, parameters: ChatMediaLayoutParameters?, animated: Bool = false, positionFlags: LayoutPositionFlags? = nil, approximateSynchronousValue: Bool = false) {
+        if self.parent?.id != parent?.id || self.context !== context
+            || (self.media as? TelegramMediaFile)?.resource.id != (media as? TelegramMediaFile)?.resource.id {
+            cancelWaveformSeek()
+        }
         super.update(with: media, size: size, context: context, parent: parent, table: table, parameters: parameters, animated: animated, positionFlags: positionFlags)
         
         

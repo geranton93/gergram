@@ -691,6 +691,9 @@ final class ChunkMediaPlayerDirectFetchSourceImpl: ChunkMediaPlayerSourceImpl {
             }
         }
         
+        let mediaBox = resource.postbox.mediaBox
+        let mediaResource = resource.reference.resource
+        var attemptSynchronousReads: Bool?
         self.lookahead = FFMpegLookahead(
             seekToTimestamp: position,
             lookaheadDuration: 10.0,
@@ -707,10 +710,14 @@ final class ChunkMediaPlayerDirectFetchSourceImpl: ChunkMediaPlayerSourceImpl {
                 ).start(error: { _ in completed() }, completed: completed)
             },
             getDataInRange: { range, fetchCompletion, waiter in
-                let mediaBox = resource.postbox.mediaBox
-                let mediaResource = resource.reference.resource
+                guard !waiter.isResolved else { return EmptyDisposable }
+                if attemptSynchronousReads == nil {
+                    attemptSynchronousReads = mediaBox.completedResourcePath(mediaResource) != nil
+                }
+                let attemptSynchronously = attemptSynchronousReads == true && fetchCompletion == nil
                 return subscribeDirectMediaRead(fetchCompletion: fetchCompletion, waiter: waiter) { notifyAboutIncomplete in
-                    mediaBox.resourceData(mediaResource, size: resourceSize, in: range, mode: .complete, notifyAboutIncomplete: notifyAboutIncomplete)
+                    mediaBox.resourceData(mediaResource, size: resourceSize, in: range, mode: .complete,
+                                          notifyAboutIncomplete: notifyAboutIncomplete, attemptSynchronously: attemptSynchronously)
                 }
             },
             isDataCachedInRange: { range in

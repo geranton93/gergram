@@ -4711,15 +4711,23 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
         chatInteraction.readUntilMessage = { [weak self, weak chatInteraction] selected in
             guard let self, let chatInteraction, self.chatInteraction === chatInteraction,
-                  self.isReadUntilOwner(chatInteraction),
-                  let peer = ChatReadUntilPolicy.peer(in: chatInteraction.presentation, accountPeerId: context.peerId),
-                  ChatReadUntilPolicy.isEligible(selected, peerId: peer.id, accountPeerId: context.peerId) else { return }
+                  self.isReadUntilOwner(chatInteraction) else { return }
             let accountPeerId = context.peerId
             let contentSettings = context.contentSettings
-            let signal = context.engine.messages.applyReadThroughMessageInteractively(messageId: selected.id, groupingKey: selected.groupingKey, isEligible: { peer, _, message in
-                peer.restrictionText(contentSettings) == nil && ChatReadUntilPolicy.isEligible(message, peerId: peer.id, accountPeerId: accountPeerId)
-            })
-            self.readUntilDisposable.set(signal.start())
+            let presentation = chatInteraction.presentation
+            let threadId = ChatReadUntilPolicy.topic(in: presentation)
+            guard let peer = ChatReadUntilPolicy.peer(in: presentation, accountPeerId: accountPeerId),
+                  ChatReadUntilPolicy.isEligible(selected, peerId: peer.id, accountPeerId: accountPeerId, threadId: threadId) else { return }
+            let isEligible: (Peer, CachedPeerData?, Message) -> Bool = { peer, _, message in
+                peer.restrictionText(contentSettings) == nil
+                    && ChatReadUntilPolicy.isEligible(message, peerId: peer.id, accountPeerId: accountPeerId, threadId: threadId)
+            }
+            if let threadId {
+                _ = context.engine.messages.applyReadThroughForumTopicInteractively(messageId: selected.id, threadId: threadId, groupingKey: selected.groupingKey, isEligible: isEligible).startStandalone()
+            } else {
+                let signal = context.engine.messages.applyReadThroughMessageInteractively(messageId: selected.id, groupingKey: selected.groupingKey, isEligible: isEligible)
+                self.readUntilDisposable.set(signal.start())
+            }
         }
         
         

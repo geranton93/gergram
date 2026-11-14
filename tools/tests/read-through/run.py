@@ -49,7 +49,7 @@ def prepare_source(source, destination):
 
 
 def extract_function(source, name, indent=""):
-    start = source.index(f"\n{indent}func {name}(") + 1
+    start = re.search(rf"^{indent}(?:private )?func {name}\(", source, re.MULTILINE).start()
     end = source.index(f"\n{indent}}}", start) + len(indent) + 2
     return source[start:end]
 
@@ -67,11 +67,16 @@ def prepare_tests(patched, directory):
         "__READ_THROUGH_TRANSACTION__", extract_function(engine, "_internal_applyReadThroughMessageInteractively")
     )
     (tests / "Support.swift").write_text(support)
+    topic_methods = "\n\n".join(extract_function(engine, name) for name in (
+        "forumReadThroughTarget", "forumReadThroughState", "_internal_applyReadThroughForumTopicInteractively",
+    ))
+    (tests / "ForumReadThrough.swift").write_text("import Foundation\n\n" + topic_methods + "\n")
     for source in (
         CHAT_UI / "Sources/ChatUI/ChatReadUntilPolicy.swift",
         CHAT_UI / "Tests/ChatUITests/ChatReadUntilTests.swift",
         patched / POSTBOX / "PeerReadState.swift",
         FIXTURE / "ExactReadThroughTests.swift",
+        FIXTURE / "ForumReadThroughTests.swift",
     ):
         text = re.sub(r"^(?:@testable )?import (?!XCTest\b)\w+\n", "", source.read_text(), flags=re.MULTILINE)
         (tests / source.name).write_text(text)

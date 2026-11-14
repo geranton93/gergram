@@ -16,10 +16,10 @@ final class ChatReadUntilTests: XCTestCase {
                      verificationIconFileId: nil)
     }
 
-    private func channel(flags: TelegramChannelFlags = [], participation: TelegramChannelParticipationStatus = .member) -> TelegramChannel {
+    private func channel(flags: TelegramChannelFlags = [], participation: TelegramChannelParticipationStatus = .member, forum: Bool = false) -> TelegramChannel {
         TelegramChannel(id: PeerId(namespace: Namespaces.Peer.CloudChannel, id: ._internalFromInt64Value(1)), accessHash: nil,
                         title: "Channel", username: nil, photo: [], creationDate: 0, version: 0, participationStatus: participation,
-                        info: .broadcast(.init(flags: [])), flags: flags, restrictionInfo: nil, adminRights: nil, bannedRights: nil,
+                        info: forum ? .group(.init(flags: [])) : .broadcast(.init(flags: [])), flags: flags, restrictionInfo: nil, adminRights: nil, bannedRights: nil,
                         defaultBannedRights: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil,
                         profileColor: nil, profileBackgroundEmojiId: nil, emojiStatus: nil, approximateBoostLevel: nil,
                         subscriptionUntilDate: nil, verificationIconFileId: nil, sendPaidMessageStars: nil, linkedMonoforumId: nil)
@@ -95,4 +95,24 @@ final class ChatReadUntilTests: XCTestCase {
         XCTAssertFalse(ChatReadUntilPolicy.supports(CachedChannelData().withUpdatedIsNotAccessible(true)))
     }
 
+    func testSidebarForumTopicUsesOnlyItsOwnIncomingMessages() {
+        let peer = channel(flags: [.isForum], forum: true)
+        func location(thread: Int64, unavailable: Bool = false) -> ChatLocation {
+            .thread(.init(peerId: peer.id, threadId: thread, channelMessageId: nil, isChannelPost: false,
+                          isForumPost: true, isMonoforumPost: false, maxMessage: nil, maxReadIncomingMessageId: nil,
+                          maxReadOutgoingMessageId: nil, unreadCount: 0, initialFilledHoles: [], initialAnchor: .automatic,
+                          isNotAvailable: unavailable))
+        }
+        let state = presentation(peer).withUpdatedChatLocation(location(thread: 10))
+        let selected = message(13, peer: peer, thread: 10)
+        XCTAssertEqual(ChatReadUntilPolicy.target(message: selected, album: nil, presentation: state, accountPeerId: accountId)?.id, selected.id)
+        for target in [message(10, peer: peer, thread: 10), message(13, peer: peer, thread: 11), message(13, peer: peer)] {
+            XCTAssertNil(ChatReadUntilPolicy.target(message: target, album: nil, presentation: state, accountPeerId: accountId))
+        }
+        XCTAssertNil(ChatReadUntilPolicy.peer(in: state.withUpdatedChatLocation(location(thread: 1)), accountPeerId: accountId))
+        XCTAssertNil(ChatReadUntilPolicy.peer(in: state.withUpdatedChatLocation(location(thread: 10, unavailable: true)), accountPeerId: accountId))
+        let albumMessage = message(13, peer: peer, album: 7, thread: 10)
+        let otherTopic = message(14, peer: peer, album: 7, thread: 11)
+        XCTAssertNil(ChatReadUntilPolicy.target(message: albumMessage, album: [albumMessage, otherTopic], presentation: state, accountPeerId: accountId))
+    }
 }

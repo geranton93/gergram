@@ -54,13 +54,15 @@ struct TelegramChannelFlags: OptionSet {
     static let isMonoforum = Self(rawValue: 2)
 }
 enum TelegramChannelParticipationStatus { case member, left, kicked }
-enum TelegramChannelInfo { case broadcast(BroadcastInfo)
+enum TelegramChannelInfo {
+    case broadcast(BroadcastInfo), group(BroadcastInfo)
     struct BroadcastInfo { let flags: [Int] }
 }
 struct TelegramChannel: Peer {
     let id: PeerId
     let participationStatus: TelegramChannelParticipationStatus
     let flags: TelegramChannelFlags
+    let info: TelegramChannelInfo
     var isForumOrMonoForum: Bool { flags.contains(.isForum) || flags.contains(.isMonoforum) }
 
     init(id: PeerId, accessHash: Int?, title: String, username: String?, photo: [Int], creationDate: Int, version: Int,
@@ -72,6 +74,7 @@ struct TelegramChannel: Peer {
         self.id = id
         self.participationStatus = participationStatus
         self.flags = flags
+        self.info = info
     }
 }
 struct TelegramGroup: Peer {
@@ -116,6 +119,7 @@ struct TelegramMediaAction {}
 struct EphemeralMessageAttribute {}
 struct SimpleDictionary {}
 struct Message {
+    static let newTopicThreadId: Int64 = -100
     let stableId: UInt32
     let stableVersion: UInt32
     let id: MessageId
@@ -153,12 +157,40 @@ struct Message {
         flags.contains(.Incoming)
     }
 }
-enum ChatMode: Equatable { case history, preview, scheduled, pinned }
+enum TopicMode: Equatable { case topic, comments }
+enum ChatMode: Equatable { case history, preview, scheduled, pinned, thread(TopicMode) }
+struct ChatReplyThreadMessage: Equatable {
+    let peerId: PeerId
+    let threadId: Int64
+    let isForumPost: Bool
+    var isMonoforumPost = false
+    var isNotAvailable = false
+
+    init(peerId: PeerId, threadId: Int64, channelMessageId: MessageId? = nil, isChannelPost: Bool = false,
+         isForumPost: Bool, isMonoforumPost: Bool = false, maxMessage: MessageId? = nil,
+         maxReadIncomingMessageId: MessageId? = nil, maxReadOutgoingMessageId: MessageId? = nil,
+         unreadCount: Int = 0, initialFilledHoles: IndexSet = [], initialAnchor: Anchor = .automatic,
+         isNotAvailable: Bool = false) {
+        self.peerId = peerId
+        self.threadId = threadId
+        self.isForumPost = isForumPost
+        self.isMonoforumPost = isMonoforumPost
+        self.isNotAvailable = isNotAvailable
+    }
+
+    enum Anchor { case automatic }
+}
 enum ChatLocation: Equatable {
     case peer(PeerId)
-    case thread(PeerId, Int64)
+    case thread(ChatReplyThreadMessage)
     static func makeSaved(_ accountId: PeerId, threadId: Int64) -> Self {
-        .thread(accountId, threadId)
+        .thread(.init(peerId: accountId, threadId: threadId, isForumPost: false))
+    }
+    var peerId: PeerId {
+        switch self {
+        case let .peer(id): return id
+        case let .thread(data): return data.peerId
+        }
     }
 }
 struct SearchState {
@@ -226,7 +258,60 @@ __READ_STATE_METHODS__
 }
 
 enum NoError: Error {}
-struct Signal<Value, ErrorType: Error> { let value: Value }
+struct Signal<Value, ErrorType: Error> {
+    let run: () -> Result<Value, ErrorType>
+
+    init(value: Value) { self.run = { .success(value) } }
+    init(run: @escaping () -> Result<Value, ErrorType>) { self.run = run }
+    static func single(_ value: Value) -> Self { .init(value: value) }
+    var value: Value { try! run().get() }
+}
+
+func mapToSignal<T, U, E>(_ transform: @escaping (T) -> Signal<U, E>) -> (Signal<T, E>) -> Signal<U, E> {
+    { signal in Signal(run: { signal.run().flatMap { transform($0).run() } }) }
+}
+
+func `catch`<T, E, F>(_ recover: @escaping (E) -> Signal<T, F>) -> (Signal<T, E>) -> Signal<T, F> {
+    { signal in Signal(run: {
+        switch signal.run() {
+        case let .success(value): return .success(value)
+        case let .failure(error): return recover(error).run()
+        }
+    }) }
+}
+
+struct Queue {
+    static func concurrentDefaultQueue() -> Self { Self() }
+}
+
+var maximumNetworkWait: Double?
+var useNetworkTimeout = false
+
+func timeout<T, E>(_ seconds: Double, queue: Queue, alternate: Signal<T, E>) -> (Signal<T, E>) -> Signal<T, E> {
+    { signal in Signal(run: {
+        maximumNetworkWait = seconds
+        return (useNetworkTimeout ? alternate : signal).run()
+    }) }
+}
+
+precedencegroup SignalPrecedence { associativity: left }
+infix operator |> : SignalPrecedence
+func |> <T, U>(_ value: T, _ transform: (T) -> U) -> U { transform(value) }
+
+struct MessageHistoryThreadData: Equatable {
+    var maxIncomingReadId: Int32
+    var maxKnownMessageId: Int32
+    var incomingUnreadCount: Int32
+}
+
+struct StoredMessageHistoryThreadInfo {
+    let data: MessageHistoryThreadData
+    init?(_ data: MessageHistoryThreadData) { self.data = data }
+}
+
+extension MessageHistoryThreadData {
+    func get<T>(_ type: T.Type) -> T? { self as? T }
+}
 
 final class Transaction {
     var peer: Peer?
@@ -235,20 +320,41 @@ final class Transaction {
     var album: [Message]?
     var readState: CombinedPeerReadState?
     var writes: [MessageIndex] = []
+    var messages: [MessageId: Message] = [:]
+    var threads: [Int64: MessageHistoryThreadData] = [:]
+    var holes: IndexSet = []
+    private var afterCommitActions: [() -> Void] = []
     func getPeer(_ id: PeerId) -> Peer? { peer?.id == id ? peer : nil }
     func getPeerCachedData(peerId: PeerId) -> CachedPeerData? { cachedData }
-    func getMessage(_ id: MessageId) -> Message? { message?.id == id ? message : nil }
+    func getMessage(_ id: MessageId) -> Message? { messages[id] ?? (message?.id == id ? message : nil) }
     func getCombinedPeerReadState(_ id: PeerId) -> CombinedPeerReadState? { readState }
     func getMessageGroup(_ id: MessageId) -> [Message]? { album }
     func applyInteractiveReadThroughIndex(_ index: MessageIndex) { writes.append(index) }
+    func getMessageHistoryThreadInfo(peerId: PeerId, threadId: Int64) -> StoredMessageHistoryThreadInfo? {
+        threads[threadId].flatMap(StoredMessageHistoryThreadInfo.init)
+    }
+    func getThreadIndexHoles(peerId: PeerId, threadId: Int64, namespace: MessageId.Namespace) -> IndexSet { holes }
+    func setMessageHistoryThreadInfo(peerId: PeerId, threadId: Int64, info: StoredMessageHistoryThreadInfo?) {
+        threads[threadId] = info?.data
+    }
+    func afterCommit(_ action: @escaping () -> Void) { afterCommitActions.append(action) }
+    func commit() {
+        let actions = afterCommitActions
+        afterCommitActions.removeAll()
+        actions.forEach { $0() }
+    }
 }
 
 final class Postbox {
     let data = Transaction()
     private(set) var transactionCount = 0
-    func transaction<T>(userInteractive: Bool, _ perform: (Transaction) -> T) -> Signal<T, NoError> {
-        transactionCount += 1
-        return Signal(value: perform(data))
+    func transaction<T>(userInteractive: Bool, _ perform: @escaping (Transaction) -> T) -> Signal<T, NoError> {
+        return Signal(run: {
+            self.transactionCount += 1
+            let result = perform(self.data)
+            self.data.commit()
+            return .success(result)
+        })
     }
 }
 
@@ -263,9 +369,42 @@ final class Account {
     let peerId: PeerId
     let postbox = Postbox()
     let stateManager = StateManager()
+    let network = Network()
     init(peerId: PeerId) { self.peerId = peerId }
 }
 func peerKeepsReadState(_ peer: Peer) -> Bool {
     (peer as? TelegramChannel).map { $0.participationStatus == .member } ?? true
+}
+
+enum Api {
+    struct InputPeer: Equatable { let id: PeerId }
+    enum Bool { case boolTrue, boolFalse }
+    enum functions {
+        enum messages {
+            struct ReadDiscussion: Equatable {
+                let peer: InputPeer
+                let msgId: Int32
+                let readMaxId: Int32
+            }
+            static func readDiscussion(peer: InputPeer, msgId: Int32, readMaxId: Int32) -> ReadDiscussion {
+                .init(peer: peer, msgId: msgId, readMaxId: readMaxId)
+            }
+        }
+    }
+}
+
+func apiInputPeer(_ peer: Peer) -> Api.InputPeer? { .init(id: peer.id) }
+
+final class Network {
+    enum RequestError: Error { case unavailable }
+    var requests: [Api.functions.messages.ReadDiscussion] = []
+    var respond: () -> Result<Api.Bool, RequestError> = { .success(.boolTrue) }
+
+    func request(_ request: Api.functions.messages.ReadDiscussion) -> Signal<Api.Bool, RequestError> {
+        Signal(run: {
+            self.requests.append(request)
+            return self.respond()
+        })
+    }
 }
 __READ_THROUGH_TRANSACTION__

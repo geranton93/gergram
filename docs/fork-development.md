@@ -68,13 +68,44 @@ bash scripts/xcode27.sh apply
 xcodebuild -showComponent MetalToolchain
 # If missing: xcodebuild -downloadComponent MetalToolchain
 
+bash scripts/build-flatc.sh
 CMAKE_POLICY_VERSION_MINIMUM=3.5 bash scripts/configure_frameworks.sh
 xcodebuild -workspace Telegram-Mac.xcworkspace -scheme Telegram -configuration Debug build
 ```
 
 Open `Telegram-Mac.xcworkspace` in Xcode for interactive debugging. The `Telegram` scheme runs the main app, and `TelegramShare` targets the share extension. The workspace also links projects required by the app. Native framework preparation generates API and shared-core sources before Xcode resolves the local Swift packages.
 
-Xcode 27 compatibility edits are local. Run `bash scripts/xcode27.sh revert` before staging any affected files. Framework preparation applies the Telegram-iOS compatibility, archive storage, capture, maintenance, notification timing, ordinary and forum read-through, and cloud photo reference refresh patch groups. With native frameworks already available, `sh scripts/prepare-telegram-ios.sh` applies any pending group. Use its `--reverse` option before moving the Telegram-iOS checkout to a different revision. [Xcode 27 compatibility](../XCODE27.md) · [Upstream build details](../INSTALL.md)
+Xcode 27 compatibility edits are local. Run `bash scripts/xcode27.sh revert` before staging any affected files. Framework preparation applies the Telegram-iOS patch groups for compatibility and fork features. With native frameworks already available, `sh scripts/prepare-telegram-ios.sh` applies any pending group. Use its `--reverse` option before moving the Telegram-iOS checkout to a different revision. [Xcode 27 compatibility](../XCODE27.md) · [Upstream build details](../INSTALL.md)
+
+The FlatBuffers compiler must match the pinned Swift runtime. `build-flatc.sh` builds version 24.12.23 from the verified upstream revision into the checkout's ignored `.build` directory. The script can also use a local Git checkout at the same commit as its only argument. A build host with its own trusted compiler can set `GERGRAM_FLATC` to the absolute path. The generator rejects other versions and quarantined tools before running schema generation. [FlatBuffers CMake documentation](https://flatbuffers.dev/building/)
+
+### Check Xcode workspace recognition
+
+Run these checks from the repository in the macOS terminal or build runner you intend to use.
+
+```sh
+xcodebuild -checkFirstLaunchStatus
+xmllint --noout Telegram-Mac.xcworkspace/contents.xcworkspacedata
+xcodebuild -list -workspace Telegram-Mac.xcworkspace
+git submodule status --recursive
+xcrun --sdk macosx metal --version
+```
+
+A valid workspace can fail with exit 66 when the command's environment cannot query the Launch Services document type. In the managed terminal used for this project, the same Xcode 27.0 binary rejected a fresh one-project workspace and an Apple template workspace. It listed the minimal project directly. The filesystem probe read the workspace XML successfully and returned `kLSDataUnavailableErr` for the workspace content type. Run the workspace check in a regular macOS terminal or a macOS build runner with these system services available. [Apple Launch Services error reference](https://developer.apple.com/documentation/coreservices/3074489-anonymous/klsdataunavailableerr) · [Codex issue with the same workspace error](https://github.com/openai/codex/issues/10390)
+
+An error writing `ManifestLoading` or `org.swift.swiftpm/manifests` occurs during package resolution. For diagnosis of the project entry point in a managed terminal, route Foundation, SwiftPM and Clang caches to a temporary directory. The local package manifests can run with Xcode's inner manifest sandbox disabled when the outer environment already confines the process.
+
+```sh
+probe=$(mktemp -d)
+mkdir -p "$probe/user/Library/Caches" "$probe/modules"
+CFFIXED_USER_HOME="$probe/user" \
+SWIFTPM_MODULECACHE_OVERRIDE="$probe/modules" \
+CLANG_MODULE_CACHE_PATH="$probe/modules" \
+xcodebuild -project Telegram.xcodeproj -scheme Telegram -resolvePackageDependencies \
+    -IDEPackageSupportDisableManifestSandbox=YES
+```
+
+This command reaches dependency resolution in the managed terminal. A missing `SSignalKit` directory then indicates that the pinned Telegram-iOS checkout is still missing. The workspace check remains the integrated build gate. Metal is an optional Xcode component installed separately from the SDK. [Apple Metal Toolchain installation](https://developer.apple.com/documentation/xcode/downloading-and-installing-additional-xcode-components)
 
 ## Where features belong
 

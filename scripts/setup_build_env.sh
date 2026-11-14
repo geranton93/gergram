@@ -147,6 +147,7 @@ cat <<EOF
 
 To build the frameworks, run with full Xcode selected and the CMake policy set:
 
+    DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" bash "$SCRIPT_DIR/build-flatc.sh"
     DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" \\
     CMAKE_POLICY_VERSION_MINIMUM=3.5 \\
     sh "$SCRIPT_DIR/configure_frameworks.sh"
@@ -159,6 +160,9 @@ EOF
 
 if [ "${1:-}" = "--build" ]; then
   log "Building frameworks (configure_frameworks.sh)"
+  if [ -z "${GERGRAM_FLATC:-}" ] && [ ! -x "$REPO_DIR/.build/flatbuffers-24.12.23/flatc" ]; then
+    DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" bash "$SCRIPT_DIR/build-flatc.sh"
+  fi
   DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" \
   CMAKE_POLICY_VERSION_MINIMUM=3.5 \
   sh "$SCRIPT_DIR/configure_frameworks.sh"

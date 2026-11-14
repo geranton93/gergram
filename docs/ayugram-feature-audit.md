@@ -8,7 +8,7 @@ See the [implementation plan](development-plan.md) for changes already in the de
 | --- | --- |
 | Sibling AyuGramDesktop, including this project's local fork changes | `d45ed3d102868d7f492a2f6d5f63319fbc74cbf7` |
 | Official Telegram for macOS source | `ec221d8560ca693cb921b4e8c576da9b87dff9ef` |
-| Native gergram bootstrap | `79f7cac61fa5e3742232728e179e81aa38f6cf9` |
+| Native gergram bootstrap | `89e246a1911bf14d7c5996f63037c3ec3931c89c` |
 | Previous gergram checkout, consulted for historical scope | `cc78980b09bec0f5dfe15030524d3255d7a2f395` |
 
 The [parity catalog](ayugram-parity.md) records AyuGram source paths and grouped acceptance criteria. The Reference column below maps work items to that catalog or to the additional evidence at the end of this audit. This is a static source audit. All entries still need matching runtime fixtures. The native checkout's recursive submodules and macOS build are pending, so the table identifies candidate shared-core hooks where their implementations could not be inspected locally.

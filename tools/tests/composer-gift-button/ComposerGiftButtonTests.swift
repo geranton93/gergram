@@ -60,7 +60,7 @@ enum ContainedViewLayoutTransition {
 final class ChatInputActionsView {
     let chatInteraction = ChatInteraction()
     let giftButtonPreferenceDisposable = MetaDisposable()
-    var giftButtonVisibilityChanged: (() -> Void)?
+    var actionVisibilityChanged: (() -> Void)?
     let frame = NSRect(x: 0, y: 0, width: 300, height: 40)
     let window: Int? = 1
     let gift = ImageButton()
@@ -108,7 +108,7 @@ final class ComposerGiftButtonTests: XCTestCase {
     func testOrdinaryRecipientButtonReleasesSlotAndRestoresLive() {
         let view = ChatInputActionsView()
         var heightUpdates = 0
-        view.giftButtonVisibilityChanged = { heightUpdates += 1 }
+        view.actionVisibilityChanged = { heightUpdates += 1 }
         view.bind()
         XCTAssertEqual(view.visibleWidth, 80)
         ComposerGiftButtonPreferences.shared.setHidden(true)

@@ -11,7 +11,7 @@ settings = root / "packages/InAppSettings/Sources/InAppSettings"
 fixture = Path(__file__).with_name("ComposerGiftButtonTests.swift").read_text()
 actions = (chat / "ChatInputActionsView.swift").read_text()
 parts = {
-    "__BIND__": ("        giftButtonPreferenceDisposable.set(", "\n    }"),
+    "__BIND__": ("        giftButtonPreferenceDisposable.set(", "        autoDeleteButtonPreferenceDisposable.set("),
     "__UPDATE__": ("    @discardableResult\n    private func updateGiftButton", "    public override func updateLocalizationAndTheme"),
     "__BUTTONS__": ("    private static let extraButtonSize", "    public func secretTimerItems"),
 }

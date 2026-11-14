@@ -72,6 +72,11 @@ public final class StarsSendActionView : Control {
 
 public class ChatInputActionsView: View, Notifable {
 
+    private enum AutoDeleteButtonRoute: Equatable {
+        case secretMenu
+        case setup
+    }
+
     public let chatInteraction:ChatInteraction
     private let muteChannelMessages:ImageButton = ChatAccessibleImageButton()
     public let entertaiments:ImageButton = ChatAccessibleImageButton()
@@ -79,12 +84,14 @@ public class ChatInputActionsView: View, Notifable {
     private let gift:ImageButton = ImageButton()
     private let suggestPost:ImageButton = ImageButton()
     private let giftButtonPreferenceDisposable = MetaDisposable()
+    private let autoDeleteButtonPreferenceDisposable = MetaDisposable()
 
-    var giftButtonVisibilityChanged: (() -> Void)?
+    var actionVisibilityChanged: (() -> Void)?
 
     public var scheduled:ImageButton?
     private var secretTimer:ImageButton?
     private var secretTimerImageKey: String?
+    private var autoDeleteButtonRoute: AutoDeleteButtonRoute?
 
     public init(frame frameRect: NSRect, chatInteraction:ChatInteraction) {
         self.chatInteraction = chatInteraction
@@ -154,8 +161,13 @@ public class ChatInputActionsView: View, Notifable {
             guard let self else { return }
             if self.updateGiftButton(self.chatInteraction.presentation, hidesGiftButton: hidden, animated: false) {
                 self.updateLayout(size: self.frame.size, transition: .immediate)
-                self.giftButtonVisibilityChanged?()
+                self.actionVisibilityChanged?()
             }
+        }))
+        autoDeleteButtonPreferenceDisposable.set((ComposerAutoDeleteButtonPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] hidden in
+            guard let self, self.updateAutoDeleteButton(self.chatInteraction.presentation, hidesButton: hidden, animated: false) else { return }
+            self.updateLayout(size: self.frame.size, transition: .immediate)
+            self.actionVisibilityChanged?()
         }))
     }
 
@@ -192,6 +204,81 @@ public class ChatInputActionsView: View, Notifable {
         updateSecretTimerImage(chatInteraction.presentation)
 
         scheduled?.set(image: theme.icons.chatInputScheduled, for: .Normal)
+    }
+
+    private func canHideAutoDeleteButton(_ value: ChatPresentationInterfaceState) -> Bool {
+        let context = chatInteraction.interactionContext
+        guard value.chatMode == .history, case let .peer(peerId) = value.chatLocation,
+              value.state == .normal, value.selectionState == nil, value.reportMode == nil, !value.searchMode.inSearch,
+              !value.isNotAccessible, !context.isFrozen, !chatInteraction.isLogInteraction, !chatInteraction.isGlobalSearchMessage,
+              let peer = value.peer, peer.id == peerId, let mainPeer = value.mainPeer, mainPeer.id == peerId,
+              peer.canManageDestructTimer, !peer.isSecretChat, !mainPeer.isMonoForum,
+              peerId != context.peerId, !isServicePeer(peer), value.sendPaidMessageStars == nil,
+              mainPeer.restrictionText(context.contentSettings) == nil else {
+            return false
+        }
+        return (mainPeer as? TelegramUser)?.botInfo?.flags.contains(.hasForum) != true
+    }
+
+    private func shouldShowAutoDeleteButton(_ value: ChatPresentationInterfaceState, hidesButton: Bool) -> Bool {
+        value.hasSetDestructiveTimer && value.interfaceState.messageEffect == nil
+            && (!hidesButton || !canHideAutoDeleteButton(value))
+    }
+
+    @discardableResult
+    private func updateAutoDeleteButton(_ value: ChatPresentationInterfaceState, hidesButton: Bool, animated: Bool) -> Bool {
+        let previous = secretTimer
+        if shouldShowAutoDeleteButton(value, hidesButton: hidesButton) {
+            let timer: ImageButton
+            if let current = secretTimer {
+                timer = current
+            } else {
+                let button = ChatAccessibleImageButton()
+                button.accessibilityLabelProvider = { [weak self] in
+                    if let timeout = self?.chatInteraction.presentation.messageSecretTimeout?.timeout?.effectiveValue {
+                        return strings().voiceOverSelfDestructTimerOn(shortTimeIntervalString(value: timeout))
+                    }
+                    return strings().voiceOverSelfDestructTimerOff
+                }
+                secretTimer = button
+                secretTimerImageKey = nil
+                button.imageView.animates = false
+                button.set(image: theme.icons.chatSecretTimer, for: .Normal)
+                _ = button.sizeToFit(.zero, NSMakeSize(40, 40), thatFit: true)
+                addSubview(button)
+                timer = button
+            }
+            let route: AutoDeleteButtonRoute? = value.peer.map { $0.isSecretChat ? .secretMenu : .setup }
+            if route != autoDeleteButtonRoute {
+                autoDeleteButtonRoute = route
+                timer.removeAllHandlers()
+                timer.contextMenu = nil
+                switch route {
+                case .secretMenu:
+                    timer.contextMenu = { [weak self] in
+                        let menu = ContextMenu()
+                        if let items = self?.secretTimerItems() {
+                            for item in items {
+                                menu.addItem(item)
+                            }
+                        }
+                        return menu
+                    }
+                case .setup:
+                    timer.set(handler: { [weak self] control in
+                        self?.chatInteraction.showDeleterSetup(control)
+                    }, for: .Click)
+                case nil:
+                    break
+                }
+            }
+        } else if let view = secretTimer {
+            performSubviewRemoval(view, animated: animated, scale: true)
+            secretTimer = nil
+            autoDeleteButtonRoute = nil
+        }
+        updateSecretTimerImage(value)
+        return previous !== secretTimer
     }
 
     private func updateSecretTimerImage(_ value: ChatPresentationInterfaceState) {
@@ -273,52 +360,14 @@ public class ChatInputActionsView: View, Notifable {
 
     deinit {
         giftButtonPreferenceDisposable.dispose()
+        autoDeleteButtonPreferenceDisposable.dispose()
     }
 
     public func notify(with value: Any, oldValue: Any, animated: Bool) {
         if let value = value as? ChatPresentationInterfaceState, let oldValue = oldValue as? ChatPresentationInterfaceState {
             let giftChanged = updateGiftButton(value, hidesGiftButton: ComposerGiftButtonPreferences.shared.hidesButton, animated: animated)
+            let autoDeleteChanged = updateAutoDeleteButton(value, hidesButton: ComposerAutoDeleteButtonPreferences.shared.hidesButton, animated: animated)
             if value.interfaceState != oldValue.interfaceState || !animated || value.inputQueryResult != oldValue.inputQueryResult || value.inputContext != oldValue.inputContext || value.sidebarEnabled != oldValue.sidebarEnabled || value.sidebarShown != oldValue.sidebarShown || value.layout != oldValue.layout || value.isKeyboardActive != oldValue.isKeyboardActive || value.isKeyboardShown != oldValue.isKeyboardShown || value.slowMode != oldValue.slowMode || value.hasScheduled != oldValue.hasScheduled || value.messageSecretTimeout != oldValue.messageSecretTimeout || value.boostNeed != oldValue.boostNeed || value.restrictedByBoosts != oldValue.restrictedByBoosts || value.interfaceState.messageEffect != oldValue.interfaceState.messageEffect || value.sendPaidMessageStars != oldValue.sendPaidMessageStars || value.hasGift != oldValue.hasGift || value.allowPostSuggestion != oldValue.allowPostSuggestion || value.interfaceState.suggestPost != oldValue.interfaceState.suggestPost {
-
-                if chatInteraction.hasSetDestructiveTimer, value.interfaceState.messageEffect == nil {
-                    if secretTimer == nil {
-                        let timer = ChatAccessibleImageButton()
-                        timer.accessibilityLabelProvider = { [weak self] in
-                            if let timeout = self?.chatInteraction.presentation.messageSecretTimeout?.timeout?.effectiveValue {
-                                return strings().voiceOverSelfDestructTimerOn(shortTimeIntervalString(value: timeout))
-                            }
-                            return strings().voiceOverSelfDestructTimerOff
-                        }
-                        secretTimer = timer
-                        secretTimerImageKey = nil
-                        timer.imageView.animates = false
-                        secretTimer?.set(image: theme.icons.chatSecretTimer, for: .Normal)
-                        _ = secretTimer?.sizeToFit(.zero, NSMakeSize(40, 40), thatFit: true)
-                        addSubview(secretTimer!)
-                    }
-                    if let peer = self.chatInteraction.peer {
-                        if peer.isSecretChat {
-                            secretTimer?.contextMenu = { [weak self] in
-                                let menu = ContextMenu()
-                                if let items = self?.secretTimerItems() {
-                                    for item in items {
-                                        menu.addItem(item)
-                                    }
-                                }
-                                return menu
-                            }
-                        } else {
-                            secretTimer?.setSingle(handler: { [weak self] control in
-                                self?.chatInteraction.showDeleterSetup(control)
-                            }, for: .Click)
-                        }
-                    }
-                } else if let view = secretTimer {
-                    performSubviewRemoval(view, animated: animated, scale: true)
-                    secretTimer = nil
-                }
-
-                updateSecretTimerImage(value)
 
                 if let peer = value.peer {
                     setExtraButton(muteChannelMessages, hidden: !peer.isChannel || !peer.canSendMessage(value.chatMode.isThreadMode) || !value.effectiveInput.inputText.isEmpty || value.interfaceState.editState != nil, animated: animated)
@@ -358,14 +407,14 @@ public class ChatInputActionsView: View, Notifable {
 
                 updateLayout(size: frame.size, transition: .immediate)
 
-            } else if value.isEmojiSection != oldValue.isEmojiSection || giftChanged {
+            } else if value.isEmojiSection != oldValue.isEmojiSection || giftChanged || autoDeleteChanged {
                 if value.isEmojiSection != oldValue.isEmojiSection {
                     updateEntertainmentIcon()
                 }
                 updateLayout(size: frame.size, transition: .immediate)
             }
-            if giftChanged {
-                giftButtonVisibilityChanged?()
+            if giftChanged || autoDeleteChanged {
+                actionVisibilityChanged?()
             }
         }
     }

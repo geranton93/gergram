@@ -10,6 +10,7 @@ func resetGergramAppearance(defaults: UserDefaults? = nil) {
     (defaults.map(ComposerBotCommandsPreferences.init) ?? .shared).setHidden(false)
     (defaults.map(ComposerGiftButtonPreferences.init) ?? .shared).setHidden(false)
     (defaults.map(ComposerAIToolsButtonPreferences.init) ?? .shared).setHidden(false)
+    (defaults.map(ComposerAutoDeleteButtonPreferences.init) ?? .shared).setHidden(false)
     (defaults.map(StreamerModeMenuBarPreferences.init) ?? .shared).setVisible(true)
     (defaults.map(PremiumStatusVisibilityPreferences.init) ?? .shared).setHidden(false)
     (defaults.map(ChatReplyAppearancePreferences.init) ?? .shared).setSimplified(false)

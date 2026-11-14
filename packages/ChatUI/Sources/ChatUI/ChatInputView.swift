@@ -829,7 +829,7 @@ public class ChatInputView: View, Notifable {
         contentView.backgroundColor = .clear
         textFieldContainer.backgroundColor = .clear
         actionsView.backgroundColor = .clear
-        actionsView.giftButtonVisibilityChanged = { [weak self] in
+        actionsView.actionVisibilityChanged = { [weak self] in
             self?.inputDidUpdateLayout(animated: false)
         }
         bottomView.backgroundColor = .clear

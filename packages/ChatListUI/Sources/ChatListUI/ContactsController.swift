@@ -10,6 +10,8 @@ import TelegramUtils
 import GeneralRows
 import ShortPeerRow
 import ChatUI
+import InAppSettings
+import MessageTextUtils
 
 
 private let mutualContactIcon = TelegramThemeHooks.shared.image(.iconChatMembers)
@@ -44,7 +46,7 @@ private enum ContactsControllerEntryId: Hashable {
 private enum ContactsEntry: Comparable, Identifiable {
     case space
     case separator(String, Int32)
-    case peer(Peer, PeerPresence?, Int32, EngineStorySubscriptions.Item?)
+    case peer(Peer, PeerPresence?, Int32, EngineStorySubscriptions.Item?, displayTitle: String?)
     case addContact
     var stableId: ContactsControllerEntryId {
         switch self {
@@ -52,7 +54,7 @@ private enum ContactsEntry: Comparable, Identifiable {
             return .addContact
         case .space:
             return .space
-        case let .peer(peer,_, _, _):
+        case let .peer(peer, _, _, _, _):
             return .peerId(peer.id.toInt64())
         case let .separator(_, index):
             return .separator(index)
@@ -65,7 +67,7 @@ private enum ContactsEntry: Comparable, Identifiable {
             return -2
         case .addContact:
             return -1
-        case let .peer(_, _, index, _):
+        case let .peer(_, _, index, _, _):
             return index
         case let .separator(_, index):
             return index
@@ -94,16 +96,16 @@ private func ==(lhs: ContactsEntry, rhs: ContactsEntry) -> Bool {
         } else {
             return false
         }
-    case let .peer(lhsPeer, lhsPresence, lhsIndex, lhsStory):
+    case let .peer(lhsPeer, lhsPresence, lhsIndex, lhsStory, lhsTitle):
         switch rhs {
-        case let .peer(rhsPeer, rhsPresence, rhsIndex, rhsStory):
+        case let .peer(rhsPeer, rhsPresence, rhsIndex, rhsStory, rhsTitle):
             if !lhsPeer.isEqual(rhsPeer) {
                 return false
             }
             if lhsIndex != rhsIndex {
                 return false
             }
-            if lhsStory != rhsStory {
+            if lhsStory != rhsStory || lhsTitle != rhsTitle {
                 return false
             }
             if let lhsPresence = lhsPresence, let rhsPresence = rhsPresence {
@@ -125,7 +127,12 @@ private func <(lhs: ContactsEntry, rhs: ContactsEntry) -> Bool {
 }
 
 
-private func entriesForView(_ view: EngineContactList, storyList: EngineStorySubscriptions?, sort: PeerListState.ContactsSort, accountPeer: Peer?) -> [ContactsEntry] {
+private func contactsDisplayTitle(_ title: String, enabled: Bool) -> String? {
+    let displayTitle = ChatZalgoTextFilter.displayName(title, enabled: enabled)
+    return displayTitle != title ? displayTitle : nil
+}
+
+private func entriesForView(_ view: EngineContactList, storyList: EngineStorySubscriptions?, sort: PeerListState.ContactsSort, accountPeer: Peer?, filtersTitle: Bool) -> [ContactsEntry] {
     var entries: [ContactsEntry] = []
     
     entries.append(.space)
@@ -193,7 +200,8 @@ private func entriesForView(_ view: EngineContactList, storyList: EngineStorySub
         
         for peer in orderedPeers {
             if !peer.isEqual(accountPeer), !peerIds.contains(peer.id) {
-                entries.append(.peer(peer, view.presences[peer.id]?._asPresence(), index, storyList?.items.first(where: { $0.peer.id == peer.id })))
+                let title = contactsDisplayTitle(peer.displayTitle, enabled: filtersTitle)
+                entries.append(.peer(peer, view.presences[peer.id]?._asPresence(), index, storyList?.items.first(where: { $0.peer.id == peer.id }), displayTitle: title))
                 peerIds.insert(peer.id)
                 index += 1
             }
@@ -219,7 +227,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ContactsEntry>]?, t
             let item:TableRowItem
             
             switch entry {
-            case let .peer(peer, presence, _, _):
+            case let .peer(peer, presence, _, _, displayTitle):
                 var color:NSColor = theme.colors.grayText
                 var string:String = strings().peerStatusRecently
                 if let presence = presence as? TelegramUserPresence {
@@ -241,7 +249,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ContactsEntry>]?, t
                 }
                 item = ShortPeerRowItem(initialSize, peer: peer, account: context.account, context: context, stableId: entry.stableId, statusStyle: ControlStyle(foregroundColor: color), status: string, borderType: [.Right], highlightVerified: true, customTheme: .init(backgroundColor: .clear), story: nil, openStory: { initialId in
                     arguments.openStory(initialId, true)
-                }, rightActions: rightActions)
+                }, rightActions: rightActions, displayTitleOverride: displayTitle)
             case .addContact:
                 item = AddContactTableItem(initialSize, stableId: entry.stableId, addContact: {
                     arguments.addContact()
@@ -368,10 +376,10 @@ open class ContactsController<Context: AccountContextProtocol>: PeersListControl
         
         let sortState = self.stateUpdater |> map { $0.contactsSort } |> distinctUntilChanged
         
-        let transition = combineLatest(queue: prepareQueue, contacts, accountPeer, sortState, appearanceSignal)
-            |> mapToQueue { view, accountPeer, sortState, appearance -> Signal<TableUpdateTransition, NoError> in
+        let transition = combineLatest(queue: prepareQueue, contacts, accountPeer, sortState, appearanceSignal, FastSettings.filterZalgoTextSignal)
+            |> mapToQueue { view, accountPeer, sortState, appearance, filtersTitle -> Signal<TableUpdateTransition, NoError> in
                 let first:Bool = !first.swap(true)
-                let entries = entriesForView(view, storyList: nil, sort: sortState, accountPeer: accountPeer)
+                let entries = entriesForView(view, storyList: nil, sort: sortState, accountPeer: accountPeer, filtersTitle: filtersTitle)
                     .map { AppearanceWrapperEntry(entry: $0, appearance: appearance) }
 
                 return prepareEntries(from: previousEntries.swap(entries), to: entries, context: context, initialSize: initialSize.with { $0 }, arguments: arguments, animated: !first) |> runOn(first ? .mainQueue() : prepareQueue)

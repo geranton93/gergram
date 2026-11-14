@@ -344,7 +344,7 @@ open class ShortPeerRowItem: GeneralRowItem {
     public let badgeAction: ((NSView)->Void)?
     public var avatarRemoveAction: (() -> Void)?
 
-    public init(_ initialSize:NSSize, peer: Peer, account: Account, context: (any AccountContextProtocol)?, peerId: PeerId? = nil, stableId:AnyHashable? = nil, enabled: Bool = true, height:CGFloat = 50, photoSize:NSSize = NSMakeSize(36, 36), titleStyle:ControlStyle = ControlStyle(font: .medium(.title), foregroundColor: theme.colors.text, highlightColor: .white), titleAddition:String? = nil, leftImage:CGImage? = nil, statusStyle:ControlStyle = ControlStyle(font:.normal(.text), foregroundColor: theme.colors.grayText, highlightColor:.white), status:String? = nil, borderType:BorderType = [], drawCustomSeparator:Bool = true, isLookSavedMessage: Bool = false, deleteInset:CGFloat? = nil, drawLastSeparator:Bool = false, inset:NSEdgeInsets = NSEdgeInsets(left:10.0), drawSeparatorIgnoringInset: Bool = false, interactionType:ShortPeerItemInteractionType = .plain, generalType:GeneralInteractedType = .none, viewType: GeneralViewType = .legacy, action:@escaping ()->Void = {}, contextMenuItems:@escaping()->Signal<[ContextMenuItem], NoError> = { .single([]) }, inputActivity: PeerInputActivity? = nil, highlightOnHover: Bool = false, alwaysHighlight: Bool = false, badgeNode: ShortPeerBadgeNode? = nil, compactText: Bool = false, highlightVerified: Bool = false, customTheme: GeneralRowItem.Theme? = nil, drawPhotoOuter: Bool = false, disabledAction:(()->Void)? = nil, story: EngineStorySubscriptions.Item? = nil, openStory: @escaping(StoryInitialIndex?)->Void = { _ in }, menuOnAction: Bool = false, photoBadge: CGImage? = nil, customAction: CustomAction? = nil, makeAvatarRound: Bool = false, drawStarsPaid: StarsAmount? = nil, statusImage: CGImage? = nil, passLeftAction: Bool = false, rightActions: RightActions = .init(), monoforumPeer: Peer? = nil, fullSize: Bool = false, _menuPresentation: AppMenu.Presentation? = nil, badgeAction: ((NSView)->Void)? = nil) {
+    public init(_ initialSize:NSSize, peer: Peer, account: Account, context: (any AccountContextProtocol)?, peerId: PeerId? = nil, stableId:AnyHashable? = nil, enabled: Bool = true, height:CGFloat = 50, photoSize:NSSize = NSMakeSize(36, 36), titleStyle:ControlStyle = ControlStyle(font: .medium(.title), foregroundColor: theme.colors.text, highlightColor: .white), titleAddition:String? = nil, leftImage:CGImage? = nil, statusStyle:ControlStyle = ControlStyle(font:.normal(.text), foregroundColor: theme.colors.grayText, highlightColor:.white), status:String? = nil, borderType:BorderType = [], drawCustomSeparator:Bool = true, isLookSavedMessage: Bool = false, deleteInset:CGFloat? = nil, drawLastSeparator:Bool = false, inset:NSEdgeInsets = NSEdgeInsets(left:10.0), drawSeparatorIgnoringInset: Bool = false, interactionType:ShortPeerItemInteractionType = .plain, generalType:GeneralInteractedType = .none, viewType: GeneralViewType = .legacy, action:@escaping ()->Void = {}, contextMenuItems:@escaping()->Signal<[ContextMenuItem], NoError> = { .single([]) }, inputActivity: PeerInputActivity? = nil, highlightOnHover: Bool = false, alwaysHighlight: Bool = false, badgeNode: ShortPeerBadgeNode? = nil, compactText: Bool = false, highlightVerified: Bool = false, customTheme: GeneralRowItem.Theme? = nil, drawPhotoOuter: Bool = false, disabledAction:(()->Void)? = nil, story: EngineStorySubscriptions.Item? = nil, openStory: @escaping(StoryInitialIndex?)->Void = { _ in }, menuOnAction: Bool = false, photoBadge: CGImage? = nil, customAction: CustomAction? = nil, makeAvatarRound: Bool = false, drawStarsPaid: StarsAmount? = nil, statusImage: CGImage? = nil, passLeftAction: Bool = false, rightActions: RightActions = .init(), monoforumPeer: Peer? = nil, fullSize: Bool = false, _menuPresentation: AppMenu.Presentation? = nil, badgeAction: ((NSView)->Void)? = nil, displayTitleOverride: String? = nil) {
         self.peer = peer
         self.badgeAction = badgeAction
         self.drawPhotoOuter = drawPhotoOuter
@@ -441,11 +441,17 @@ open class ShortPeerRowItem: GeneralRowItem {
             self.photo = generateEmptyPhoto(photoSize, type: emptyAvatar, bubble: false) |> map {($0, false)}
         }
         
+        let displayTitle: String
         if let monoforumPeer, peer.isMonoForum {
-            let _ = tAttr.append(string: monoforumPeer.displayTitle, color: enabled ? titleStyle.foregroundColor : customTheme?.grayTextColor ?? theme.colors.grayText, font: self.titleStyle.font)
+            displayTitle = monoforumPeer.displayTitle
+        } else if isLookSavedMessage && account.peerId == peer.id {
+            displayTitle = strings().peerSavedMessages
+        } else if compactText {
+            displayTitle = peer.compactDisplayTitle + (account.testingEnvironment ? " [🤖]" : "")
         } else {
-            let _ = tAttr.append(string: isLookSavedMessage && account.peerId == peer.id ? strings().peerSavedMessages : (compactText ? peer.compactDisplayTitle + (account.testingEnvironment ? " [🤖]" : "") : peer.displayTitle), color: enabled ? titleStyle.foregroundColor : customTheme?.grayTextColor ?? theme.colors.grayText, font: self.titleStyle.font)
+            displayTitle = displayTitleOverride ?? peer.displayTitle
         }
+        _ = tAttr.append(string: displayTitle, color: enabled ? titleStyle.foregroundColor : customTheme?.grayTextColor ?? theme.colors.grayText, font: self.titleStyle.font)
         
         
         if let titleAddition = titleAddition {

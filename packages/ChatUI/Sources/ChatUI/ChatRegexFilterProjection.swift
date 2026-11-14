@@ -88,12 +88,19 @@ enum ChatRegexFilterProjection {
                     for button in row.buttons {
                         let payload: String
                         switch button.action {
-                        case let .url(url):
+                        case let .url(url), let .urlAuth(url, _), let .openWebView(url, _):
                             payload = url
                         case let .callback(_, data):
-                            let bytes = data.makeData()
-                            guard bytes.count <= remaining else { return nil }
-                            payload = String(decoding: bytes, as: UTF8.self)
+                            guard data.length <= remaining else { return nil }
+                            payload = String(decoding: data.makeData(), as: UTF8.self)
+                        case let .switchInline(_, query, _):
+                            payload = query
+                        case let .copyText(text):
+                            payload = text
+                        case let .openUserProfile(peerId):
+                            payload = peerId.namespace == Namespaces.Peer.CloudUser ? String(peerId.id._internalGetInt64Value()) : ""
+                        case let .setupPoll(isQuiz):
+                            payload = isQuiz.map { $0 ? "\u{1}" : "\u{0}" } ?? ""
                         default:
                             payload = ""
                         }
@@ -115,10 +122,13 @@ enum ChatRegexFilterProjection {
         case is TelegramMediaContact: return 12
         case is TelegramMediaDice: return 15
         case is TelegramMediaPoll, is TelegramMediaTodo: return 17
-        case is TelegramMediaStory: return 23
+        case let story as TelegramMediaStory: return story.isMention ? 24 : 23
         case is TelegramMediaGiveaway: return 26
         case is TelegramMediaGiveawayResults: return 28
         case is TelegramMediaPaidContent: return 29
+        case let invoice as TelegramMediaInvoice:
+            if case .preview? = invoice.extendedMedia { return 20 }
+            return 0
         case let file as TelegramMediaFile:
             if file.isInstantVideo { return 5 }
             if file.isVoice { return 2 }

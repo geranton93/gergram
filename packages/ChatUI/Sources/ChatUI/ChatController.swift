@@ -3505,34 +3505,61 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
 
 
-        var lastEventTimestamp: Double = 0.0
+        let isSpeedNoticeOwner: () -> Bool = { [weak self] in
+            guard let self else { return false }
+            let context = self.context
+            return (context.isCurrent || context.isExternal) && !context.isFrozen && !context.isPremium
+                && self.isAnalyticsVisible && self.navigationController?.controller === self
+                && self.genericView.window === context.window && context.window.isVisible && context.window.isKeyWindow
+                && !self.genericView.isHiddenOrHasHiddenAncestor && ChatUIHooks.shared.appIsLockedValue() != true
+        }
         self.networkSpeedEventsDisposable = (self.context.account.network.networkSpeedLimitedEvents
-        |> deliverOnMainQueue).start(next: { event in
+        |> deliverOnMainQueue).start(next: { [weak self] event in
+            guard let self, isSpeedNoticeOwner(), !hasModals(self.context.window) else { return }
+            guard ChatNetworkSpeedNotice.isEligible(event, isMessageVisible: { messageId in
+                func isVisibleMedia(_ content: ChatMediaContentView) -> Bool {
+                    content.parent?.id == messageId && !content.isHiddenOrHasHiddenAncestor && !content.visibleRect.isEmpty
+                }
+                var isVisible = false
+                self.genericView.tableView.enumerateVisibleItems(with: { row in
+                    guard let row = row as? ChatRowItem, let view = row.view,
+                          !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return true }
+                    if let album = view as? ChatGroupedView {
+                        isVisible = album.contents.contains(where: isVisibleMedia)
+                    } else if let media = view as? ChatMediaView {
+                        isVisible = media.contentNode.map(isVisibleMedia) ?? false
+                    } else {
+                        isVisible = row.messages.contains { $0.id == messageId }
+                    }
+                    return !isVisible
+                })
+                return isVisible
+            }) else { return }
 
-            let timestamp = CFAbsoluteTimeGetCurrent()
-            if lastEventTimestamp + 10.0 < timestamp {
-                lastEventTimestamp = timestamp
-            } else {
-                return
-            }
-            
+            let context = self.context
+            let configuration = context.appConfiguration
+            let network = context.account.network
+            let period = configuration.getGeneralValueDouble("upload_premium_speedup_notify_period", orElse: ChatNetworkSpeedNotice.defaultPeriod)
+            guard ChatNetworkSpeedNotice.shared.claim(network: network, configuredPeriod: period) else { return }
+
             let title: String
             let text: String
             switch event {
             case .download:
-                let speedIncreaseFactor = context.appConfiguration.getGeneralValue("upload_premium_speedup_download", orElse: 10)
+                let speedIncreaseFactor = ChatNetworkSpeedNotice.speedFactor(configuration.getGeneralValueDouble("upload_premium_speedup_download", orElse: 10))
                 title = strings().chatDownloadLimitTitle
-                text = strings().chatDownloadLimitTextOther(Int(speedIncreaseFactor))
+                text = strings().chatDownloadLimitTextOther(speedIncreaseFactor)
             case .upload:
-                let speedIncreaseFactor = context.appConfiguration.getGeneralValue("upload_premium_speedup_upload", orElse: 10)
+                let speedIncreaseFactor = ChatNetworkSpeedNotice.speedFactor(configuration.getGeneralValueDouble("upload_premium_speedup_upload", orElse: 10))
                 title = strings().chatUploadLimitTitle
-                text = strings().chatUploadLimitTextOther(Int(speedIncreaseFactor))
+                text = strings().chatUploadLimitTextOther(speedIncreaseFactor)
             }
-            
-            showModalText(for: context.window, text: text, title: title, callback: { _ in
+            network.markNetworkSpeedLimitDisplayed()
+            showModalText(for: context.window, text: text, title: title, callback: { [weak self] _ in
+                guard let self, isSpeedNoticeOwner() else { return }
+                let context = self.context
                 prem(with: PremiumBoardingController(context: context, source: .upload_limit, openFeatures: true), for: context.window)
             })
-            
         })
 
 

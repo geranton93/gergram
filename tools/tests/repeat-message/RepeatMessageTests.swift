@@ -18,6 +18,7 @@ struct MessageId: Equatable, Hashable {
 enum Namespaces {
     enum Peer { static let CloudUser = 0; static let CloudGroup = 1; static let CloudChannel = 2 }
     enum Message { static let Cloud = 0 }
+    enum Media { static let CloudImage = 1 }
 }
 struct Stars { let value: Int64 }
 protocol CachedPeerData {}
@@ -42,7 +43,11 @@ class Peer {
     init(_ id: PeerId) { self.id = id }
     func restrictionText(_ contentSettings: Int) -> String? { restricted ? "Restricted" : nil }
     func isCopyProtected(cachedData: CachedPeerData?) -> Bool { (cachedData as? CachedUserData)?.protected == true }
-    func canSendMessage(_ inThread: Bool, threadData: ThreadInfo?, cachedData: CachedPeerData?) -> Bool { canSend }
+    var canSendPhoto = true
+    var bannedPhoto = false
+    func canSendMessage(_ inThread: Bool, media: Any? = nil, threadData: ThreadInfo?, cachedData: CachedPeerData?) -> Bool {
+        canSend && (!(media is TelegramMediaImage) || canSendPhoto)
+    }
 }
 final class TelegramUser: Peer {}
 final class TelegramGroup: Peer {}
@@ -129,7 +134,7 @@ struct Message {
     var text = "👋  formatted  "
     var textEntities: TextEntitiesMessageAttribute? = .init(entities: [.init(range: 4..<13, type: .Bold)])
     var flags: MessageFlags = []
-    var media: [Int] = []
+    var media: [Any] = []
     var groupingKey: Int64?
     var forwardInfo: Int?
     var replyMarkup: Int?
@@ -145,8 +150,36 @@ struct Message {
     var protected = false
     var hidden = false
     var incoming = false
+    var isMediaSpoilered = false
+    var sensitive = false
+    var hasMessageReference = true
     func effectivelyIncoming(_ peerId: PeerId) -> Bool { incoming }
     func isCopyProtected(cachedData: CachedPeerData?) -> Bool { protected }
+    func isSensitiveContent(platform: String, contentSettings: Int) -> Bool { sensitive }
+}
+struct MediaId: Equatable {
+    var namespace = Namespaces.Media.CloudImage
+    let id: Int64
+}
+struct MessageReference {
+    let id: MessageId?
+    init(_ source: Message) { id = source.hasMessageReference ? source.id : nil }
+}
+struct CloudPhotoSizeMediaResource {}
+struct TelegramMediaImageRepresentation {
+    var resource: Any = CloudPhotoSizeMediaResource()
+}
+struct TelegramMediaImage {
+    enum Reference { case cloud(Int64, Int64, Data?) }
+    var imageId = MediaId(id: 10)
+    var reference: Reference? = .cloud(10, 42, Data([1]))
+    var representations: [TelegramMediaImageRepresentation] = [.init()]
+    var video: Int?
+    var videoRepresentations: [Int] = []
+    var emojiMarkup: Int?
+}
+enum AnyMediaReference {
+    case message(message: MessageReference, media: Any)
 }
 struct Reply: Equatable {
     let messageId: MessageId
@@ -154,7 +187,7 @@ struct Reply: Equatable {
     let innerSubject: Int?
 }
 enum EnqueueMessage {
-    case message(text: String, attributes: [MessageAttribute], inlineStickers: [Int: Int], mediaReference: Int?, threadId: Int64?, replyToMessageId: Reply?, replyToStoryId: Int?, localGroupingKey: Int?, correlationId: Int?, bubbleUpEmojiOrStickersets: [Int])
+    case message(text: String, attributes: [MessageAttribute], inlineStickers: [Int: Int], mediaReference: AnyMediaReference?, threadId: Int64?, replyToMessageId: Reply?, replyToStoryId: Int?, localGroupingKey: Int?, correlationId: Int?, bubbleUpEmojiOrStickersets: [Int])
 }
 enum SendSound {
     case silent
@@ -185,8 +218,10 @@ struct Presentation {
     var cachedData: CachedPeerData?
     var threadInfo: ThreadInfo?
 }
-enum Right { case banSendText }
-func permissionText(from peer: Peer, for right: Right, cachedData: CachedPeerData?) -> String? { peer.bannedText ? "Banned" : nil }
+enum Right { case banSendText, banSendPhotos }
+func permissionText(from peer: Peer, for right: Right, cachedData: CachedPeerData?) -> String? {
+    (right == .banSendText ? peer.bannedText : peer.bannedPhoto) ? "Banned" : nil
+}
 func canForwardMessage(_ message: Message, chatInteraction: ChatInteraction) -> Bool { !message.protected }
 
 final class Window {
@@ -212,6 +247,11 @@ final class Context {
     var isExternal = false
     var isFrozen = false
     var isPremium = false
+    var premiumLimits = PremiumLimits()
+}
+struct PremiumLimits {
+    var caption_length_limit_premium: Int32 = 2048
+    var caption_length_limit_default: Int32 = 1024
 }
 final class Account {
     let id = AccountId(id: 1)
@@ -493,5 +533,112 @@ final class RepeatMessageTests: XCTestCase {
         XCTAssertTrue(preferences.isVisible(.repeatMessage, extendedMenu: true))
         preferences.resetVisibility()
         XCTAssertEqual(preferences.visibility(for: .repeatMessage), .hidden)
+    }
+
+    func testCloudPhotoUsesFreshReferenceAndPreservesCaptionAndTopic() throws {
+        let owner = ChatInteraction(peer: TelegramChannel(.forum), topic: true)
+        let postbox = owner.interactionContext.account.postbox
+        postbox.source?.media = [TelegramMediaImage()]
+        try XCTUnwrap(owner.menu()).handler()
+        postbox.source?.media = [TelegramMediaImage(reference: .cloud(10, 42, Data([9])))]
+        Fixture.prompts[0].accept()
+        Fixture.prompts[0].accept()
+        XCTAssertEqual(Fixture.sent.count, 1)
+        let sent = try XCTUnwrap(Fixture.sent.first)
+        XCTAssertEqual(sent.0, .forum)
+        guard case let .message(text, attributes, _, media, thread, reply, _, grouping, _, _) = sent.1,
+              case let .message(reference, image) = media,
+              let photo = image as? TelegramMediaImage,
+              case let .cloud(_, _, bytes) = photo.reference else {
+            return XCTFail("Expected a message-backed cloud photo")
+        }
+        XCTAssertEqual(reference.id, postbox.source?.id)
+        XCTAssertEqual(bytes, Data([9]))
+        XCTAssertEqual(text, "👋  formatted  ")
+        XCTAssertEqual((attributes.first as? TextEntitiesMessageAttribute)?.entities, [.init(range: 4..<13, type: .Bold)])
+        XCTAssertEqual(thread, 21)
+        XCTAssertEqual(reply, Reply(messageId: .init(peerId: .forum, id: 21), quote: nil, innerSubject: nil))
+        XCTAssertNil(grouping)
+        XCTAssertEqual(owner.draft, "Existing draft")
+    }
+
+    func testCloudPhotoCanRepeatWithoutCaptionAndRespectsAccountCaptionLimit() throws {
+        let owner = ChatInteraction()
+        let postbox = owner.interactionContext.account.postbox
+        postbox.source?.media = [TelegramMediaImage()]
+        postbox.source?.textEntities = nil
+        postbox.source?.text = String(repeating: "a", count: 1025)
+        XCTAssertNil(owner.menu())
+        owner.interactionContext.isPremium = true
+        XCTAssertNotNil(owner.menu())
+        postbox.source?.text = ""
+        try XCTUnwrap(owner.menu()).handler()
+        Fixture.prompts[0].accept()
+        guard case let .message(text, _, _, media, _, _, _, _, _, _) = try XCTUnwrap(Fixture.sent.first).1 else {
+            return XCTFail("Expected a cloud photo")
+        }
+        XCTAssertEqual(text, "")
+        XCTAssertNotNil(media)
+    }
+
+    func testCloudPhotoRejectsUnsafeAttachmentsAndCurrentMediaRestriction() {
+        let owner = ChatInteraction()
+        let postbox = owner.interactionContext.account.postbox
+        let allowed = TelegramMediaImage()
+        let unsupported: [[Any]] = [
+            [allowed, allowed],
+            [TelegramMediaImage(reference: nil)],
+            [TelegramMediaImage(reference: .cloud(10, 42, nil))],
+            [TelegramMediaImage(reference: .cloud(10, 42, Data()))],
+            [TelegramMediaImage(reference: .cloud(11, 42, Data([1])))],
+            [TelegramMediaImage(imageId: .init(namespace: 0, id: 10))],
+            [TelegramMediaImage(representations: [.init(resource: 1)])],
+            [TelegramMediaImage(video: 1)],
+            [TelegramMediaImage(videoRepresentations: [1])],
+            [TelegramMediaImage(emojiMarkup: 1)]
+        ]
+        for attachments in unsupported {
+            postbox.source?.media = attachments
+            XCTAssertNil(owner.menu())
+        }
+        postbox.source?.media = [allowed]
+        let valid = postbox.source!
+        let changes: [(inout Message) -> Void] = [
+            { $0.isMediaSpoilered = true }, { $0.sensitive = true },
+            { $0.autoremoveAttribute = 1 }, { $0.groupingKey = 1 },
+            { $0.hasMessageReference = false }, { $0.protected = true }
+        ]
+        for change in changes {
+            var message = valid
+            change(&message)
+            postbox.source = message
+            XCTAssertNil(owner.menu())
+        }
+        postbox.source = valid
+        owner.peer?.bannedPhoto = true
+        XCTAssertNil(owner.menu())
+        owner.peer?.bannedPhoto = false
+        owner.peer?.canSendPhoto = false
+        XCTAssertNil(owner.menu())
+    }
+
+    func testCloudPhotoRechecksIdentityAndPermissionAfterConfirmation() throws {
+        let owner = ChatInteraction()
+        let postbox = owner.interactionContext.account.postbox
+        postbox.source?.media = [TelegramMediaImage()]
+        try XCTUnwrap(owner.menu()).handler()
+        postbox.source?.media = [TelegramMediaImage(imageId: .init(id: 11), reference: .cloud(11, 42, Data([1])))]
+        Fixture.prompts[0].accept()
+        XCTAssertEqual(Fixture.alerts, ["Gergram.Chat.RepeatMessageUnavailable"])
+        XCTAssertTrue(Fixture.sent.isEmpty)
+
+        postbox.source?.media = [TelegramMediaImage()]
+        try XCTUnwrap(owner.menu()).handler()
+        let freshPeer = TelegramGroup(.group)
+        freshPeer.bannedPhoto = true
+        postbox.peer = freshPeer
+        Fixture.prompts[1].accept()
+        XCTAssertTrue(Fixture.sent.isEmpty)
+        XCTAssertEqual(Fixture.alerts.count, 2)
     }
 }

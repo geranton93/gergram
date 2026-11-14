@@ -11,19 +11,26 @@ import Postbox
 import SwiftSignalKit
 import TelegramContext
 import TelegramCore
+import TelegramMediaUtils
 import TelegramUtils
 import TGUIKit
 
 struct ChatRepeatMessagePayload: Equatable {
     let text: String
     let entities: [MessageTextEntity]
+    let photoId: MediaId?
 
-    init?(text: String, entities: [MessageTextEntity]) {
+    init?(text: String, entities: [MessageTextEntity], photoId: MediaId? = nil, captionLimit: Int = 4096) {
         let utf16 = text.utf16
         let length = utf16.count
-        guard (1...4096).contains(length), text.unicodeScalars.contains(where: {
+        guard length <= 4096 else { return nil }
+        if photoId != nil {
+            guard length <= captionLimit else { return nil }
+        } else if !text.unicodeScalars.contains(where: {
             !CharacterSet.whitespacesAndNewlines.contains($0)
-        }) else { return nil }
+        }) {
+            return nil
+        }
         for entity in entities {
             let range = entity.range
             guard range.lowerBound >= 0, range.upperBound <= length, !range.isEmpty,
@@ -38,10 +45,11 @@ struct ChatRepeatMessagePayload: Equatable {
         }
         self.text = text
         self.entities = entities
+        self.photoId = photoId
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.text.utf16.elementsEqual(rhs.text.utf16) && lhs.entities == rhs.entities
+        lhs.text.utf16.elementsEqual(rhs.text.utf16) && lhs.entities == rhs.entities && lhs.photoId == rhs.photoId
     }
 
     private static func isScalarBoundary(_ offset: Int, in text: String.UTF16View) -> Bool {
@@ -50,7 +58,16 @@ struct ChatRepeatMessagePayload: Equatable {
         return !(0xDC00...0xDFFF).contains(unit)
     }
 
-    func outgoing(threadId: Int64?, threadRoot: MessageId?, silent: Bool) -> EnqueueMessage {
+    func outgoing(source: Message, threadId: Int64?, threadRoot: MessageId?, silent: Bool) -> EnqueueMessage? {
+        let mediaReference: AnyMediaReference?
+        if let photoId {
+            let reference = MessageReference(source)
+            guard let image = Self.photo(in: source), image.imageId == photoId, reference.id == source.id else { return nil }
+            mediaReference = .message(message: reference, media: image)
+        } else {
+            guard source.media.isEmpty else { return nil }
+            mediaReference = nil
+        }
         var attributes: [MessageAttribute] = [
             TextEntitiesMessageAttribute(entities: entities),
             OutgoingContentInfoMessageAttribute(flags: [.disableLinkPreviews])
@@ -58,9 +75,21 @@ struct ChatRepeatMessagePayload: Equatable {
         if silent {
             attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
         }
-        return .message(text: text, attributes: attributes, inlineStickers: [:], mediaReference: nil,
+        return .message(text: text, attributes: attributes, inlineStickers: [:], mediaReference: mediaReference,
                         threadId: threadId, replyToMessageId: threadRoot.map { .init(messageId: $0, quote: nil, innerSubject: nil) },
                         replyToStoryId: nil, localGroupingKey: nil, correlationId: nil, bubbleUpEmojiOrStickersets: [])
+    }
+
+    static func photo(in message: Message) -> TelegramMediaImage? {
+        guard message.media.count == 1, let image = message.media.first as? TelegramMediaImage,
+              image.imageId.namespace == Namespaces.Media.CloudImage, image.imageId.id > 0,
+              let reference = image.reference,
+              case let .cloud(id, _, fileReference) = reference, id == image.imageId.id, fileReference?.isEmpty == false,
+              image.representations.contains(where: { $0.resource is CloudPhotoSizeMediaResource }),
+              image.video == nil, image.videoRepresentations.isEmpty, image.emojiMarkup == nil else {
+            return nil
+        }
+        return image
     }
 }
 
@@ -162,7 +191,7 @@ final class ChatRepeatMessageAction {
               id.id > 0, id != scope.location.threadMsgId, message.threadId == scope.location.threadId,
               message.author?.id == context.peerId, !message.effectivelyIncoming(context.peerId),
               !message.flags.contains(.Sending), !message.flags.contains(.Failed), !message.flags.contains(.Unsent),
-              message.media.isEmpty, message.groupingKey == nil, message.forwardInfo == nil, message.replyMarkup == nil,
+              message.groupingKey == nil, message.forwardInfo == nil, message.replyMarkup == nil,
               !message.isScheduledMessage, !message.containsSecretMedia, message.adAttribute == nil,
               message.autoclearTimeout == nil, message.autoremoveAttribute == nil, message.activeEphemeralReplacementMessage == nil,
               message.paidContent == nil, message.publishedSuggestedPostMessageAttribute == nil,
@@ -175,7 +204,23 @@ final class ChatRepeatMessageAction {
               !message.isCopyProtected(cachedData: cachedData), canForwardMessage(message, chatInteraction: interaction),
               !ChatLocalMessageVisibility.get(context.account).isHidden(message) else { return nil }
         if peer is TelegramUser, peer.id != context.peerId, !(cachedData is CachedUserData) { return nil }
-        return ChatRepeatMessagePayload(text: message.text, entities: message.textEntities?.entities ?? [])
+        let entities = message.textEntities?.entities ?? []
+        if message.media.isEmpty {
+            return ChatRepeatMessagePayload(text: message.text, entities: entities)
+        }
+        guard let photo = ChatRepeatMessagePayload.photo(in: message), MessageReference(message).id == id,
+              !message.isMediaSpoilered, !message.isSensitiveContent(platform: "ios", contentSettings: context.contentSettings),
+              let currentPeer = interaction.peer,
+              Self.canSendPhoto(photo, to: peer, cachedData: cachedData, interaction: interaction),
+              Self.canSendPhoto(photo, to: currentPeer, cachedData: state.cachedData, interaction: interaction) else { return nil }
+        let limits = context.premiumLimits
+        let captionLimit = Int(context.isPremium ? limits.caption_length_limit_premium : limits.caption_length_limit_default)
+        return ChatRepeatMessagePayload(text: message.text, entities: entities, photoId: photo.imageId, captionLimit: captionLimit)
+    }
+
+    private static func canSendPhoto(_ photo: TelegramMediaImage, to peer: Peer, cachedData: CachedPeerData?, interaction: ChatInteraction) -> Bool {
+        permissionText(from: peer, for: .banSendPhotos, cachedData: cachedData) == nil
+            && peer.canSendMessage(interaction.mode.isThreadMode, media: photo, threadData: interaction.presentation.threadInfo, cachedData: cachedData)
     }
 
     private func start(id: MessageId, original: ChatRepeatMessagePayload, scope: Scope, interaction: ChatInteraction) {
@@ -245,20 +290,23 @@ final class ChatRepeatMessageAction {
                 alert(for: context.window, info: localizedString("Gergram.Chat.RepeatMessageUnavailable"))
                 return
             }
-            self.send(original, scope: scope, interaction: interaction, generation: generation)
+            self.send(original, source: message, scope: scope, interaction: interaction, generation: generation)
         }, completed: { [weak self] in
             guard let self, self.generation == generation, self.stage == .loading else { return }
             self.reset()
         }))
     }
 
-    private func send(_ payload: ChatRepeatMessagePayload, scope: Scope, interaction: ChatInteraction, generation: UUID) {
+    private func send(_ payload: ChatRepeatMessagePayload, source: Message, scope: Scope, interaction: ChatInteraction, generation: UUID) {
+        let peerId = scope.location.peerId
+        let silent = interaction.resolvedSendSound().notificationIsSilent ?? FastSettings.isChannelMessagesMuted(peerId)
+        guard let message = payload.outgoing(source: source, threadId: scope.location.threadId, threadRoot: scope.location.threadMsgId, silent: silent) else {
+            reset()
+            return
+        }
         stage = .sending
         lifetimeObservation.set(nil)
         let context = interaction.interactionContext
-        let peerId = scope.location.peerId
-        let silent = interaction.resolvedSendSound().notificationIsSilent ?? FastSettings.isChannelMessagesMuted(peerId)
-        let message = payload.outgoing(threadId: scope.location.threadId, threadRoot: scope.location.threadMsgId, silent: silent)
         let subscription = MetaDisposable()
         work.set(subscription)
         let result = Sender.enqueue(message: message, context: context, peerId: peerId) |> take(1)

@@ -54,8 +54,8 @@ public final class DockControl {
     
     private let disposable = MetaDisposable()
     
-    private let fetch = DisposableSet()
-    private let data = DisposableSet()
+    private let fetch = DisposableDict<String>()
+    private var fetchedResourceIds: Set<String> = []
     
     private let engine: TelegramEngine
     private let accountManager: AccountManager<TelegramAccountManagerTypes>
@@ -70,36 +70,55 @@ public final class DockControl {
     }
     
     private func loadResources() {
-        disposable.set((engine.resources.applicationIcons() |> deliverOnMainQueue).start(next: { [weak self] icons in
+        disposable.set((engine.resources.applicationIcons() |> distinctUntilChanged |> deliverOnMainQueue).start(next: { [weak self] icons in
             self?.update(icons)
         }))
     }
     
     private func update(_ icons: TelegramApplicationIcons) {
-        for icon in icons.icons {
-            let fetchDispsable = fetchedMediaResource(mediaBox: engine.account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: .media(media: AnyMediaReference.message(message: icon.reference, media: icon.file), resource: icon.file.resource)).start()
-            fetch.add(fetchDispsable)
+        var resourceIds: Set<String> = []
+        for icon in icons.icons where icon.file.fileName != TelegramApplicationIcons.Icon.defaultIconName {
+            let id = icon.file.resource.id.stringRepresentation
+            guard resourceIds.insert(id).inserted, !fetchedResourceIds.contains(id) else { continue }
+            let reference = MediaResourceReference.media(media: AnyMediaReference.message(message: icon.reference, media: icon.file), resource: icon.file.resource)
+            let fetchDisposable = fetchedMediaResource(mediaBox: engine.account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: reference).start()
+            fetch.set(fetchDisposable, forKey: id)
         }
-        self.promise.set(icons)
+        for id in fetchedResourceIds.subtracting(resourceIds) {
+            fetch.set(nil, forKey: id)
+        }
+        fetchedResourceIds = resourceIds
+        promise.set(icons)
     }
-    
+
+    private enum Selection: Equatable {
+        case defaultIcon
+        case unavailable
+        case resource(TelegramApplicationIcons.Icon)
+    }
+
     private func observeSelection() {
         let signal = combineLatest(self.icons, dockSettings(accountManager: accountManager))
-        |> distinctUntilChanged(isEqual: { previous, current in
-            previous.0 == current.0 && previous.1 == current.1
-        })
-        |> deliverOnMainQueue
-        update.set(signal.start(next: { [weak self] icons, settings in
-            guard let self else {
-                return
-            }
-            self.applyResource.set(nil)
-
+        |> map { icons, settings -> Selection in
             guard let selected = settings.iconSelected, selected != TelegramApplicationIcons.Icon.defaultIconName else {
-                Dock.setCustomAppIcon(path: nil)
-                return
+                return .defaultIcon
             }
-            if let icon = icons.icons.first(where: { $0.file.fileName == selected }) {
+            guard let icon = icons.icons.first(where: { $0.file.fileName == selected }) else {
+                return .unavailable
+            }
+            return .resource(icon)
+        }
+        |> distinctUntilChanged
+        |> deliverOnMainQueue
+        update.set(signal.start(next: { [weak self] selection in
+            guard let self else { return }
+            self.applyResource.set(nil)
+            switch selection {
+            case .defaultIcon:
+                Dock.setCustomAppIcon(path: nil)
+            case .unavailable:
+                break
+            case let .resource(icon):
                 let resource = self.engine.account.postbox.mediaBox.resourceData(icon.file.resource) |> filter { $0.complete } |> take(1) |> deliverOnMainQueue
                 self.applyResource.set(resource.start(next: { resource in
                     Dock.setCustomAppIcon(path: resource.path)
@@ -107,10 +126,8 @@ public final class DockControl {
             }
         }))
     }
-    
     public func clear() {
         update.dispose()
-        data.dispose()
         fetch.dispose()
         disposable.dispose()
         applyResource.dispose()

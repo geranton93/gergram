@@ -50,13 +50,18 @@ def main():
 
     if git("rev-parse", f"HEAD:{TELEGRAM_IOS}").strip() != PIN:
         parser.error("The Telegram-iOS gitlink changed. Review the source excerpts and transport model for the new pin.")
-    if not args.fetch_v2.is_file():
+    if args.fetch_v2 == FETCH_V2 and (ROOT / TELEGRAM_IOS / ".git").exists():
+        fetch_v2 = git("-C", TELEGRAM_IOS, "show", f"{PIN}:submodules/TelegramCore/Sources/Network/FetchV2.swift").encode()
+    elif args.fetch_v2.is_file():
+        fetch_v2 = args.fetch_v2.read_bytes()
+    else:
         parser.error(f"{args.fetch_v2} is missing. Initialize the pinned submodule or pass --fetch-v2.")
-    if git("hash-object", "--no-filters", str(args.fetch_v2.resolve())).strip() != FETCH_V2_BLOB:
+    blob = subprocess.check_output(["git", "hash-object", "--stdin"], input=fetch_v2).decode().strip()
+    if blob != FETCH_V2_BLOB:
         parser.error(f"FetchV2.swift must match pinned Git blob {FETCH_V2_BLOB}.")
 
     baseline = git("cat-file", "blob", BASELINE_BLOB)
-    transport = extract_transport(args.fetch_v2.read_text())
+    transport = extract_transport(fetch_v2.decode())
     model = Path(__file__).with_name("ReadAheadSweep.swift")
     with tempfile.TemporaryDirectory(prefix="gergram-read-ahead-") as directory:
         scratch = Path(directory)

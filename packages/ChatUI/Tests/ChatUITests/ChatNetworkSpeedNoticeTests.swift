@@ -10,15 +10,14 @@ final class ChatNetworkSpeedNoticeTests: XCTestCase {
         return MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: value)
     }
 
-    func testDownloadRequiresTheOriginatingMessageAndUploadNeedsNoMessage() {
+    func testDownloadEventRequiresExactResourceProvenance() {
         let downloading = message(1)
-        let unrelated = message(2)
-        XCTAssertFalse(ChatNetworkSpeedNotice.isEligible(.download(.message(downloading))) { $0 == unrelated })
-        XCTAssertTrue(ChatNetworkSpeedNotice.isEligible(.download(.message(downloading))) { $0 == downloading })
-        XCTAssertTrue(ChatNetworkSpeedNotice.isEligible(.upload) { _ in
-            XCTFail("The native upload event has no message ID")
-            return false
-        })
+        let resourceId = LocalFileMediaResource(fileId: 1).id
+        XCTAssertNil(ChatNetworkSpeedNotice.Download(event: .download(.message(downloading)), resourceId: nil))
+        XCTAssertNil(ChatNetworkSpeedNotice.Download(event: .upload, resourceId: resourceId))
+        let download = ChatNetworkSpeedNotice.Download(event: .download(.message(downloading)), resourceId: resourceId)
+        XCTAssertEqual(download?.messageId, downloading)
+        XCTAssertEqual(download?.resourceId, resourceId)
     }
 
     func testConfiguredCooldownDeduplicatesQueuedEventsAcrossControllers() {
@@ -63,6 +62,36 @@ final class ChatNetworkSpeedNoticeTests: XCTestCase {
         }
         XCTAssertNil(reference.network)
         XCTAssertTrue(notice.claim(network: NSObject(), configuredPeriod: 200, now: 100))
+    }
+
+    func testPendingDownloadsAreAccountScopedDeduplicatedAndClearedByPresentation() {
+        let notice = ChatNetworkSpeedNotice()
+        let first = NSObject()
+        let second = NSObject()
+        let download = ChatNetworkSpeedNotice.Download(messageId: message(1), resourceId: LocalFileMediaResource(fileId: 1).id)
+        notice.enqueue(download, network: first, now: 10)
+        notice.enqueue(download, network: first, now: 11)
+        notice.enqueue(download, network: second, now: 11)
+        XCTAssertEqual(notice.pendingDownloads(network: first, now: 12), [download])
+        XCTAssertTrue(notice.claim(network: first, configuredPeriod: 10, now: 12))
+        notice.enqueue(download, network: first, configuredPeriod: 10, now: 13)
+        XCTAssertEqual(notice.pendingDownloads(network: first, now: 13), [])
+        XCTAssertEqual(notice.pendingDownloads(network: second, now: 13), [download])
+        notice.discardPendingDownloads(network: second)
+        XCTAssertEqual(notice.pendingDownloads(network: second, now: 14), [])
+    }
+
+    func testPendingDownloadsExpireFromFirstEventAndStayBounded() {
+        let notice = ChatNetworkSpeedNotice()
+        let network = NSObject()
+        let download = ChatNetworkSpeedNotice.Download(messageId: message(1), resourceId: LocalFileMediaResource(fileId: 1).id)
+        notice.enqueue(download, network: network, now: 1)
+        notice.enqueue(download, network: network, now: 300)
+        XCTAssertEqual(notice.pendingDownloads(network: network, now: 301), [])
+        for id in 1 ... 17 {
+            notice.enqueue(.init(messageId: message(Int32(id)), resourceId: LocalFileMediaResource(fileId: Int64(id)).id), network: network, now: 4_000)
+        }
+        XCTAssertEqual(notice.pendingDownloads(network: network, now: 4_001).map(\.messageId), (2 ... 17).map { message(Int32($0)) })
     }
 
     func testSpeedFactorRemainsSafeForLocalizedIntegerFormatting() {

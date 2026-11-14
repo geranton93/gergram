@@ -17,6 +17,9 @@ ARCHIVE_PATCH = ROOT / "scripts/telegram-ios-macos.patch"
 MAINTENANCE_PATCH = ROOT / "scripts/telegram-ios-local-archive-maintenance.patch"
 NOTIFICATION_PATCH = ROOT / "scripts/telegram-ios-notification-timing.patch"
 READ_THROUGH_PATCH = ROOT / "scripts/telegram-ios-read-through.patch"
+READ_FORUM_THROUGH_PATCH = ROOT / "scripts/telegram-ios-read-forum-through.patch"
+REPEAT_PHOTO_REFERENCE_PATCH = ROOT / "scripts/telegram-ios-repeat-photo-reference.patch"
+SPEED_NOTICE_DOWNLOAD_PATCH = ROOT / "scripts/telegram-ios-speed-notice-download.patch"
 PINNED = {
     POSTBOX / "Postbox.swift": "72585b34e1b31c181fd178f32a6d62fcb4ecb26e",
     POSTBOX / "ValueBoxKey.swift": "021adfaa69b980a4e83a2da644dcb86ba01f54ff",
@@ -98,7 +101,12 @@ def run_preparation_fixture(directory):
     voip = ios / "submodules/TelegramVoip/Package.swift"
     voip.parent.mkdir(parents=True)
     voip.touch()
-    paths = (Path("base.swift"), POSTBOX / "Postbox.swift", SYNC / "StateReplay.swift", CORE / "Account/Account.swift", CORE / "State/AccountStateManager.swift", POSTBOX / "MessageHistoryReadStateTable.swift")
+    paths = (
+        Path("base.swift"), POSTBOX / "Postbox.swift", SYNC / "StateReplay.swift", CORE / "Account/Account.swift",
+        CORE / "State/AccountStateManager.swift", POSTBOX / "MessageHistoryReadStateTable.swift",
+        POSTBOX / "MessageHistoryTable.swift", CORE / "PendingMessages/PendingMessageUploadedContent.swift",
+        CORE / "Network/FetchV2.swift", CORE / "Network/Network.swift",
+    )
     for path in paths:
         target = ios / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +129,9 @@ def run_preparation_fixture(directory):
     (scripts / MAINTENANCE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[3]), str(maintenance)]))
     (scripts / NOTIFICATION_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[4]), str(notification)]))
     (scripts / READ_THROUGH_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[5]), str(read_through)]))
+    (scripts / READ_FORUM_THROUGH_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[6])]))
+    (scripts / REPEAT_PHOTO_REFERENCE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[7])]))
+    (scripts / SPEED_NOTICE_DOWNLOAD_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[8]), str(paths[9])]))
     prepare = ["sh", str(scripts / "prepare-telegram-ios.sh")]
     for _ in range(2):
         subprocess.run([*prepare, "--reverse"], check=True)

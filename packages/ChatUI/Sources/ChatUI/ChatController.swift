@@ -3293,6 +3293,100 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         }
     }
 
+    private var isSpeedNoticeAccountActive: Bool {
+        return (context.isCurrent || context.isExternal) && !context.isFrozen && !context.isPremium
+    }
+
+    private var isSpeedNoticeOwner: Bool {
+        return isSpeedNoticeAccountActive && isAnalyticsVisible && navigationController?.controller === self
+            && genericView.window === context.window && context.window.isVisible && context.window.isKeyWindow
+            && !genericView.isHiddenOrHasHiddenAncestor && ChatUIHooks.shared.appIsLockedValue() != true
+    }
+
+    private var speedNoticePeriod: TimeInterval {
+        return context.appConfiguration.getGeneralValueDouble("upload_premium_speedup_notify_period", orElse: ChatNetworkSpeedNotice.defaultPeriod)
+    }
+
+    private func replayDownloadSpeedNotice() {
+        precondition(Thread.isMainThread)
+        let network = context.account.network
+        let notices = ChatNetworkSpeedNotice.shared
+        guard isSpeedNoticeAccountActive else {
+            notices.discardPendingDownloads(network: network)
+            return
+        }
+        guard isSpeedNoticeOwner, !hasModals(context.window) else { return }
+        let pending = notices.pendingDownloads(network: network).filter { $0.messageId.peerId == chatInteraction.peerId }
+        guard let download = visibleDownloadSpeedNotice(in: pending),
+              notices.claim(network: network, configuredPeriod: speedNoticePeriod) else { return }
+        presentNetworkSpeedNotice(download: download)
+    }
+
+    private func visibleDownloadSpeedNotice(in pending: [ChatNetworkSpeedNotice.Download]) -> ChatNetworkSpeedNotice.Download? {
+        guard !pending.isEmpty else { return nil }
+        let table = genericView.tableView
+        func notice(in content: ChatMediaContentView) -> ChatNetworkSpeedNotice.Download? {
+            guard let message = content.parent,
+                  !message.containsSecretMedia, !message.isMediaSpoilered,
+                  content.parameters?.isProtected != true, content.window === context.window,
+                  !content.isHiddenOrHasHiddenAncestor, !content.visibleRect.isEmpty else { return nil }
+            return pending.first { $0.messageId == message.id && $0.matches(media: content.media) }
+        }
+        var visible: ChatNetworkSpeedNotice.Download?
+        table.enumerateVisibleItems(with: { row in
+            guard let row = row as? ChatRowItem, let view = row.view, view.window === context.window,
+                  !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return true }
+            if let album = view as? ChatGroupedView {
+                visible = album.contents.lazy.compactMap { notice(in: $0) }.first
+            } else if let media = view as? ChatMediaView {
+                visible = media.contentNode.flatMap { notice(in: $0) }
+            }
+            return visible == nil
+        })
+        return visible
+    }
+
+    private func receiveNetworkSpeedNotice(_ event: NetworkSpeedLimitedEvent, downloadResourceId: MediaResourceId?) {
+        let network = context.account.network
+        let notices = ChatNetworkSpeedNotice.shared
+        switch event {
+        case .download:
+            guard isSpeedNoticeAccountActive else {
+                notices.discardPendingDownloads(network: network)
+                return
+            }
+            guard let download = ChatNetworkSpeedNotice.Download(event: event, resourceId: downloadResourceId) else { return }
+            notices.enqueue(download, network: network, configuredPeriod: speedNoticePeriod)
+            replayDownloadSpeedNotice()
+        case .upload:
+            guard isSpeedNoticeOwner, !hasModals(context.window),
+                  notices.claim(network: network, configuredPeriod: speedNoticePeriod) else { return }
+            presentNetworkSpeedNotice(download: nil)
+        }
+    }
+
+    private func presentNetworkSpeedNotice(download: ChatNetworkSpeedNotice.Download?) {
+        let configuration = context.appConfiguration
+        let title: String
+        let text: String
+        if download != nil {
+            let factor = ChatNetworkSpeedNotice.speedFactor(configuration.getGeneralValueDouble("upload_premium_speedup_download", orElse: 10))
+            title = strings().chatDownloadLimitTitle
+            text = strings().chatDownloadLimitTextOther(factor)
+        } else {
+            let factor = ChatNetworkSpeedNotice.speedFactor(configuration.getGeneralValueDouble("upload_premium_speedup_upload", orElse: 10))
+            title = strings().chatUploadLimitTitle
+            text = strings().chatUploadLimitTextOther(factor)
+        }
+        context.account.network.markNetworkSpeedLimitDisplayed()
+        showModalText(for: context.window, text: text, title: title, callback: { [weak self] _ in
+            guard let self, self.isSpeedNoticeOwner else { return }
+            if let download, self.visibleDownloadSpeedNotice(in: [download]) == nil { return }
+            let context = self.context
+            prem(with: PremiumBoardingController(context: context, source: .upload_limit, openFeatures: true), for: context.window)
+        })
+    }
+
     public override func viewDidResized(_ size: NSSize) {
         super.viewDidResized(size)
         sizeValue.set(size)
@@ -3424,12 +3518,14 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             self.collectFloatingPhotos(animated: false, currentAnimationRows: self.currentAnimationRows)
             
             self.updateVisibleRange(position.visibleRows)
+            self.replayDownloadSpeedNotice()
             
         }))
         
         
         self.genericView.tableView.scrollDidUpdate = { [weak self] _ in
             self?.collectFloatingPhotos(animated: false, currentAnimationRows: [])
+            self?.replayDownloadSpeedNotice()
         }
         
         let previousView = self.previousView
@@ -3519,61 +3615,9 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
 
 
-        let isSpeedNoticeOwner: () -> Bool = { [weak self] in
-            guard let self else { return false }
-            let context = self.context
-            return (context.isCurrent || context.isExternal) && !context.isFrozen && !context.isPremium
-                && self.isAnalyticsVisible && self.navigationController?.controller === self
-                && self.genericView.window === context.window && context.window.isVisible && context.window.isKeyWindow
-                && !self.genericView.isHiddenOrHasHiddenAncestor && ChatUIHooks.shared.appIsLockedValue() != true
-        }
-        self.networkSpeedEventsDisposable = (self.context.account.network.networkSpeedLimitedEvents
-        |> deliverOnMainQueue).start(next: { [weak self] event in
-            guard let self, isSpeedNoticeOwner(), !hasModals(self.context.window) else { return }
-            guard ChatNetworkSpeedNotice.isEligible(event, isMessageVisible: { messageId in
-                func isVisibleMedia(_ content: ChatMediaContentView) -> Bool {
-                    content.parent?.id == messageId && !content.isHiddenOrHasHiddenAncestor && !content.visibleRect.isEmpty
-                }
-                var isVisible = false
-                self.genericView.tableView.enumerateVisibleItems(with: { row in
-                    guard let row = row as? ChatRowItem, let view = row.view,
-                          !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return true }
-                    if let album = view as? ChatGroupedView {
-                        isVisible = album.contents.contains(where: isVisibleMedia)
-                    } else if let media = view as? ChatMediaView {
-                        isVisible = media.contentNode.map(isVisibleMedia) ?? false
-                    } else {
-                        isVisible = row.messages.contains { $0.id == messageId }
-                    }
-                    return !isVisible
-                })
-                return isVisible
-            }) else { return }
-
-            let context = self.context
-            let configuration = context.appConfiguration
-            let network = context.account.network
-            let period = configuration.getGeneralValueDouble("upload_premium_speedup_notify_period", orElse: ChatNetworkSpeedNotice.defaultPeriod)
-            guard ChatNetworkSpeedNotice.shared.claim(network: network, configuredPeriod: period) else { return }
-
-            let title: String
-            let text: String
-            switch event {
-            case .download:
-                let speedIncreaseFactor = ChatNetworkSpeedNotice.speedFactor(configuration.getGeneralValueDouble("upload_premium_speedup_download", orElse: 10))
-                title = strings().chatDownloadLimitTitle
-                text = strings().chatDownloadLimitTextOther(speedIncreaseFactor)
-            case .upload:
-                let speedIncreaseFactor = ChatNetworkSpeedNotice.speedFactor(configuration.getGeneralValueDouble("upload_premium_speedup_upload", orElse: 10))
-                title = strings().chatUploadLimitTitle
-                text = strings().chatUploadLimitTextOther(speedIncreaseFactor)
-            }
-            network.markNetworkSpeedLimitDisplayed()
-            showModalText(for: context.window, text: text, title: title, callback: { [weak self] _ in
-                guard let self, isSpeedNoticeOwner() else { return }
-                let context = self.context
-                prem(with: PremiumBoardingController(context: context, source: .upload_limit, openFeatures: true), for: context.window)
-            })
+        self.networkSpeedEventsDisposable = (self.context.account.network.networkSpeedLimitedEventsWithResource
+        |> deliverOnMainQueue).start(next: { [weak self] notice in
+            self?.receiveNetworkSpeedNotice(notice.event, downloadResourceId: notice.downloadResourceId)
         })
 
 
@@ -4705,6 +4749,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             self.interactiveReadEnabled = canRead
             self.updateInteractiveReading()
             if canRead {
+                self.replayDownloadSpeedNotice()
                 self.genericView.tableView.notifyScrollHandlers()
             }
         }))
@@ -12584,6 +12629,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         isAnalyticsVisible = true
+        replayDownloadSpeedNotice()
 
         isPushedGlobalBackground = true
         updateBubblesBackButton()

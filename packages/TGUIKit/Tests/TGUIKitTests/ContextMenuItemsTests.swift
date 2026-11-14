@@ -205,4 +205,31 @@ final class ContextMenuItemsTests: XCTestCase {
         }
         XCTAssertTrue(disposed)
     }
+
+    func testPaginationActionKeepsMenuOpenForAccessibilityAndSharedDispatch() {
+        var loads = 0
+        var normalActions = 0
+        var closes = 0
+        let more = ContextMenuItem("Show more", handler: { loads += 1 })
+        more.closesMenuOnAction = false
+        let normal = ContextMenuItem("Normal action", handler: { normalActions += 1 })
+        let interaction = AppMenuBasicItem.Interaction(action: { item in
+            AppMenuController.invokeMenuAction(item) { closes += 1 }
+        }, presentSubmenu: { _ in }, cancelSubmenu: { _ in }, hover: { _ in }, close: {})
+        let presentation = AppMenu.Presentation.current(PresentationTheme.current.colors)
+        let moreRow = AppMenuRowItem(.zero, item: more, interaction: interaction, presentation: presentation)
+        let normalRow = AppMenuRowItem(.zero, item: normal, interaction: interaction, presentation: presentation)
+
+        XCTAssertTrue(moreRow.accessibilityPerformPress())
+        XCTAssertEqual(loads, 1)
+        XCTAssertEqual(closes, 0)
+
+        moreRow.interaction?.action(more)
+        XCTAssertEqual(loads, 2)
+        XCTAssertEqual(closes, 0)
+
+        XCTAssertTrue(normalRow.accessibilityPerformPress())
+        XCTAssertEqual(normalActions, 1)
+        XCTAssertEqual(closes, 1)
+    }
 }

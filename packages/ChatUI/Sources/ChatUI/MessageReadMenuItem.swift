@@ -67,6 +67,10 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
         }
         
         public func photos(_ message: Message) -> [Peer] {
+            return photos(message, excluding: [])
+        }
+
+        func photos(_ message: Message, excluding hidden: Set<PeerId>) -> [Peer] {
             switch self {
             case .loading:
                 return []
@@ -76,12 +80,12 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                     return []
                 }
                 if let reactions = reactions {
-                    photos = Array(reactions.items.map { $0.peer._asPeer() }.prefix(3))
+                    photos = Array(reactions.items.lazy.filter { !hidden.contains($0.peer.id) }.prefix(3).map { $0.peer._asPeer() })
                 }
                 if photos.isEmpty {
                     if photos.count < 3, let read = read {
                         let read = read.filter { read in
-                            return !photos.contains(where: { $0.id == read.id })
+                            return !hidden.contains(read.id) && !photos.contains(where: { $0.id == read.id })
                         }
                         photos += Array(read.prefix(3 - photos.count))
                     }
@@ -99,23 +103,46 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
         }
         
         public var peers:[(Peer, MessageReaction.Reaction?, Int32?)] {
+            return peers(excluding: [])
+        }
+
+        func peers(excluding hidden: Set<PeerId>) -> [(Peer, MessageReaction.Reaction?, Int32?)] {
             switch self {
             case let .stats(read, readTimestamps, reactions, _):
-                let readPeers = read ?? []
-                let reactionPeers = reactions?.items.map { ($0.peer._asPeer(), $0.reaction, $0.timestamp ?? readTimestamps[$0.peer.id]) } ?? []
-                let read:[(Peer, MessageReaction.Reaction?, Int32?)] = readPeers.map { ($0, nil, readTimestamps[$0.id]) }.filter({ value in
-                    return !reactionPeers.contains(where: {
-                        $0.0.id == value.0.id
-                    })
-                })
+                let reactionPeers = reactions?.items.filter { !hidden.contains($0.peer.id) }.map { ($0.peer._asPeer(), $0.reaction, $0.timestamp ?? readTimestamps[$0.peer.id]) } ?? []
+                let reactorIds = Set(reactionPeers.map { $0.0.id })
+                let read: [(Peer, MessageReaction.Reaction?, Int32?)] = (read ?? [])
+                    .filter { !hidden.contains($0.id) && !reactorIds.contains($0.id) }
+                    .map { ($0, nil, readTimestamps[$0.id]) }
                 return reactionPeers + read
             default:
                 return []
             }
         }
+
+        var participantIds: Set<PeerId> {
+            guard case let .stats(read, _, reactions, _) = self else { return [] }
+            var ids = Set((read ?? []).map(\.id))
+            if let reactions {
+                ids.formUnion(reactions.items.map { $0.peer.id })
+            }
+            return ids
+        }
+
+        func showsPagination(excluding hidden: Set<PeerId>) -> Bool {
+            guard !hidden.isEmpty, case let .stats(_, _, reactions?, _) = self else { return false }
+            return ChatParticipantVisibility.showsPagination(
+                canLoadMore: reactions.canLoadMore,
+                hasHiddenParticipants: reactions.items.contains { hidden.contains($0.peer.id) }
+            )
+        }
  
         
         public func text(_ message: Message, context: any AccountContextProtocol) -> String {
+            return text(message, relativeTo: context.timestamp, excluding: [])
+        }
+
+        func text(_ message: Message, relativeTo timestamp: Int32, excluding hidden: Set<PeerId>) -> String {
             switch self {
             case let .stats(read, readTimestamps, reactions, _):
                 if let reactions = reactions, !reactions.items.isEmpty {
@@ -131,9 +158,9 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                         } else {
                             return strings().chatMessageReadStatsEmptyViews
                         }
-                    } else if peers.count == 1 {
+                    } else if peers.count == 1 && !hidden.contains(peers[0].id) {
                         if message.id.peerId.namespace == Namespaces.Peer.CloudUser, let readTimestamp = readTimestamps[peers[0].id] {
-                            return stringForRelativeTimestamp(relativeTimestamp: readTimestamp, relativeTo: context.timestamp)
+                            return stringForRelativeTimestamp(relativeTimestamp: readTimestamp, relativeTo: timestamp)
                         }
                         return peers[0].compactDisplayTitle.prefixWithDots(20)
                     } else {
@@ -178,7 +205,7 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
         if self.state.isEmpty {
             return value
         }
-        if state.photos(message).isEmpty {
+        if visiblePhotos.isEmpty {
             return value
         }
         return value - 60
@@ -190,11 +217,14 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
     private let chatInteraction: ChatInteraction
     
     fileprivate var state: State = .loading
+    fileprivate var visiblePhotos: [Peer] { state.photos(message, excluding: hiddenParticipants) }
+    fileprivate var visibleText: String { state.text(message, relativeTo: context.timestamp, excluding: hiddenParticipants) }
+    fileprivate private(set) var hiddenParticipants: Set<PeerId> = []
     private let availableReactions: AvailableReactions?
     private let reactions: EngineMessageReactionListContext
 
     public override var accessibilityLabel: String? {
-        let text = state.text(message, context: context)
+        let text = visibleText
         return text.isEmpty ? strings().voiceOverCommonLoading : text
     }
     
@@ -243,14 +273,22 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                 }
             }
 
-        disposable.set(readStats.start(next: { [weak self] state in
-            self?.updateState(state, animated: true)
+        let visibleStats = ChatParticipantVisibility.observe(
+            readStats,
+            chatPeerId: message.id.peerId,
+            context: context,
+            participants: \.participantIds
+        )
+        disposable.set(visibleStats.start(next: { [weak self] state, hidden in
+            self?.updateState(state, hidden: hidden, animated: true)
         }))
     }
     
-    private func updateState(_ state: State, animated: Bool) {
+    private func updateState(_ state: State, hidden: Set<PeerId>, animated: Bool) {
         
+        let hiddenChanged = hiddenParticipants != hidden
         self.state = state
+        self.hiddenParticipants = hidden
         
         let chatInteraction = self.chatInteraction
         let message = self.message
@@ -285,30 +323,30 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
             let item = ReactionPeerMenu(title: title, handler: {
                 chatInteraction?.openInfo(peer.0.id, false, nil, nil)
             }, peer: peer.0, context: context, reaction: reaction, readTimestamp: peer.2, message: message, canDelete: canDeleteReactions)
-            let signal:Signal<(CGImage?, Bool), NoError>
-            signal = peerAvatarImage(account: context.account, photo: .peer(peer.0, peer.0.smallProfileImage, peer.0.namePeerColor, TelegramUtilsHooks.shared.peerLetters(peer.0), nil, nil), displayDimensions: NSMakeSize(18 * System.backingScale, 18 * System.backingScale), font: .avatar(13), genCap: true, synchronousLoad: false) |> deliverOnMainQueue
-            _ = signal.start(next: { [weak item] image, _ in
-                if let image = image {
-                    item?.image = NSImage(cgImage: image, size: NSMakeSize(18, 18))
-                }
-            })
             return item
         }
        
-        var items = state.peers.map {
-            makeItem($0)
+        let peers = state.peers(excluding: hidden)
+        let hasReactions = peers.contains(where: { $0.1 != nil })
+        let hasRead = peers.contains(where: { $0.2 != nil })
+        let showsPagination = state.showsPagination(excluding: hidden)
+        let loadMore: () -> Void = { [weak self] in
+            guard let self, case let .stats(_, _, reactions?, _) = self.state, reactions.canLoadMore else { return }
+            self.reactions.loadMore()
         }
-        
-        let hasReactions = state.peers.contains(where: { $0.1 != nil })
-        let hasRead = state.peers.contains(where: { $0.2 != nil })
+        var items = peers.map(makeItem)
+        if showsPagination {
+            items.append(ChatParticipantVisibility.paginationItem(title: strings().chatRichTextShowMore, loadMore: loadMore))
+        }
 
-        if items.count > 1 || hasReactions || hasRead, message.id.peerId.namespace != Namespaces.Peer.CloudUser {
+        if items.count > 1 || hasReactions || hasRead || showsPagination, message.id.peerId.namespace != Namespaces.Peer.CloudUser {
             
             let references:[StickerPackReference] = state.emojiReferences.uniqueElements
             
             if !references.isEmpty {
-                
-                items.append(ContextSeparatorItem())
+                if !items.isEmpty {
+                    items.append(ContextSeparatorItem())
+                }
                 
                 let sources:[ChatMediaStickerPackPreviewSource] = references.map {
                     .emoji($0)
@@ -333,21 +371,12 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                 self.interaction?.presentSubmenu(self.item)
             }
             
-            menu.loadMore = { [weak self] in
-                if let state = self?.state {
-                    switch state {
-                    case let .stats(_, _, reactions, _):
-                        if let reactions = reactions, reactions.canLoadMore {
-                            self?.reactions.loadMore()
-                        }
-                    default:
-                        break
-                    }
-                }
-            }
+            menu.loadMore = showsPagination ? nil : loadMore
             self.item.handler = nil
         } else {
             self.item.submenu = nil
+            menu.loadMore = nil
+            menu.items = []
             self.interaction?.cancelSubmenu(self.item)
             if let item = items.first {
                 self.item.handler = item.handler
@@ -357,7 +386,10 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
             
         }
         
-        self.item.title = state.text(self.message, context: context)
+        self.item.title = visibleText
+        if hiddenChanged {
+            redraw(animated: false)
+        }
         
         
         
@@ -505,23 +537,24 @@ private final class MessageReadMenuItemView : AppMenuRowView {
         }
         let avatars: AvatarContentView?
         
-        let photos = item.state.photos(item.message)
+        let photos = item.visiblePhotos
         
         let updated = photos.map { $0.id }
         if updated != self.photos || self.isLoading != item.state.isLoading(item.message, context: item.context), item.message.id.peerId.namespace != Namespaces.Peer.CloudUser {
+            let hidesDisplayedPeer = self.photos?.contains(where: item.hiddenParticipants.contains) == true
             self.photos = updated
             self.isLoading = item.state.isLoading(item.message, context: item.context)
             if self.isLoading {
                 avatars = .init(context: item.context, message: item.message, peers: nil, size: NSMakeSize(18, 18))
             } else {
-                if !item.state.isEmpty {
-                    avatars = .init(context: item.context, message: item.message, peers: item.state.photos(item.message), size: NSMakeSize(18, 18))
+                if !photos.isEmpty {
+                    avatars = .init(context: item.context, message: item.message, peers: photos, size: NSMakeSize(18, 18))
                 } else {
                     avatars = nil
                 }
             }
             if let avatars = self.avatars {
-                performSubviewRemoval(avatars, animated: animated)
+                performSubviewRemoval(avatars, animated: animated && !hidesDisplayedPeer)
             }
             self.avatars = avatars
             if let avatars = avatars {

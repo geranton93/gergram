@@ -170,6 +170,7 @@ public struct FeatureNavigationHooks {
     public var reportContent: (any AccountContextProtocol, ReportContentSubject, String) -> Void = { _, _, _ in }
     public var showSponsoredReport: (any AccountContextProtocol, Window, String, String?, String, SponsoredReportPage, @escaping (SponsoredReportOption) -> Signal<SponsoredReportPage?, NoError>) -> Void = { _, _, _, _, _, _, _ in }
     public var makeRecentSessionsController: (any AccountContextProtocol) -> ViewController? = { _ in nil }
+    public var makeArchivedMessageChat: ((any AccountContextProtocol, ChatLocation, MessageId) -> ViewController?)?
     public var makeProxyListController: (any AccountContextProtocol, @escaping ([ProxyServerSettings]) -> Void, @escaping (ViewController) -> Void) -> ViewController? = { _, _, _ in nil }
     public var makeInviteLinksController: (any AccountContextProtocol, PeerId, Bool) -> ViewController? = { _, _, _ in nil }
     public var makeRequestJoinMembersController: (any AccountContextProtocol, PeerId, PeerInvitationImportersContext, @escaping () -> Void) -> ViewController? = { _, _, _, _ in nil }

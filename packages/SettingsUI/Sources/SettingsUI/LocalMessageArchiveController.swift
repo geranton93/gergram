@@ -47,6 +47,7 @@ private struct ArchiveEntry: Equatable {
     let capturedAt: Int64
     let chatTitle: String?
     let timestamp: Int32?
+    let authorId: PeerId?
     let text: String?
 
     var stableId: String {
@@ -82,6 +83,7 @@ private final class ArchiveScreenModel {
     private let accountId: Int64
     private let scope: LocalArchiveScope
     private let operation = MetaDisposable()
+    private var currentMessageRequest: MetaDisposable?
     weak var archiveController: InputDataController?
     private weak var detailController: InputDataController?
     private var page = ArchivePageState()
@@ -98,11 +100,13 @@ private final class ArchiveScreenModel {
 
     deinit {
         operation.dispose()
+        currentMessageRequest?.dispose()
     }
 
     private var isActive: Bool {
         guard let context else { return false }
         return context.isCurrent && !context.isFrozen
+            && context.account.postbox === postbox && context.peerId.toInt64() == accountId
     }
 
     func loadCurrent() {
@@ -121,7 +125,7 @@ private final class ArchiveScreenModel {
 
     func editDeletedMark() {
         guard scope == .account, let context, let archiveController,
-              let navigation = activeArchiveMarkNavigation(for: archiveController, context: context) else { return }
+              let navigation = activeArchiveNavigation(for: archiveController, context: context) else { return }
         navigation.push(archiveDeletedMarkController(context: context))
     }
 
@@ -145,6 +149,7 @@ private final class ArchiveScreenModel {
                         capturedAt: message.capturedAt,
                         chatTitle: transaction.getPeer(message.id.message.peerId)?.displayTitle,
                         timestamp: snapshot?.timestamp,
+                        authorId: snapshot?.authorId,
                         text: snapshot?.text
                     )
                 }
@@ -185,8 +190,23 @@ private final class ArchiveScreenModel {
                   data: .init(color: theme.colors.text, detectBold: false, isTextSelectable: true, viewType: .textBottomItem)),
             .sectionId(1, type: .normal)
         ]
-        entries.append(.general(sectionId: 2, index: 0, value: .none, error: nil, identifier: InputDataIdentifier("remove"), data: .init(
-            name: strings().contextRemove, color: theme.colors.redUI, viewType: .singleItem, action: { [weak self, id = entry.id] in
+        weak var originatingDetail: InputDataController?
+        let canOpenCurrent: Bool
+        if let timestamp = entry.timestamp, let authorId = entry.authorId, supportsCurrentMessage(entry.id),
+           FeatureNavigationHooks.shared.makeArchivedMessageChat != nil {
+            canOpenCurrent = true
+            entries.append(.general(sectionId: 2, index: 0, value: .none, error: nil, identifier: InputDataIdentifier("current-message"), data: .init(
+                name: localizedString("Gergram.Archive.OpenCurrentMessage"), color: theme.colors.text, type: .next, viewType: .firstItem,
+                action: { [weak self, id = entry.id] in
+                    guard let originatingDetail else { return }
+                    self?.openCurrentMessage(id, timestamp: timestamp, authorId: authorId, detailController: originatingDetail)
+                }
+            )))
+        } else {
+            canOpenCurrent = false
+        }
+        entries.append(.general(sectionId: 2, index: canOpenCurrent ? 1 : 0, value: .none, error: nil, identifier: InputDataIdentifier("remove"), data: .init(
+            name: strings().contextRemove, color: theme.colors.redUI, viewType: canOpenCurrent ? .lastItem : .singleItem, action: { [weak self, id = entry.id] in
                 self?.confirmRemove(id)
             }
         )))
@@ -210,8 +230,86 @@ private final class ArchiveScreenModel {
             }
         }
         let detail = InputDataController(dataSignal: .single(InputDataSignalValue(entries: entries)), title: entry.displayKindTitle(deletedMark: ArchiveDeletedMarkPreferences.shared.mark), hasDone: false)
+        originatingDetail = detail
         self.detailController = detail
+        detail.willDisappear = { [weak self] detail in
+            guard let self, self.detailController === detail else { return }
+            let request = self.currentMessageRequest
+            self.currentMessageRequest = nil
+            request?.dispose()
+        }
         context.bindings.rootNavigation().push(detail)
+    }
+
+    private func supportsCurrentMessage(_ id: LocalArchiveMessage.ID) -> Bool {
+        let messageId = id.message
+        guard id.kind == .edit, messageId.namespace == Namespaces.Message.Cloud, messageId.id > 0,
+              messageId.peerId.id._internalGetInt64Value() > 0, messageId.peerId.toInt64() != accountId else {
+            return false
+        }
+        switch scope {
+        case .account:
+            return true
+        case let .chat(peerId):
+            return peerId == messageId.peerId
+        case let .thread(peerId, threadId):
+            return peerId == messageId.peerId && threadId == id.threadId
+        }
+    }
+
+    private func openCurrentMessage(_ id: LocalArchiveMessage.ID, timestamp: Int32, authorId: PeerId, detailController: InputDataController) {
+        guard currentMessageRequest == nil, let context,
+              currentMessageNavigation(id, timestamp: timestamp, authorId: authorId, detail: detailController) != nil,
+              supportsCurrentMessage(id) else { return }
+
+        let request = MetaDisposable()
+        currentMessageRequest = request
+        let contentSettings = context.contentSettings
+        let lookup = postbox.transaction { transaction in
+            currentArchiveMessageLocation(id, timestamp: timestamp, authorId: authorId, contentSettings: contentSettings, transaction: transaction)
+        }
+        request.set((lookup |> deliverOnMainQueue).start(next: { [weak self, weak detailController, weak request] location in
+            guard let self, let request, self.currentMessageRequest === request else { return }
+            self.currentMessageRequest = nil
+            request.dispose()
+            guard let context = self.context, context.contentSettings == contentSettings, let detailController,
+                  let navigation = self.currentMessageNavigation(id, timestamp: timestamp, authorId: authorId, detail: detailController) else { return }
+            guard let location,
+                  let chat = FeatureNavigationHooks.shared.makeArchivedMessageChat?(context, location, id.message) else {
+                self.showCurrentMessageUnavailable(context)
+                return
+            }
+            let presentation = MetaDisposable()
+            self.currentMessageRequest = presentation
+            chat.navigationController = navigation
+            let ready = chat.ready.get() |> filter { $0 } |> take(1)
+                |> timeout(15, queue: .mainQueue(), alternate: .single(false)) |> deliverOnMainQueue
+            presentation.set(ready.start(next: { [weak self, weak detailController, weak navigation, weak presentation] ready in
+                guard let self, let presentation, self.currentMessageRequest === presentation else { return }
+                self.currentMessageRequest = nil
+                presentation.dispose()
+                guard let context = self.context, context.contentSettings == contentSettings, let detailController, let navigation,
+                      self.currentMessageNavigation(id, timestamp: timestamp, authorId: authorId, detail: detailController) === navigation else { return }
+                guard ready else {
+                    self.showCurrentMessageUnavailable(context)
+                    return
+                }
+                navigation.push(chat)
+            }))
+            if self.currentMessageRequest === presentation {
+                chat.loadViewIfNeeded(navigation.bounds)
+            }
+        }))
+    }
+
+    private func currentMessageNavigation(_ id: LocalArchiveMessage.ID, timestamp: Int32, authorId: PeerId, detail: InputDataController) -> NavigationViewController? {
+        guard let context, isActive, !page.isBusy, detailController === detail,
+              page.entries.contains(where: { $0.id == id && $0.timestamp == timestamp && $0.authorId == authorId }) else { return nil }
+        return activeArchiveNavigation(for: detail, context: context)
+    }
+
+    private func showCurrentMessageUnavailable(_ context: any AccountContextProtocol) {
+        alert(for: context.window, header: localizedString("Gergram.Archive.OpenCurrentMessage"), info: localizedString("Gergram.Archive.CurrentMessageUnavailable"))
     }
 
     private func confirmRemove(_ id: LocalArchiveMessage.ID) {
@@ -289,7 +387,55 @@ private final class ArchiveScreenModel {
     }
 }
 
-private func activeArchiveMarkNavigation(
+private func currentArchiveMessageLocation(
+    _ id: LocalArchiveMessage.ID, timestamp: Int32, authorId: PeerId,
+    contentSettings: ContentSettings, transaction: Transaction
+) -> ChatLocation? {
+    let messageId = id.message
+    guard let peer = transaction.getPeer(messageId.peerId), peer.id == messageId.peerId,
+          !peer.isCopyProtectionEnabled, !peer.isMonoForum,
+          peer.restrictionText(platform: "ios", contentSettings: contentSettings) == nil,
+          !peer.hasSensitiveContent(platform: "ios", contentSettings: contentSettings),
+          let current = transaction.getMessage(messageId), current.id == messageId,
+          current.threadId == id.threadId, current.timestamp == timestamp, current.author?.id == authorId,
+          current.flags.contains(.Incoming), current.forwardInfo == nil, !current.isCopyProtected(),
+          !current.attributes.contains(where: {
+              $0 is AutoclearTimeoutMessageAttribute || $0 is AutoremoveTimeoutMessageAttribute
+                  || $0 is EphemeralMessageAttribute || $0 is EphemeralOutgoingMessageAttribute
+                  || $0 is EphemeralReplacementMessageAttribute || $0 is RestrictedContentMessageAttribute
+          }) else { return nil }
+
+    switch peer {
+    case let user as TelegramUser:
+        guard !user.isDeleted, !peer.isForumOrMonoForum,
+              let cached = transaction.getPeerCachedData(peerId: messageId.peerId) as? CachedUserData,
+              cached.flags.intersection([.copyProtectionEnabled, .myCopyProtectionEnabled]).isEmpty else { return nil }
+    case let group as TelegramGroup:
+        guard group.membership == .Member, group.migrationReference == nil else { return nil }
+    case let channel as TelegramChannel:
+        guard channel.participationStatus == .member else { return nil }
+    default:
+        return nil
+    }
+
+    guard let threadId = id.threadId else {
+        return peer.isForumOrMonoForum ? nil : .peer(messageId.peerId)
+    }
+    guard peer.isForumOrMonoForum, threadId > 0, let rootId = Int32(exactly: threadId),
+          let topic = transaction.getMessageHistoryThreadInfo(peerId: messageId.peerId, threadId: threadId)?.data.get(MessageHistoryThreadData.self),
+          !topic.isHidden, messageId.id != rootId else { return nil }
+    func topicPosition(_ value: Int32) -> MessageId? {
+        value > 0 ? MessageId(peerId: messageId.peerId, namespace: messageId.namespace, id: value) : nil
+    }
+    return .thread(ChatReplyThreadMessage(
+        peerId: messageId.peerId, threadId: threadId, channelMessageId: nil, isChannelPost: false,
+        isForumPost: true, isMonoforumPost: false, maxMessage: topicPosition(topic.maxKnownMessageId),
+        maxReadIncomingMessageId: topicPosition(topic.maxIncomingReadId), maxReadOutgoingMessageId: topicPosition(topic.maxOutgoingReadId),
+        unreadCount: Int(max(0, topic.incomingUnreadCount)), initialFilledHoles: IndexSet(), initialAnchor: .automatic, isNotAvailable: false
+    ))
+}
+
+private func activeArchiveNavigation(
     for controller: InputDataController, context: any AccountContextProtocol
 ) -> NavigationViewController? {
     guard context.isCurrent, !context.isFrozen, let navigation = controller.navigationController,
@@ -315,7 +461,7 @@ private func archiveDeletedMarkController(
     ]
     let controller = InputDataController(dataSignal: .single(InputDataSignalValue(entries: entries)), title: title)
     controller.validateData = { [weak controller, weak context] data in
-        guard let controller, let context, activeArchiveMarkNavigation(for: controller, context: context) != nil,
+        guard let controller, let context, activeArchiveNavigation(for: controller, context: context) != nil,
               let value = data[identifier]?.stringValue else { return .none }
         guard preferences.setCustomMark(value) else {
             return .fail(.alert(localizedString("Gergram.Archive.InvalidDeletedMark")))

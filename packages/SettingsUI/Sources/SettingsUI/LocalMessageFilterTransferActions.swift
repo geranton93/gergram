@@ -11,6 +11,10 @@ import TelegramUtils
 import TGUIKit
 import UniformTypeIdentifiers
 
+public func previewSharedMessageFilterLink(_ link: String, context: any AccountContextProtocol, window: Window, isActive: @escaping () -> Bool) {
+    LocalMessageFilterTransferActions.previewSharedRulesLink(link, context: context, window: window, isActive: isActive)
+}
+
 enum LocalMessageFilterTransferActions {
     static func importRules(context: any AccountContextProtocol) {
         guard (context.isCurrent || context.isExternal), !context.isFrozen else { return }
@@ -97,13 +101,18 @@ enum LocalMessageFilterTransferActions {
             showError(LocalMessageFilterTransfer.Error.invalidLink, window: window)
             return
         }
+        previewSharedRulesLink(link, context: context, window: window)
+    }
+
+    static func previewSharedRulesLink(_ link: String, context: any AccountContextProtocol, window: Window, isActive: @escaping () -> Bool = { true }) {
+        guard isTransferCurrent(context, window: window), isActive() else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak context, weak window] in
             let result = Result { try LocalMessageFilterTransfer.decodeSharedRulesLink(link) }
             DispatchQueue.main.async {
-                guard let context, let window, isTransferCurrent(context, window: window) else { return }
+                guard let context, let window, isTransferCurrent(context, window: window), isActive() else { return }
                 switch result {
                 case let .success(backup):
-                    preview(.sharedRules(backup), context: context, window: window, showsRuleDetails: true)
+                    preview(.sharedRules(backup), context: context, window: window, showsRuleDetails: true, isActive: isActive)
                 case let .failure(error):
                     showError(error, window: window)
                 }
@@ -143,10 +152,10 @@ enum LocalMessageFilterTransferActions {
         context.window === window && window.isVisible && (context.isCurrent || context.isExternal) && !context.isFrozen
     }
 
-    private static func preview(_ imported: LocalMessageFilterTransfer.Import, context: any AccountContextProtocol, window: Window, showsRuleDetails: Bool = false) {
+    private static func preview(_ imported: LocalMessageFilterTransfer.Import, context: any AccountContextProtocol, window: Window, showsRuleDetails: Bool = false, isActive: @escaping () -> Bool = { true }) {
         let postbox = context.account.postbox
         _ = (localMessageFilterPreferences(postbox) |> take(1) |> deliverOnMainQueue).startStandalone(next: { [weak context, weak window] previous in
-            guard let context, let window, isTransferCurrent(context, window: window) else { return }
+            guard let context, let window, isTransferCurrent(context, window: window), isActive() else { return }
             let updated: LocalMessageFilterPreferences
             let description: String
             let confirmTitle: String
@@ -173,14 +182,14 @@ enum LocalMessageFilterTransferActions {
                 }
             }
             let apply = { [weak context, weak window] in
-                guard let context, let window, isTransferCurrent(context, window: window) else { return }
+                guard let context, let window, isTransferCurrent(context, window: window), isActive() else { return }
                 let update = updateLocalMessageFilterPreferences(postbox) { current -> Bool in
                     guard current == previous else { return false }
                     current = updated
                     return true
                 }
                 _ = (update |> deliverOnMainQueue).startStandalone(next: { [weak context, weak window] applied in
-                    guard !applied, let context, let window, isTransferCurrent(context, window: window) else { return }
+                    guard !applied, let context, let window, isTransferCurrent(context, window: window), isActive() else { return }
                     let key = showsRuleDetails ? "Gergram.Chat.FilterTransferLinkStale" : "Gergram.Chat.FilterTransferStale"
                     alert(for: window, header: title, info: localizedString(key))
                 })
@@ -230,7 +239,8 @@ enum LocalMessageFilterTransferActions {
         scroll.documentView = text
         alert.accessoryView = scroll
         alert.beginSheetModal(for: window) { response in
-            if response == .alertSecondButtonReturn { apply() }
+            guard response == .alertSecondButtonReturn else { return }
+            DispatchQueue.main.async(execute: apply)
         }
     }
 

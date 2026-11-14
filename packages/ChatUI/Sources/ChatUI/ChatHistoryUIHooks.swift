@@ -243,6 +243,7 @@ public struct ChatHistoryUIHooks {
     public let inAppLink: (NSString, (any AccountContextProtocol)?, PeerId?, MessageId?, ((PeerId, Bool, MessageId?, ChatInitialAction?) -> Void)?, ((String) -> Void)?, ((String) -> Void)?, ((ProxyServerSettings) -> Void)?, Bool) -> ChatHistoryInAppLinkValue
     public let executeLink: (Any) -> Void
     public var executeLinkWithContext: ((Any, AnalyticsContext) -> Void)?
+    public var openSharedMessageFilterLink: ((String, any AccountContextProtocol, Window, @escaping () -> Bool) -> Void)?
     public let detectLinks: (NSMutableAttributedString, ParsingType, Bool, (any AccountContextProtocol)?, NSColor, ((PeerId, Bool, MessageId?, ChatInitialAction?) -> Void)?, ((String) -> Void)?, ((String) -> Void)?, ((ProxyServerSettings) -> Void)?, Bool) -> Void
     public let copyContextText: (LinkType) -> String
     public let applyCodeSyntax: (NSMutableAttributedString, NSRange, String?, Message?, Bool, Bool, Bool, NSColor, CGFloat, [CodeSyntaxKey : CodeSyntaxResult], @escaping (MessageId, NSRange, String, String, ChatInterfaceSyntaxTheme) -> Void) -> Void

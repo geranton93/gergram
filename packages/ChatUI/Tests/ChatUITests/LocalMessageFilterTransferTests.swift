@@ -1,8 +1,10 @@
+import AppKit
 import Foundation
 import InAppSettings
 import Postbox
 import TelegramCore
 import XCTest
+@testable import ChatUI
 
 final class LocalMessageFilterTransferTests: XCTestCase {
     private let source = PeerId(namespace: Namespaces.Peer.CloudUser, id: ._internalFromInt64Value(42))
@@ -275,10 +277,29 @@ final class LocalMessageFilterTransferTests: XCTestCase {
             link.replacingOccurrences(of: "gergram:", with: "https:"), noncanonical,
             "gergram://filters/v1/", "gergram://filters/v1/A", "gergram://filters/v1/Ω", "gergram://filters/v1/QQ"]
         for value in invalid {
+            if value != "gergram://filters/v1/QQ" {
+                XCTAssertFalse(LocalMessageFilterTransfer.recognizesSharedRulesLink(value), value.prefix(40).description)
+            }
             XCTAssertThrowsError(try LocalMessageFilterTransfer.decodeSharedRulesLink(value)) { error in
                 XCTAssertEqual(error as? LocalMessageFilterTransfer.Error, .invalidLink, value.prefix(40).description)
             }
         }
+    }
+
+    func testOnlyExactStandaloneTextAdmitsAFilterLinkAttribute() throws {
+        var preferences = LocalMessageFilterPreferences()
+        XCTAssertTrue(preferences.upsert(LocalMessageFilterRule(pattern: "notice")))
+        let raw = try LocalMessageFilterTransfer.encodeSharedRulesLink(preferences)
+        let marker = try XCTUnwrap(ChatSharedMessageFilterLink(messageText: raw, displayedText: raw))
+        let attributed = NSAttributedString(string: raw, attributes: [.link: marker])
+        XCTAssertTrue(attributed.attribute(.link, at: 0, effectiveRange: nil) as? ChatSharedMessageFilterLink === marker)
+        XCTAssertEqual(marker.rawValue, raw)
+        XCTAssertNil(ChatSharedMessageFilterLink(messageText: "See \(raw)", displayedText: raw))
+        XCTAssertNil(ChatSharedMessageFilterLink(messageText: raw, displayedText: "Other text"))
+        XCTAssertNil(ChatSharedMessageFilterLink(messageText: raw, displayedText: "\(raw)\n"))
+        XCTAssertNil(ChatSharedMessageFilterLink(messageText: raw.uppercased(), displayedText: raw.uppercased()))
+        let oversized = "gergram://filters/v1/" + String(repeating: "a", count: LocalMessageFilterTransfer.maximumLinkBytes)
+        XCTAssertNil(ChatSharedMessageFilterLink(messageText: oversized, displayedText: oversized))
     }
 
     func testSharedLinkRejectsReplacementAndScopedOrCommandPayloads() throws {

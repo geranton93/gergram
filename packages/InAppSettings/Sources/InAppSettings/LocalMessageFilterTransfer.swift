@@ -164,14 +164,30 @@ public enum LocalMessageFilterTransfer {
         return link
     }
 
-    public static func decodeSharedRulesLink(_ link: String) throws -> SharedRuleBackup {
+    public static func recognizesSharedRulesLink(_ link: String) -> Bool {
+        return (try? linkPayload(link)) != nil
+    }
+
+    private static func linkPayload(_ link: String) throws -> Substring {
         guard link.utf8.prefix(maximumLinkBytes + 1).count <= maximumLinkBytes else { throw Error.linkTooLarge }
         guard link.hasPrefix(sharedLinkPrefix) else { throw Error.invalidLink }
-        let payload = String(link.dropFirst(sharedLinkPrefix.count))
-        guard !payload.isEmpty, payload.utf8.allSatisfy({ byte in
+        let payload = link.dropFirst(sharedLinkPrefix.count)
+        guard !payload.isEmpty, payload.utf8.count % 4 != 1, payload.utf8.allSatisfy({ byte in
             (65 ... 90).contains(byte) || (97 ... 122).contains(byte) || (48 ... 57).contains(byte) || byte == 45 || byte == 95
         }) else { throw Error.invalidLink }
+        switch payload.utf8.count % 4 {
+        case 2:
+            guard let last = payload.utf8.last, "AQgw".utf8.contains(last) else { throw Error.invalidLink }
+        case 3:
+            guard let last = payload.utf8.last, "AEIMQUYcgkosw048".utf8.contains(last) else { throw Error.invalidLink }
+        default:
+            break
+        }
+        return payload
+    }
 
+    public static func decodeSharedRulesLink(_ link: String) throws -> SharedRuleBackup {
+        let payload = String(try linkPayload(link))
         let padding = (4 - payload.utf8.count % 4) % 4
         let encoded = payload.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
             + String(repeating: "=", count: padding)

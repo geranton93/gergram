@@ -8,6 +8,7 @@ import CodeSyntax
 import RichTextEditorUI
 import RichTextEditorCore
 import ChatUI
+import SettingsUI
 import WalletContext
 import WalletUI
 
@@ -431,6 +432,13 @@ func installChatHistoryUIHooks() {
     }
     hooks.executeLinkWithContext = { link, analyticsContext in
         execute(inapp: link as! inAppLink, analyticsContext: analyticsContext)
+    }
+    hooks.openSharedMessageFilterLink = { link, context, window, isOwnerActive in
+        previewSharedMessageFilterLink(link, context: context, window: window, isActive: { [weak context, weak window] in
+            guard let context, let window, let appDelegate else { return false }
+            return isOwnerActive() && NSApp.isActive && !appDelegate.isLockedValue()
+                && context.window === window && window.isKeyWindow && window.attachedSheet == nil && !hasModals(window)
+        })
     }
     ChatHistoryUIHooks.install(hooks)
 }

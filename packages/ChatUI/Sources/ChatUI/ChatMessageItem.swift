@@ -314,6 +314,32 @@ public class ChatMessageItem: ChatRowItem {
              }
              
             let copy = messageAttr.mutableCopy() as! NSMutableAttributedString
+            let canOpenSharedFilterLink = chatInteraction.supportsLocalMessageVisibility
+                && !chatInteraction.presentation.searchMode.inSearch
+                && !entry.isFakeMessage && entry.additionalData.eventLog == nil
+                && entry.additionalData.canHighlightLinks
+                && message.id.namespace == Namespaces.Message.Cloud
+                && message.id.peerId.namespace != Namespaces.Peer.SecretChat
+                && !message.flags.contains(.Failed) && !message.flags.contains(.Unsent) && !message.flags.contains(.Sending)
+                && message.adAttribute == nil && message.media.isEmpty
+                && message.autoclearTimeout == nil && message.autoremoveAttribute == nil
+                && !message.containsSecretMedia && !message.isCopyProtected(cachedData: chatInteraction.presentation.cachedData)
+                && message.restrictedText(context.contentSettings) == nil
+                && ChatHistoryUIHooks.shared.openSharedMessageFilterLink != nil
+                && message.attributes.allSatisfy { !($0 is RichTextMessageAttribute) && !($0 is TypingDraftMessageAttribute) }
+                && (message.textEntities?.entities.allSatisfy({ entity in
+                    switch entity.type {
+                    case .Url:
+                        return entity.range.lowerBound == 0 && entity.range.upperBound == copy.length
+                    case let .TextUrl(url):
+                        return entity.range.lowerBound == 0 && entity.range.upperBound == copy.length
+                            && url.utf8.elementsEqual(message.text.utf8)
+                    default:
+                        return false
+                    }
+                }) ?? true)
+            let sharedFilterLink = canOpenSharedFilterLink
+                ? ChatSharedMessageFilterLink(messageText: message.text, displayedText: copy.string) : nil
              
 
             if let peer = message.peers[message.id.peerId] {
@@ -356,6 +382,13 @@ public class ChatMessageItem: ChatRowItem {
            
              
              InlineStickerItem.apply(to: copy, associatedMedia: message.associatedMedia)
+             if let sharedFilterLink {
+                 copy.addAttributes([
+                     .link: sharedFilterLink,
+                     .foregroundColor: theme.chat.linkColor(isIncoming, entry.renderType == .bubble),
+                     .cursor: NSCursor.pointingHand
+                 ], range: copy.range)
+             }
 
 //             copy.fixUndefinedEmojies()
 
@@ -584,6 +617,29 @@ public class ChatMessageItem: ChatRowItem {
                 interactions.processURL = { [weak chatInteraction] link in
                     chatInteraction?.markAdAction(adAttribute.opaqueId, adAttribute.hasContentMedia)
                     LinkHooks.shared.globalLinkExecutor().processURL(link)
+                }
+            } else if sharedFilterLink != nil {
+                interactions.processURL = { [weak self, weak chatInteraction, weak context] link in
+                    if let link = link as? ChatSharedMessageFilterLink {
+                        guard let self, let context, let row = self.view, row.item === self,
+                              let window = row.window as? Window, window === context.window,
+                              window.isVisible, window.isKeyWindow, window.attachedSheet == nil else { return }
+                        let expectedURL = link.rawValue
+                        let isActive = { [weak self, weak row, weak window, weak chatInteraction] in
+                            guard let self, let row, let window, let chatInteraction else { return false }
+                            return row.item === self && row.window === window && !chatInteraction.presentation.searchMode.inSearch
+                                && !row.isHiddenOrHasHiddenAncestor && !row.visibleRect.isEmpty
+                                && chatInteraction.canInspectMessageDetails()
+                                && self.messageText.string.utf8.elementsEqual(expectedURL.utf8)
+                        }
+                        guard isActive() else { return }
+                        ChatHistoryUIHooks.shared.openSharedMessageFilterLink?(expectedURL, context, window, isActive)
+                    } else {
+                        LinkHooks.shared.globalLinkExecutor().processURL(link)
+                    }
+                }
+                interactions.resolveLink = { link in
+                    (link as? ChatSharedMessageFilterLink)?.rawValue ?? LinkHooks.shared.globalLinkExecutor().resolveLink(link)
                 }
             }
             interactions.copy = {

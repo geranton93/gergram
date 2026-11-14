@@ -25,7 +25,7 @@ ctest --test-dir /tmp/gergram-whisper-build --output-on-failure
 bash packages/SpeechModelSupport/NativeRuntime/verify-swift-bridge.sh /tmp/gergram-whisper-build
 ```
 
-Use a separate build directory and `-DGERGRAM_WHISPER_ASAN=ON` to run with Address Sanitizer. Pass `--asan` to the bridge script for that build. The C tests exercise upstream context loading, validation errors and cancellation using the upstream Tiny fixture with no trained weights. The Swift fixture also installs the model through the cache and reaches the C runtime through the module map. End-to-end speech recognition requires a real model and remains to be verified.
+Use a separate build directory and `-DGERGRAM_WHISPER_ASAN=ON` to run with Address Sanitizer. The bridge script uses the architecture, deployment target and sanitizer from that CMake build. Use `x86_64` instead of `arm64` on an Intel Mac, or run Intel checks on Apple Silicon with Rosetta. The C tests exercise upstream context loading, validation errors and cancellation using the upstream Tiny fixture with no trained weights. The Swift fixture also installs the model through the cache and reaches the C runtime through the module map. End-to-end speech recognition requires a real model and remains to be verified.
 
 Feed the decoder's 48 kHz signed-16 mono or interleaved stereo CoreMedia buffers to one `WhisperPCMBuffer` per job. Finish the stream to drain the resampler and get at most 960,000 mono Float32 samples at 16 kHz. Use the same cancellation check for decoding, conversion and inference.
 

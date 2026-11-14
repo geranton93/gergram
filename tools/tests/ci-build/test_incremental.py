@@ -162,6 +162,7 @@ class SyncTests(TemporaryTest):
             "submodules/telegram-ios/submodules/MTProtoRustEngine/MTProtoEngineFFI.xcframework/Info.plist",
             "submodules/tgcalls/SharedHeaders/api.h",
             "submodules/telegram-ios/submodules/OpusBinding/SharedHeaders/api.h",
+            ".build/flatbuffers-24.12.23/flatc",
             ".build/telegram-api-generation/state.json",
             "submodules/telegram-ios/build-system/SwiftTL/.build/generator",
             "submodules/telegram-ios/submodules/TelegramApi/Sources/SwiftPMGenerated/Api0.swift",
@@ -203,8 +204,27 @@ class FrameworkTests(TemporaryTest):
             destination = self.root / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
-        for name in ["prepare-telegram-api.py", "prepare-flat-serialization.py"]:
-            write(self.root / "scripts" / name, "")
+        write(self.root / "scripts/prepare-telegram-api.py", "")
+        write(self.root / "scripts/prepare-flat-serialization.py", '''
+import os
+from pathlib import Path
+
+root = Path(__file__).resolve().parent.parent
+selected = Path(os.environ.get("GERGRAM_FLATC") or root / ".build/flatbuffers-24.12.23/flatc")
+if not os.access(selected, os.X_OK):
+    raise SystemExit(f"Missing executable compiler: {selected}")
+with (root / "flatc-generation-inputs").open("a") as inputs:
+    inputs.write(f"{selected}\\n")
+''')
+        write(self.root / "scripts/build-flatc.sh", '''#!/bin/bash
+set -e
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+printf 'build\\n' >> "$root/flatc-build-runs"
+compiler="$root/.build/flatbuffers-24.12.23/flatc"
+mkdir -p "$(dirname "$compiler")"
+printf '#!/bin/sh\\nexit 99\\n' > "$compiler"
+chmod +x "$compiler"
+''')
         write(self.root / "scripts/prepare-telegram-ios.sh", "#!/bin/sh\nexit 0\n")
         write(self.root / "scripts/rebuild", "no")
         write(self.root / "core-xprojects/tlottie/build.sh", "exit 0\n")
@@ -244,6 +264,7 @@ fi
             executable.chmod(0o755)
         self.environment = dict(os.environ, PATH=str(self.root / "bin") + os.pathsep + os.environ["PATH"])
         self.environment.pop("BUILD_TIMING_LOG", None)
+        self.environment.pop("GERGRAM_FLATC", None)
 
     def configure(self, **environment):
         return run(["sh", str(self.root / "scripts/configure_frameworks.sh")], cwd=self.root, env=dict(self.environment, **environment))
@@ -256,6 +277,22 @@ fi
         self.assertEqual(self.runs(), self.libraries)
         self.configure()
         self.assertEqual(self.runs(), self.libraries)
+        self.assertEqual((self.root / "flatc-build-runs").read_text().splitlines(), ["build"])
+        default = self.root.resolve() / ".build/flatbuffers-24.12.23/flatc"
+        self.assertEqual((self.root / "flatc-generation-inputs").read_text().splitlines(), [str(default)] * 2)
+
+    def test_explicit_compiler_is_never_replaced_or_fallen_back(self):
+        override = self.root / "external-flatc"
+        with self.assertRaises(subprocess.CalledProcessError) as error:
+            self.configure(GERGRAM_FLATC=str(override))
+        self.assertIn(f"Missing executable compiler: {override}", error.exception.stderr)
+        self.assertFalse((self.root / "flatc-build-runs").exists())
+        self.assertFalse((self.root / "runs").exists())
+
+        write(override, "#!/bin/sh\nexit 99\n").chmod(0o755)
+        self.configure(GERGRAM_FLATC=str(override))
+        self.assertFalse((self.root / "flatc-build-runs").exists())
+        self.assertEqual((self.root / "flatc-generation-inputs").read_text().splitlines(), [str(override)])
 
     def test_missing_native_output_and_xcframework_are_repaired(self):
         self.configure()

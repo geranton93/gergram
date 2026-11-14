@@ -68,9 +68,11 @@ Run it with `--build` to continue straight into step 3.
 
 ## 3. Build the native libraries (once)
 
-`bash scripts/build-flatc.sh` builds FlatBuffers 24.12.23 from its pinned source revision.
-The compiler is kept under the ignored `.build` directory. Set `GERGRAM_FLATC` to an
-absolute path if your build host already provides a trusted compiler of that version.
+Framework preparation builds FlatBuffers 24.12.23 from its pinned source revision when
+the compiler is absent from the ignored `.build` directory. Run
+`bash scripts/build-flatc.sh /path/to/flatbuffers` to use a local source checkout.
+Set `GERGRAM_FLATC` to an absolute path if your build host already provides a trusted
+compiler of that version.
 
 ```
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \

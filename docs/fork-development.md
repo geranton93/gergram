@@ -68,7 +68,6 @@ bash scripts/xcode27.sh apply
 xcodebuild -showComponent MetalToolchain
 # If missing: xcodebuild -downloadComponent MetalToolchain
 
-bash scripts/build-flatc.sh
 CMAKE_POLICY_VERSION_MINIMUM=3.5 bash scripts/configure_frameworks.sh
 xcodebuild -workspace Telegram-Mac.xcworkspace -scheme Telegram -configuration Debug build
 ```
@@ -77,7 +76,7 @@ Open `Telegram-Mac.xcworkspace` in Xcode for interactive debugging. The `Telegra
 
 Xcode 27 compatibility edits are local. Run `bash scripts/xcode27.sh revert` before staging any affected files. Framework preparation applies the Telegram-iOS patch groups for compatibility and fork features. With native frameworks already available, `sh scripts/prepare-telegram-ios.sh` applies any pending group. Use its `--reverse` option before moving the Telegram-iOS checkout to a different revision. [Xcode 27 compatibility](../XCODE27.md) · [Upstream build details](../INSTALL.md)
 
-The FlatBuffers compiler must match the pinned Swift runtime. `build-flatc.sh` builds version 24.12.23 from the verified upstream revision into the checkout's ignored `.build` directory. The script can also use a local Git checkout at the same commit as its only argument. A build host with its own trusted compiler can set `GERGRAM_FLATC` to the absolute path. The generator rejects other versions and quarantined tools before running schema generation. [FlatBuffers CMake documentation](https://flatbuffers.dev/building/)
+The FlatBuffers compiler must match the pinned Swift runtime. Framework preparation builds and caches version 24.12.23 from the verified upstream revision in the checkout's ignored `.build` directory when needed. To prepare it offline, run `bash scripts/build-flatc.sh /path/to/flatbuffers` with a local Git checkout at the same commit. A build host with its own trusted compiler can set `GERGRAM_FLATC` to the absolute path. The generator rejects other versions and quarantined tools before running schema generation. [FlatBuffers CMake documentation](https://flatbuffers.dev/building/)
 
 ### Check Xcode workspace recognition
 

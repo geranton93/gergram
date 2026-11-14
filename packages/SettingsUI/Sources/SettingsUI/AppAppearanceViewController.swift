@@ -1095,13 +1095,13 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
     actionsDisposable.add((resetRequests.signal() |> deliverOnMainQueue).start(next: { [weak controller] _ in
         guard let controller, let window = controller.window,
               controller.navigationController?.controller === controller, context.window === window,
-              window.isVisible, (context.isCurrent || context.isExternal), !hasModals(window) else { return }
+              window.isVisible, (context.isCurrent || context.isExternal), !context.isFrozen, !hasModals(window) else { return }
         let title = localizedString("Gergram.Appearance.Reset")
         verifyAlert_button(for: window, header: title, information: localizedString("Gergram.Appearance.ResetDescription"),
                            ok: localizedString("Gergram.Appearance.ResetConfirm"), successHandler: { [weak controller, weak window] _ in
             guard let controller, let window, controller.window === window,
                   controller.navigationController?.controller === controller, context.window === window,
-                  window.isVisible, (context.isCurrent || context.isExternal) else { return }
+                  window.isVisible, (context.isCurrent || context.isExternal), !context.isFrozen else { return }
             resetGergramAppearance()
         })
     }))

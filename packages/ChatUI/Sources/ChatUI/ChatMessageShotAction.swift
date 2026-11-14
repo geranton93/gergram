@@ -40,6 +40,16 @@ enum ChatMessageShotAction {
         let text: String
     }
 
+    private enum ReplyBlock: Equatable {
+        case local(ReplyExcerpt)
+        case external
+    }
+
+    private enum ReplyReference {
+        case local(ReplyMessageAttribute)
+        case external
+    }
+
     private typealias PreparedShot = (snapshot: Snapshot, previews: [MessageId: Preview])
 
     private struct PreviewRequest {
@@ -294,14 +304,21 @@ enum ChatMessageShotAction {
         return previews
     }
 
-    private static func localReplyTarget(for message: Message, threadId: Int64?) -> ReplyMessageAttribute? {
+    private static func replyReference(for message: Message, threadId: Int64?) -> ReplyReference? {
         guard let reply = message.replyAttribute, reply.messageId != message.id,
-              reply.messageId.peerId == message.id.peerId, reply.messageId.namespace == Namespaces.Message.Cloud,
-              reply.messageId.id > 0, reply.innerSubject == nil,
-              reply.isQuote || !ChatRowItem.hidesReply(to: reply, in: message, threadId: threadId) else {
+              reply.messageId.namespace == Namespaces.Message.Cloud, reply.messageId.id > 0, reply.innerSubject == nil else {
             return nil
         }
-        return reply
+        if reply.messageId.peerId == message.id.peerId {
+            return reply.isQuote || !ChatRowItem.hidesReply(to: reply, in: message, threadId: threadId) ? .local(reply) : nil
+        }
+        switch reply.messageId.peerId.namespace {
+        case Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel:
+            // An external reply never carries its destination or copied quote into the export.
+            return .external
+        default:
+            return nil
+        }
     }
 
     private static func containsTextSpoilers(_ entities: [MessageTextEntity]) -> Bool {
@@ -311,12 +328,26 @@ enum ChatMessageShotAction {
         }
     }
 
-    private static func replyExcerpts(in snapshot: Snapshot, interaction: ChatInteraction) -> [MessageId: ReplyExcerpt] {
-        guard !snapshot.replyTargets.isEmpty, !BlockedSenderVisibilitySettings.isEnabled else { return [:] }
-        let visibility = ChatLocalMessageVisibility.get(interaction.interactionContext.account)
-        var excerpts: [MessageId: ReplyExcerpt] = [:]
+    private static func loadLocalReplyTargets(for messages: [Message], threadId: Int64?, load: (MessageId) -> Message?) -> [MessageId: Message] {
+        let ids = Set(messages.compactMap { message -> MessageId? in
+            guard case let .local(reply)? = replyReference(for: message, threadId: threadId) else { return nil }
+            return reply.messageId
+        })
+        return Dictionary(uniqueKeysWithValues: ids.compactMap { id in load(id).map { (id, $0) } })
+    }
+
+    private static func replyBlocks(in snapshot: Snapshot, interaction: ChatInteraction) -> [MessageId: ReplyBlock] {
+        let visibility = !snapshot.replyTargets.isEmpty && !BlockedSenderVisibilitySettings.isEnabled
+            ? ChatLocalMessageVisibility.get(interaction.interactionContext.account)
+            : nil
+        var blocks: [MessageId: ReplyBlock] = [:]
         for message in snapshot.messages {
-            guard let reply = localReplyTarget(for: message, threadId: interaction.chatLocation.threadId),
+            let reference = replyReference(for: message, threadId: interaction.chatLocation.threadId)
+            if case .external? = reference {
+                blocks[message.id] = .external
+                continue
+            }
+            guard case let .local(reply)? = reference, let visibility,
                   let target = snapshot.replyTargets[reply.messageId], !visibility.isHidden(target),
                   supportsMessage(target, interaction: interaction, cachedData: snapshot.cachedData),
                   supportsPreview(target, interaction: interaction),
@@ -339,9 +370,9 @@ enum ChatMessageShotAction {
                 continue
             }
             let title = quote == nil ? strings().chatReplyMessagePanelTitle(author) : strings().chatReplyQuotePanelTitle(author)
-            excerpts[message.id] = ReplyExcerpt(target: target.id, version: target.stableVersion, title: title, text: excerpt)
+            blocks[message.id] = .local(ReplyExcerpt(target: target.id, version: target.stableVersion, title: title, text: excerpt))
         }
-        return excerpts
+        return blocks
     }
 
     private static func supportsSnapshot(_ snapshot: Snapshot, ids: Set<MessageId>, interaction: ChatInteraction) -> Bool {
@@ -382,13 +413,8 @@ enum ChatMessageShotAction {
                 let filters = transaction.getPreferencesEntry(key: ApplicationSpecificPreferencesKeys.localMessageFilters)
                 let hasActiveFilters = filters.map { $0.get(LocalMessageFilterPreferences.self)?.isEnabled ?? true } ?? false
                 let hasLocalReplyFilters = hasHiddenSenders || hasActiveFilters
-                var replyTargets: [MessageId: Message] = [:]
-                if !hasLocalReplyFilters {
-                    for message in messages {
-                        if let reply = localReplyTarget(for: message, threadId: location.threadId), replyTargets[reply.messageId] == nil {
-                            replyTargets[reply.messageId] = transaction.getMessage(reply.messageId)
-                        }
-                    }
+                let replyTargets = hasLocalReplyFilters ? [:] : loadLocalReplyTargets(for: messages, threadId: location.threadId) {
+                    transaction.getMessage($0)
                 }
                 let ranks: CachedChannelAdminRanks?
                 let topic: ForumTopic?
@@ -452,7 +478,7 @@ enum ChatMessageShotAction {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotUnavailable"))
                 return
             }
-            let replies = replyExcerpts(in: snapshot, interaction: interaction)
+            let replies = replyBlocks(in: snapshot, interaction: interaction)
             let decorations = headerDecorations(in: snapshot, interaction: interaction, options: options)
             let canvasBackground = options.showsBackground ? palette.background : nil
             guard snapshot.messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
@@ -472,7 +498,7 @@ enum ChatMessageShotAction {
                           supportsSnapshot(current, ids: ids, interaction: interaction),
                           headerDecorations(in: current, interaction: interaction, options: options) == decorations else { return false }
                     if !replies.isEmpty {
-                        let currentReplies = replyExcerpts(in: current, interaction: interaction)
+                        let currentReplies = replyBlocks(in: current, interaction: interaction)
                         guard replies.allSatisfy({ currentReplies[$0.key] == $0.value }) else { return false }
                     }
                     return previewIds.isEmpty || current.messages.allSatisfy { !previewIds.contains($0.id) || supportsPreview($0, interaction: interaction) }
@@ -524,7 +550,25 @@ enum ChatMessageShotAction {
         }
     }
 
-    private static func rows(for messages: [Message], replies: [MessageId: ReplyExcerpt], previews: [MessageId: Preview], decorations: [MessageId: String], interaction: ChatInteraction, options: MessageShotOptions, palette: ColorPalette, fontSize: CGFloat) -> [MessageShotRenderer.Row] {
+    private static func renderReply(_ reply: ReplyBlock, accent: NSColor, textColor: NSColor) -> MessageShotRenderer.Reply {
+        let title: String
+        let text: String
+        switch reply {
+        case let .local(excerpt):
+            title = excerpt.title
+            text = excerpt.text
+        case .external:
+            title = localizedString("Gergram.Chat.MessageShotExternalReplyTitle")
+            text = localizedString("Gergram.Chat.MessageShotExternalReplyText")
+        }
+        return MessageShotRenderer.Reply(
+            title: NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: accent]),
+            excerpt: NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: textColor]),
+            accent: accent
+        )
+    }
+
+    private static func rows(for messages: [Message], replies: [MessageId: ReplyBlock], previews: [MessageId: Preview], decorations: [MessageId: String], interaction: ChatInteraction, options: MessageShotOptions, palette: ColorPalette, fontSize: CGFloat) -> [MessageShotRenderer.Row] {
         let context = interaction.interactionContext
         let colors = TelegramChatColors(palette, true)
         return messages.sorted { $0.index < $1.index }.map { message in
@@ -582,12 +626,8 @@ enum ChatMessageShotAction {
             } else {
                 footer = nil
             }
-            let reply = replies[message.id].map { excerpt in
-                MessageShotRenderer.Reply(
-                    title: NSAttributedString(string: excerpt.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: palette.accent]),
-                    excerpt: NSAttributedString(string: excerpt.text, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: colors.textColor(incoming, true)]),
-                    accent: palette.accent
-                )
+            let reply = replies[message.id].map {
+                renderReply($0, accent: palette.accent, textColor: colors.textColor(incoming, true))
             }
             let decoration = options.headerDecoration(decorations[message.id], foreground: colors.textColor(incoming, true), background: secondary.withAlphaComponent(0.12))
             return MessageShotRenderer.Row(header: header, headerDecoration: decoration, body: text, background: colors.bubbleBackgroundColor(incoming, true), reply: reply, attachments: attachments, footer: footer)

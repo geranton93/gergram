@@ -10,6 +10,12 @@ final class DirectMediaReadWaiter {
     private let condition = NSCondition()
     private var outcome: Outcome?
 
+    var isResolved: Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return outcome != nil
+    }
+
     func receive(_ data: Data?) {
         resolve(data.map(Outcome.bytes) ?? .failed)
     }

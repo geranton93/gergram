@@ -369,6 +369,38 @@ final class VideoPlaybackTests: XCTestCase {
         waiter.cancel()
     }
 
+    @objc func testAlreadyCompletedFetchSkipsFallbackAfterSynchronousCacheHit() {
+        let waiter = DirectMediaReadWaiter()
+        let bytes = Data([1, 2])
+        var requestedIncompleteEvents: [Bool] = []
+        let disposable = subscribeDirectMediaRead(fetchCompletion: .single(()), waiter: waiter) { notifyAboutIncomplete in
+            requestedIncompleteEvents.append(notifyAboutIncomplete)
+            return .single((bytes, true))
+        }
+        defer { disposable.dispose() }
+
+        XCTAssertEqual(waiter.wait(), .bytes(bytes))
+        XCTAssertEqual(requestedIncompleteEvents, [false])
+    }
+
+    @objc func testFetchCompletingAfterCachedBytesSkipsFallback() {
+        let fetchCompletion = ValuePipe<Void>()
+        let cacheRead = ValuePipe<(Data, Bool)>()
+        let waiter = DirectMediaReadWaiter()
+        let bytes = Data([1, 2])
+        var requestedIncompleteEvents: [Bool] = []
+        let disposable = subscribeDirectMediaRead(fetchCompletion: fetchCompletion.signal(), waiter: waiter) { notifyAboutIncomplete in
+            requestedIncompleteEvents.append(notifyAboutIncomplete)
+            return notifyAboutIncomplete ? .single((bytes, true)) : cacheRead.signal()
+        }
+        defer { disposable.dispose() }
+
+        cacheRead.putNext((bytes, true))
+        fetchCompletion.putNext(())
+        XCTAssertEqual(waiter.wait(), .bytes(bytes))
+        XCTAssertEqual(requestedIncompleteEvents, [false])
+    }
+
     @objc func testCacheOnlyReadFailsWhenItsBytesAreUnreadable() {
         let waiter = DirectMediaReadWaiter()
         let disposable = subscribeDirectMediaRead(fetchCompletion: nil, waiter: waiter) { notifyAboutIncomplete in

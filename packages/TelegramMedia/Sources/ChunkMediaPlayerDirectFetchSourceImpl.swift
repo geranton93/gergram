@@ -20,11 +20,14 @@ func subscribeDirectMediaRead(
     }, completed: {
         waiter.receive(nil)
     }))
-    if let fetchCompletion {
+    if let fetchCompletion, !waiter.isResolved {
         let finalRead = fetchCompletion
         |> take(1)
-        |> mapToSignal { _ in
-            read(true) |> take(1)
+        |> mapToSignal { _ -> Signal<(Data, Bool), NoError> in
+            guard !waiter.isResolved else {
+                return .complete()
+            }
+            return read(true) |> take(1)
         }
         disposables.add(finalRead.start(next: { result, isComplete in
             waiter.receive(isComplete ? result : nil)

@@ -544,7 +544,7 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(6), title: strings().appearanceSettingsColorThemeHeader, alternate: synonyms(strings().settingsSearchSynonymsAppearanceColorTheme), icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .accentColor)
         }),
-        SettingsSearchableItem(id: .appearance(6), title: strings().appearanceSettingsChatViewHeader, alternate: synonyms(strings().settingsSearchSynonymsAppearanceChatMode), icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+        SettingsSearchableItem(id: .appearance(3), title: strings().appearanceSettingsChatViewHeader, alternate: synonyms(strings().settingsSearchSynonymsAppearanceChatMode), icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .chatMode)
         }),
         SettingsSearchableItem(id: .appearance(7), title: localizedString("Gergram.Chat.EditedIndicator"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
@@ -594,6 +594,12 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         }),
         SettingsSearchableItem(id: .appearance(22), title: localizedString("Gergram.Profile.AdaptiveMusicCover"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .adaptiveMusicCover)
+        }),
+        SettingsSearchableItem(id: .appearance(23), title: localizedString("Gergram.Appearance.AvatarRadius"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .avatarRadius)
+        }),
+        SettingsSearchableItem(id: .appearance(24), title: localizedString("Gergram.Appearance.SingleAvatarRadius"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .singleAvatarRadius)
         }),
     ]
 }

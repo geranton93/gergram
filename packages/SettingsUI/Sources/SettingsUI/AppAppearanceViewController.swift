@@ -263,6 +263,8 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
     case fastShare
     case greetingSticker
     case adaptiveMusicCover
+    case avatarRadius
+    case singleAvatarRadius
     public func isEqual(to other: ItemListItemTag) -> Bool {
         if let other = other as? ThemeSettingsEntryTag, self == other {
             return true
@@ -313,6 +315,10 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
             return .general(_id_greeting_sticker)
         case .adaptiveMusicCover:
             return .general(_id_adaptive_music_cover)
+        case .avatarRadius:
+            return .general(_id_avatar_radius)
+        case .singleAvatarRadius:
+            return .general(_id_single_avatar_radius)
         case .accentColor:
             return .custom(_id_theme_accent_list)
         }
@@ -399,6 +405,8 @@ private let _id_switch_animations = InputDataIdentifier("_id_switch_animations")
 private let _id_fast_share = InputDataIdentifier("_id_fast_share")
 private let _id_greeting_sticker = InputDataIdentifier("_id_greeting_sticker")
 private let _id_adaptive_music_cover = InputDataIdentifier("_id_adaptive_music_cover")
+private let _id_avatar_radius = InputDataIdentifier("_id_avatar_radius")
+private let _id_single_avatar_radius = InputDataIdentifier("_id_single_avatar_radius")
 private let _id_simple_quotes_and_replies = InputDataIdentifier("_id_simple_quotes_and_replies")
 private let _id_composer_emoji_hover = InputDataIdentifier("_id_composer_emoji_hover")
 private let _id_custom_chat_wallpapers = InputDataIdentifier("_id_custom_chat_wallpapers")
@@ -415,7 +423,7 @@ private func editedIndicatorTitle(_ style: ChatEditedIndicatorStyle) -> String {
     }
 }
 
-private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, editedIndicatorStyle: ChatEditedIndicatorStyle, showsProfileJoinDate: Bool, hidesCustomChatWallpapers: Bool, opensComposerEmojiOnHover: Bool, showsStreamerModeMenuBar: Bool, hidesPremiumStatuses: Bool, simplifiesQuotesAndReplies: Bool, hiddenReactionKinds: Set<ChatReactionVisibilityPreferences.ChatKind>, hidesMessageTails: Bool, messageWidth: ChatMessageWidth, revealsMediaSpoilers: Bool, monospaceFont: ChatMonospaceFont, messageBubbleRadius: Int, animatesSwitches: Bool, hidesFastShare: Bool, hidesGreetingSticker: Bool, adaptiveMusicCover: Bool, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
+private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, editedIndicatorStyle: ChatEditedIndicatorStyle, showsProfileJoinDate: Bool, hidesCustomChatWallpapers: Bool, opensComposerEmojiOnHover: Bool, showsStreamerModeMenuBar: Bool, hidesPremiumStatuses: Bool, simplifiesQuotesAndReplies: Bool, hiddenReactionKinds: Set<ChatReactionVisibilityPreferences.ChatKind>, hidesMessageTails: Bool, messageWidth: ChatMessageWidth, revealsMediaSpoilers: Bool, monospaceFont: ChatMonospaceFont, messageBubbleRadius: Int, animatesSwitches: Bool, hidesFastShare: Bool, hidesGreetingSticker: Bool, adaptiveMusicCover: Bool, avatarCorners: AvatarCornerAppearance, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
     
     var entries:[InputDataEntry] = []
     var sectionId: Int32 = 0
@@ -686,6 +694,25 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
     beginSection(localizedString("Gergram.Appearance.AppControls"))
     addToggle(_id_switch_animations, "Gergram.Appearance.AnimateSwitches", animatesSwitches, .firstItem, SwitchAnimationPreferences.shared.setEnabled)
     addToggle(_id_streamer_mode_menu_bar, "Gergram.Appearance.StreamerModeMenuBar", showsStreamerModeMenuBar, .lastItem, StreamerModeMenuBarPreferences.shared.setVisible)
+
+    beginSection(localizedString("Gergram.Appearance.Avatars"))
+    let avatarRadiusTitle: (Int) -> String = { radius in
+        switch radius {
+        case 0: return localizedString("Gergram.Appearance.AvatarRadius.Square")
+        case AvatarCornerPreferences.defaultRadius: return localizedString("Gergram.Appearance.AvatarRadius.Default")
+        default: return translate(key: "Gergram.Appearance.AvatarRadius.Level", [radius])
+        }
+    }
+    let avatarRadiusOptions = AvatarCornerPreferences.allowedRadii.map { radius in
+        ContextMenuItem(avatarRadiusTitle(radius), handler: {
+            AvatarCornerPreferences.shared.setRadius(radius)
+        }, itemImage: radius == avatarCorners.radius ? MenuAnimation.menu_check_selected.value : nil)
+    }
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_avatar_radius,
+                            data: .init(name: localizedString("Gergram.Appearance.AvatarRadius"), color: appearance.presentation.colors.text,
+                                        type: .contextSelector(avatarRadiusTitle(avatarCorners.radius), avatarRadiusOptions), viewType: .firstItem)))
+    index += 1
+    addToggle(_id_single_avatar_radius, "Gergram.Appearance.SingleAvatarRadius", avatarCorners.usesSingleRadius, .lastItem, AvatarCornerPreferences.shared.setUsesSingleRadius)
 
     beginSection(localizedString("Gergram.Appearance.Profile"))
     addToggle(_id_adaptive_music_cover, "Gergram.Profile.AdaptiveMusicCover", adaptiveMusicCover, .firstItem, ProfileMusicCoverPreferences.shared.setAdaptive)
@@ -979,8 +1006,8 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
             }
     } |> deliverOnMainQueue
     
-    let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager), ChatEditedIndicatorPreferences.shared.signal, ProfileJoinDatePreferences.shared.signal, ChatWallpaperVisibilityPreferences.shared.signal, ComposerEmojiHoverPreferences.shared.signal, StreamerModeMenuBarPreferences.shared.signal, PremiumStatusVisibilityPreferences.shared.signal, ChatReplyAppearancePreferences.shared.signal, ChatReactionVisibilityPreferences.shared.signal, MessageBubbleTailPreferences.shared.signal, ChatMessageWidthPreferences.shared.signal, ChatMediaSpoilerPreferences.shared.signal, ChatMonospaceFontPreferences.shared.signal, MessageBubbleRadiusPreferences.shared.signal, SwitchAnimationPreferences.shared.signal, ChatAffordancePreferences.shared.hidesFastShareSignal, ChatAffordancePreferences.shared.hidesGreetingStickerSignal, ProfileMusicCoverPreferences.shared.signal) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings, editedIndicatorStyle, showsProfileJoinDate, hidesCustomChatWallpapers, opensComposerEmojiOnHover, showsStreamerModeMenuBar, hidesPremiumStatuses, simplifiesQuotesAndReplies, hiddenReactionKinds, hidesMessageTails, messageWidth, revealsMediaSpoilers, monospaceFont, messageBubbleRadius, animatesSwitches, hidesFastShare, hidesGreetingSticker, adaptiveMusicCover in
-        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, editedIndicatorStyle: editedIndicatorStyle, showsProfileJoinDate: showsProfileJoinDate, hidesCustomChatWallpapers: hidesCustomChatWallpapers, opensComposerEmojiOnHover: opensComposerEmojiOnHover, showsStreamerModeMenuBar: showsStreamerModeMenuBar, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hiddenReactionKinds: hiddenReactionKinds, hidesMessageTails: hidesMessageTails, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius, animatesSwitches: animatesSwitches, hidesFastShare: hidesFastShare, hidesGreetingSticker: hidesGreetingSticker, adaptiveMusicCover: adaptiveMusicCover, arguments: arguments)
+    let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager), ChatEditedIndicatorPreferences.shared.signal, ProfileJoinDatePreferences.shared.signal, ChatWallpaperVisibilityPreferences.shared.signal, ComposerEmojiHoverPreferences.shared.signal, StreamerModeMenuBarPreferences.shared.signal, PremiumStatusVisibilityPreferences.shared.signal, ChatReplyAppearancePreferences.shared.signal, ChatReactionVisibilityPreferences.shared.signal, MessageBubbleTailPreferences.shared.signal, ChatMessageWidthPreferences.shared.signal, ChatMediaSpoilerPreferences.shared.signal, ChatMonospaceFontPreferences.shared.signal, MessageBubbleRadiusPreferences.shared.signal, SwitchAnimationPreferences.shared.signal, ChatAffordancePreferences.shared.hidesFastShareSignal, ChatAffordancePreferences.shared.hidesGreetingStickerSignal, ProfileMusicCoverPreferences.shared.signal, AvatarCornerPreferences.shared.signal) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings, editedIndicatorStyle, showsProfileJoinDate, hidesCustomChatWallpapers, opensComposerEmojiOnHover, showsStreamerModeMenuBar, hidesPremiumStatuses, simplifiesQuotesAndReplies, hiddenReactionKinds, hidesMessageTails, messageWidth, revealsMediaSpoilers, monospaceFont, messageBubbleRadius, animatesSwitches, hidesFastShare, hidesGreetingSticker, adaptiveMusicCover, avatarCorners in
+        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, editedIndicatorStyle: editedIndicatorStyle, showsProfileJoinDate: showsProfileJoinDate, hidesCustomChatWallpapers: hidesCustomChatWallpapers, opensComposerEmojiOnHover: opensComposerEmojiOnHover, showsStreamerModeMenuBar: showsStreamerModeMenuBar, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hiddenReactionKinds: hiddenReactionKinds, hidesMessageTails: hidesMessageTails, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius, animatesSwitches: animatesSwitches, hidesFastShare: hidesFastShare, hidesGreetingSticker: hidesGreetingSticker, adaptiveMusicCover: adaptiveMusicCover, avatarCorners: avatarCorners, arguments: arguments)
     }
     |> map { entries in
          return InputDataSignalValue(entries: entries, animated: true)

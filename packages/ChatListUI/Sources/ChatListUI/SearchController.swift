@@ -19,6 +19,7 @@ import ChatHistoryModel
 import ChatUI
 import ChatModeTypes
 import AppAnalytics
+import MessageUtils
 
 extension SearchMessagesLocation {
     public func withUpdatedSouce(_ source: SearchController.MessaagesSourceValue) -> SearchMessagesLocation {
@@ -146,7 +147,7 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
     case recentlySearch(RenderedPeer, Int, SearchSecretChatWrapper?, PeerStatusStringResult, UnreadSearchBadge, Bool, PeerStoryStats?, Bool, isGrossingApp: Bool, isRecentApp: Bool)
     case globalPeer(FoundPeer, UnreadSearchBadge, Int, AdPeer?)
     case savedMessages(Peer)
-    case message(Message, String, CombinedPeerReadState?, MessageHistoryThreadData?, Int)
+    case message(Message, String, CombinedPeerReadState?, MessageHistoryThreadData?, Int, filtersZalgoPreview: Bool = false)
     case separator(text: String, index:Int, state:SeparatorBlockState)
     case topPeers(Int, articlesEnabled: Bool, unreadArticles: Int32, selfPeer: Peer, peers: [Peer], unread: [PeerId: UnreadSearchBadge], online: [PeerId : Bool])
     case foundStories(StoryListContext.State, index: Int, query: String)
@@ -167,6 +168,13 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
         }
     }
 
+    func withFilteredMessagePreview(_ enabled: Bool) -> ChatListSearchEntry {
+        guard case let .message(message, query, readState, threadInfo, index, previous) = self else { return self }
+        let filtersZalgoPreview = enabled && message.storyAttribute == nil && ChatListZalgoPreview.isEligible(message)
+        guard filtersZalgoPreview != previous else { return self }
+        return .message(message, query, readState, threadInfo, index, filtersZalgoPreview: filtersZalgoPreview)
+    }
+
     var stableId: ChatListSearchEntryStableId {
         switch self {
         case let .localPeer(peer, _, secretChat, _, _, _, _):
@@ -178,7 +186,7 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
             return .topic(item.index)
         case let .globalPeer(found, _, _, _):
             return .globalPeerId(found.peer.id)
-        case let .message(message, _, _, _, _):
+        case let .message(message, _, _, _, _, _):
             return .messageId(message.id)
         case .savedMessages:
             return .savedMessages
@@ -212,7 +220,7 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
             return index
         case let .globalPeer(_, _,index, _):
             return index
-        case let .message(_, _, _, _, index):
+        case let .message(_, _, _, _, index, _):
             return index
         case .savedMessages:
             return -1
@@ -267,8 +275,8 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
             } else {
                 return false
             }
-        case let .message(lhsMessage, text, combinedState, threadInfo, index):
-            if case .message(let rhsMessage, text, combinedState, threadInfo, index) = rhs {
+        case let .message(lhsMessage, text, combinedState, threadInfo, index, filtersZalgoPreview):
+            if case .message(let rhsMessage, text, combinedState, threadInfo, index, filtersZalgoPreview) = rhs {
 
                 if lhsMessage.id != rhsMessage.id {
                     return false
@@ -389,7 +397,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ChatListSearchEntry
     
     let (deleted, inserted, updated) = proccessEntriesWithoutReverse(from, right: to, { entry -> TableRowItem in
         switch entry.entry {
-        case let .message(message, query, combinedState, threadInfo, _):
+        case let .message(message, query, combinedState, threadInfo, _, filtersZalgoPreview):
             var peer = RenderedPeer(message: message)
             if let group = message.peers[message.id.peerId] as? TelegramGroup, let migrationReference = group.migrationReference {
                 if let channelPeer = message.peers[migrationReference.peerId] {
@@ -422,7 +430,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ChatListSearchEntry
             case .common, .community:
                 titleMode = .forumInfo
             }
-            let item = ChatListMessageRowItem(initialSize, context: arguments.context, message: message, id: id, query: query, renderedPeer: peer, readState: combinedState, mode: mode, titleMode: titleMode)
+            let item = ChatListMessageRowItem(initialSize, context: arguments.context, message: message, id: id, query: query, renderedPeer: peer, readState: combinedState, mode: mode, titleMode: titleMode, filtersZalgoPreview: filtersZalgoPreview)
             return item
         case let .globalPeer(foundPeer, badge, _, adPeer):
             var status: String? = nil
@@ -1780,10 +1788,11 @@ public class SearchController<Context: AccountContextProtocol>: GenericViewContr
         }
         
         
-        let transition = combineLatest(queue: prepareQueue, searchItems, appearanceSignal, context.globalPeerHandler.get() |> distinctUntilChanged, hideStoryIndicators)
-        |> map { value, appearance, location, hideStoryIndicators in
+        let transition = combineLatest(queue: prepareQueue, searchItems, appearanceSignal, context.globalPeerHandler.get() |> distinctUntilChanged, hideStoryIndicators, FastSettings.filterZalgoTextSignal)
+        |> map { value, appearance, location, hideStoryIndicators, filtersZalgoPreview in
             let entries = value.0.map {
-                AppearanceWrapperEntry(entry: $0.withStoryIndicatorsHidden(hideStoryIndicators), appearance: appearance)
+                let entry = $0.withStoryIndicatorsHidden(hideStoryIndicators).withFilteredMessagePreview(filtersZalgoPreview)
+                return AppearanceWrapperEntry(entry: entry, appearance: appearance)
             }
             return (entries, value.1, value.2 ? nil : location, value.2, value.3, value.4)
         }

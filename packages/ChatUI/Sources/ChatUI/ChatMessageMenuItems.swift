@@ -1597,6 +1597,16 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
            let repeatMessage = chatInteraction.repeatMessageAction.menuItem(for: data.message, interaction: chatInteraction) {
             fourthBlock.append(repeatMessage)
         }
+        if case .general = source, !data.isLogInteraction, !isService, entry?.isFakeMessage == false,
+           data.chatLocation == chatInteraction.chatLocation, chatInteraction.readUntilMessage != nil,
+           let target = ChatReadUntilPolicy.target(message: data.message, album: data.groupped, presentation: chatInteraction.presentation, accountPeerId: context.peerId) {
+            let location = data.chatLocation
+            let key = data.message.groupingKey == nil ? "Gergram.Chat.ReadUntil" : "Gergram.Chat.ReadUntilAlbum"
+            fourthBlock.append(ContextMenuItem(localizedString(key), handler: { [weak chatInteraction] in
+                guard let chatInteraction, chatInteraction.chatLocation == location else { return }
+                chatInteraction.readUntilMessage?(target)
+            }, itemImage: MenuAnimation.menu_read.value))
+        }
         
         
         if let peer = peer, peer.isChannel, !peer.isAdmin {

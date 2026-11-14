@@ -16,6 +16,7 @@ CAPTURE_PATCH = ROOT / "scripts/telegram-ios-local-archive-capture.patch"
 ARCHIVE_PATCH = ROOT / "scripts/telegram-ios-macos.patch"
 MAINTENANCE_PATCH = ROOT / "scripts/telegram-ios-local-archive-maintenance.patch"
 NOTIFICATION_PATCH = ROOT / "scripts/telegram-ios-notification-timing.patch"
+READ_THROUGH_PATCH = ROOT / "scripts/telegram-ios-read-through.patch"
 PINNED = {
     POSTBOX / "Postbox.swift": "72585b34e1b31c181fd178f32a6d62fcb4ecb26e",
     POSTBOX / "ValueBoxKey.swift": "021adfaa69b980a4e83a2da644dcb86ba01f54ff",
@@ -97,7 +98,7 @@ def run_preparation_fixture(directory):
     voip = ios / "submodules/TelegramVoip/Package.swift"
     voip.parent.mkdir(parents=True)
     voip.touch()
-    paths = (Path("base.swift"), POSTBOX / "Postbox.swift", SYNC / "StateReplay.swift", CORE / "Account/Account.swift", CORE / "State/AccountStateManager.swift")
+    paths = (Path("base.swift"), POSTBOX / "Postbox.swift", SYNC / "StateReplay.swift", CORE / "Account/Account.swift", CORE / "State/AccountStateManager.swift", POSTBOX / "MessageHistoryReadStateTable.swift")
     for path in paths:
         target = ios / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -110,23 +111,26 @@ def run_preparation_fixture(directory):
     capture = SYNC / "LocalArchiveCapture.swift"
     maintenance = CORE / "Account/LocalArchiveMaintenance.swift"
     notification = CORE / "State/NotificationDeliveryTiming.swift"
-    for path in (archive, capture, maintenance, notification):
+    read_through = CORE / "TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift"
+    for path in (archive, capture, maintenance, notification, read_through):
+        (ios / path).parent.mkdir(parents=True, exist_ok=True)
         (ios / path).write_text("new\n")
-    subprocess.run(["git", "-C", str(ios), "add", "-N", str(archive), str(capture), str(maintenance), str(notification)], check=True)
+    subprocess.run(["git", "-C", str(ios), "add", "-N", str(archive), str(capture), str(maintenance), str(notification), str(read_through)], check=True)
     (scripts / ARCHIVE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[0]), str(paths[1]), str(archive)]))
     (scripts / CAPTURE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[2]), str(capture)]))
     (scripts / MAINTENANCE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[3]), str(maintenance)]))
     (scripts / NOTIFICATION_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[4]), str(notification)]))
+    (scripts / READ_THROUGH_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[5]), str(read_through)]))
     prepare = ["sh", str(scripts / "prepare-telegram-ios.sh")]
     for _ in range(2):
         subprocess.run([*prepare, "--reverse"], check=True)
-    assert not any((ios / path).exists() for path in (archive, capture, maintenance, notification))
+    assert not any((ios / path).exists() for path in (archive, capture, maintenance, notification, read_through))
     assert all((ios / path).read_text() == "before\n" for path in paths)
     subprocess.run(["git", "-C", str(ios), "apply", str(scripts / ARCHIVE_PATCH.name)], check=True)
     subprocess.run(["git", "-C", str(ios), "apply", str(scripts / CAPTURE_PATCH.name)], check=True)
     for _ in range(2):
         subprocess.run(prepare, check=True)
-    assert all((ios / path).exists() for path in (archive, capture, maintenance, notification))
+    assert all((ios / path).exists() for path in (archive, capture, maintenance, notification, read_through))
     assert all((ios / path).read_text() == "after\n" for path in paths)
     subprocess.run([*prepare, "--reverse"], check=True)
     (ios / paths[4]).write_text("conflict\n")

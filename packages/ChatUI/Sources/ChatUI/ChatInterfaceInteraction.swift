@@ -153,6 +153,7 @@ public final class ChatInteraction : InterfaceObserver  {
     private let composerForwardPreparation = ChatForwardSendPreparation()
     private let quickForwardAction = ChatQuickForwardAction()
     let repeatMessageAction = ChatRepeatMessageAction()
+    var readUntilMessage: ((Message) -> Void)?
     let receivedAudioTranscription = ChatReceivedAudioTranscriptionAction()
 
     func quickForward(_ object: ChatHistoryForwardMessagesObject, peerId: PeerId, threadId: Int64?, analyticsContext: AnalyticsContext, action: ChatDeferredSendAction) {
@@ -1893,6 +1894,7 @@ public final class ChatInteraction : InterfaceObserver  {
         self.hashtag = { _ in }
         self.sendMessageMenu = { _ in .single(nil) }
         self.removeAd = { _ in }
+        self.readUntilMessage = nil
         self.canAnimateUpdates = { true }
         self.boostToUnrestrict = { _ in }
         self.executeReplymarkup = { _ in }

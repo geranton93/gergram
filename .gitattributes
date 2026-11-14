@@ -1,0 +1,2 @@
+# Preserve the pinned upstream context embedded in this patch.
+scripts/telegram-ios-read-through.patch whitespace=-blank-at-eol

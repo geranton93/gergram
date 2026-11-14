@@ -2657,6 +2657,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     private let interactiveReadingDisposable: MetaDisposable = MetaDisposable()
     private let interactiveReadReactionsDisposable: MetaDisposable = MetaDisposable()
     private let interactiveReadStateDisposable = MetaDisposable()
+    private let readUntilDisposable = MetaDisposable()
     private var interactiveReadEnabled = false
     private let replyMessageDisposable = MetaDisposable()
     private let deleteChatDisposable: MetaDisposable = MetaDisposable()
@@ -4707,6 +4708,19 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         }
         
         self.readHistoryDisposable.set(readHistory.start())
+
+        chatInteraction.readUntilMessage = { [weak self, weak chatInteraction] selected in
+            guard let self, let chatInteraction, self.chatInteraction === chatInteraction,
+                  self.isReadUntilOwner(chatInteraction),
+                  let peer = ChatReadUntilPolicy.peer(in: chatInteraction.presentation, accountPeerId: context.peerId),
+                  ChatReadUntilPolicy.isEligible(selected, peerId: peer.id, accountPeerId: context.peerId) else { return }
+            let accountPeerId = context.peerId
+            let contentSettings = context.contentSettings
+            let signal = context.engine.messages.applyReadThroughMessageInteractively(messageId: selected.id, groupingKey: selected.groupingKey, isEligible: { peer, _, message in
+                peer.restrictionText(contentSettings) == nil && ChatReadUntilPolicy.isEligible(message, peerId: peer.id, accountPeerId: accountPeerId)
+            })
+            self.readUntilDisposable.set(signal.start())
+        }
         
         
         chatInteraction.updateFrame = { [weak self] frame, transition in
@@ -10774,6 +10788,16 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         return visibleIds
     }
 
+    private func isReadUntilOwner(_ interaction: ChatInteraction) -> Bool {
+        let context = interaction.interactionContext
+        return (context.isCurrent || context.isExternal) && !context.isFrozen
+            && !interaction.isLogInteraction && !interaction.isGlobalSearchMessage
+            && isAnalyticsVisible && navigationController?.controller === self
+            && genericView.window === context.window && context.window.isVisible && context.window.isKeyWindow
+            && !genericView.isHiddenOrHasHiddenAncestor && ChatUIHooks.shared.appIsLockedValue() != true
+            && !hasModals(context.window)
+    }
+
     private func canInteractiveRead() -> Bool {
         guard self.interactiveReadEnabled, !self.genericView.tableView.clipView.isAnimateScrolling else { return false }
         let scroll = genericView.scroll
@@ -12188,6 +12212,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         peerDisposable.dispose()
         updatedChannelParticipants.dispose()
         readHistoryDisposable.dispose()
+        readUntilDisposable.dispose()
         messageActionCallbackDisposable.dispose()
         sentMessageEventsDisposable.dispose()
         proccessingMessageEventsDisposable.dispose()
@@ -12283,6 +12308,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
 
     public override func viewWillDisappear(_ animated: Bool) {
+        readUntilDisposable.set(nil)
         mediaSendConfirmation.cancel()
         inlineGifSend.cancel()
         channelDiscussionNavigationDisposable.set(nil)

@@ -1,0 +1,182 @@
+diff --git a/submodules/Postbox/Sources/Postbox.swift b/submodules/Postbox/Sources/Postbox.swift
+index 72585b3..9ebf14b 100644
+--- a/submodules/Postbox/Sources/Postbox.swift
++++ b/submodules/Postbox/Sources/Postbox.swift
+@@ -322,6 +322,11 @@ public final class Transaction {
+         }
+     }
+     
++    public func applyInteractiveReadThroughIndex(_ messageIndex: MessageIndex) {
++        assert(!self.disposed)
++        self.postbox?.applyInteractiveReadThroughIndex(messageIndex)
++    }
++
+     public func applyMarkUnread(peerId: PeerId, namespace: MessageId.Namespace, value: Bool, interactive: Bool) {
+         assert(!self.disposed)
+         self.postbox?.applyMarkUnread(peerId: peerId, namespace: namespace, value: value, interactive: interactive)
+@@ -2492,6 +2497,10 @@ final class PostboxImpl {
+         self.messageHistoryTable.applyOutgoingReadMaxId(messageId, operationsByPeerId: &self.currentOperationsByPeerId, updatedPeerReadStateOperations: &self.currentUpdatedSynchronizeReadStateOperations)
+     }
+     
++    fileprivate func applyInteractiveReadThroughIndex(_ messageIndex: MessageIndex) {
++        _ = self.messageHistoryTable.applyInteractiveMaxReadIndex(postbox: self, messageIndex: messageIndex, operationsByPeerId: &self.currentOperationsByPeerId, updatedPeerReadStateOperations: &self.currentUpdatedSynchronizeReadStateOperations, exactBoundary: true)
++    }
++
+     fileprivate func applyInteractiveReadMaxIndex(messageIndex: MessageIndex) -> [MessageId] {
+         let peerIds = self.peerIdsForLocation(.peer(peerId: messageIndex.id.peerId, threadId: nil), ignoreRelatedChats: false)
+         switch peerIds {
+diff --git a/submodules/Postbox/Sources/MessageHistoryReadStateTable.swift b/submodules/Postbox/Sources/MessageHistoryReadStateTable.swift
+index c6926cd..11b4763 100644
+--- a/submodules/Postbox/Sources/MessageHistoryReadStateTable.swift
++++ b/submodules/Postbox/Sources/MessageHistoryReadStateTable.swift
+@@ -268,7 +268,7 @@ final class MessageHistoryReadStateTable: Table {
+     /// server's newest message when it last reported the count), it reads every message the count holds: a message
+     /// above `maxKnownId` is counted only when it is stored. That is where marking a whole chat read lands when the
+     /// server's newest message was never stored here (`_internal_readPeerHistoryToTopInteractively`).
+-    func applyIncomingMaxReadId(_ messageId: MessageId, incomingStatsInRange: (MessageId.Namespace, MessageId.Id, MessageId.Id) -> (count: Int, holes: Bool), topMessageId: (MessageId.Id, Bool)?, interactive: Bool = false) -> (CombinedPeerReadState?, Bool) {
++    func applyIncomingMaxReadId(_ messageId: MessageId, incomingStatsInRange: (MessageId.Namespace, MessageId.Id, MessageId.Id) -> (count: Int, holes: Bool), topMessageId: (MessageId.Id, Bool)?, interactive: Bool = false, exactBoundary: Bool = false) -> (CombinedPeerReadState?, Bool) {
+         if let states = self.get(messageId.peerId), let state = states.namespaces[messageId.namespace] {
+             if traceReadStates {
+                 print("[ReadStateTable] applyMaxReadId peerId: \(messageId.peerId), maxReadId: \(messageId) (before: \(states.namespaces))")
+@@ -277,7 +277,12 @@ final class MessageHistoryReadStateTable: Table {
+             switch state {
+                 case let .idBased(maxIncomingReadId, maxOutgoingReadId, maxKnownId, count, markedUnread):
+                     var readsEverything = false
+-                    if let topMessageId = topMessageId {
++                    if exactBoundary {
++                        guard messageId.id > maxIncomingReadId else { return (nil, false) }
++                        if let topMessageId, messageId.id == topMessageId.0 && messageId.id >= maxKnownId {
++                            readsEverything = true
++                        }
++                    } else if let topMessageId {
+                         readsEverything = messageId.id == topMessageId.0 || topMessageId.1 || (interactive && messageId.id > topMessageId.0 && messageId.id >= maxKnownId && messageId.id >= maxIncomingReadId)
+                     }
+                     if maxIncomingReadId < messageId.id || (readsEverything && state.count != 0) || markedUnread {
+@@ -390,12 +395,12 @@ final class MessageHistoryReadStateTable: Table {
+         return (nil, false, [])
+     }
+     
+-    func applyInteractiveMaxReadIndex(postbox: PostboxImpl, messageIndex: MessageIndex, incomingStatsInRange: (MessageId.Namespace, MessageId.Id, MessageId.Id) -> (count: Int, holes: Bool), incomingIndexStatsInRange: (MessageIndex, MessageIndex) -> (count: Int, holes: Bool, readMessageIds: [MessageId]), topMessageId: (MessageId.Id, Bool)?, topMessageIndexByNamespace: (MessageId.Namespace) -> MessageIndex?) -> (combinedState: CombinedPeerReadState?, ApplyInteractiveMaxReadIdResult, readMessageIds: [MessageId]) {
++    func applyInteractiveMaxReadIndex(postbox: PostboxImpl, messageIndex: MessageIndex, incomingStatsInRange: (MessageId.Namespace, MessageId.Id, MessageId.Id) -> (count: Int, holes: Bool), incomingIndexStatsInRange: (MessageIndex, MessageIndex) -> (count: Int, holes: Bool, readMessageIds: [MessageId]), topMessageId: (MessageId.Id, Bool)?, topMessageIndexByNamespace: (MessageId.Namespace) -> MessageIndex?, exactBoundary: Bool = false) -> (combinedState: CombinedPeerReadState?, ApplyInteractiveMaxReadIdResult, readMessageIds: [MessageId]) {
+         if let states = self.get(messageIndex.id.peerId) {
+             if let state = states.namespaces[messageIndex.id.namespace] {
+                 switch state {
+                     case .idBased:
+-                        let (combinedState, holes) = self.applyIncomingMaxReadId(messageIndex.id, incomingStatsInRange: incomingStatsInRange, topMessageId: topMessageId, interactive: true)
++                        let (combinedState, holes) = self.applyIncomingMaxReadId(messageIndex.id, incomingStatsInRange: incomingStatsInRange, topMessageId: topMessageId, interactive: true, exactBoundary: exactBoundary)
+                         
+                         if let combinedState = combinedState {
+                             return (combinedState, .Push(thenSync: holes), [])
+@@ -403,6 +408,7 @@ final class MessageHistoryReadStateTable: Table {
+                         
+                         return (combinedState, holes ? .Push(thenSync: true) : .None, [])
+                     case .indexBased:
++                        guard !exactBoundary else { return (nil, .None, []) }
+                         let topMessageIndex: MessageIndex? = topMessageIndexByNamespace(messageIndex.id.namespace)
+                         let (combinedState, holes, messageIds) = self.applyIncomingMaxReadIndex(messageIndex, topMessageIndex: topMessageIndex, incomingStatsInRange: incomingIndexStatsInRange)
+                         
+@@ -413,6 +419,7 @@ final class MessageHistoryReadStateTable: Table {
+                         return (combinedState, holes ? .Push(thenSync: true) : .None, messageIds)
+                 }
+             } else {
++                guard !exactBoundary else { return (nil, .None, []) }
+                 for (namespace, state) in states.namespaces {
+                     if let topIndex = topMessageIndexByNamespace(namespace), topIndex <= messageIndex {
+                         switch state {
+@@ -438,7 +445,7 @@ final class MessageHistoryReadStateTable: Table {
+                 return (nil, .Push(thenSync: true), [])
+             }
+         } else {
+-            return (nil, .Push(thenSync: true), [])
++            return (nil, exactBoundary ? .None : .Push(thenSync: true), [])
+         }
+     }
+     
+diff --git a/submodules/Postbox/Sources/MessageHistoryTable.swift b/submodules/Postbox/Sources/MessageHistoryTable.swift
+index 17f3fee..3e80b7c 100644
+--- a/submodules/Postbox/Sources/MessageHistoryTable.swift
++++ b/submodules/Postbox/Sources/MessageHistoryTable.swift
+@@ -729,7 +729,7 @@ final class MessageHistoryTable: Table {
+         return messageIds
+     }
+     
+-    func applyInteractiveMaxReadIndex(postbox: PostboxImpl, messageIndex: MessageIndex, operationsByPeerId: inout [PeerId: [MessageHistoryOperation]], updatedPeerReadStateOperations: inout [PeerId: PeerReadStateSynchronizationOperation?]) -> [MessageId] {
++    func applyInteractiveMaxReadIndex(postbox: PostboxImpl, messageIndex: MessageIndex, operationsByPeerId: inout [PeerId: [MessageHistoryOperation]], updatedPeerReadStateOperations: inout [PeerId: PeerReadStateSynchronizationOperation?], exactBoundary: Bool = false) -> [MessageId] {
+         var topMessageId: (MessageId.Id, Bool)?
+         if let index = self.topIndexEntry(peerId: messageIndex.id.peerId, namespace: messageIndex.id.namespace) {
+             if let message = self.getMessage(index) {
+@@ -749,7 +749,7 @@ final class MessageHistoryTable: Table {
+             } else {
+                 return nil
+             }
+-        })
++        }, exactBoundary: exactBoundary)
+         
+         if let combinedState = combinedState {
+             if operationsByPeerId[messageIndex.id.peerId] == nil {
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
+index 0e26cab..99bebf0 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
+@@ -44,6 +44,46 @@ func _internal_applyMaxReadMessageIdInteractively(postbox: Postbox, stateManager
+     }
+ }
+ 
++func _internal_applyReadThroughMessageInteractively(account: Account, messageId: MessageId, groupingKey: Int64?, isEligible: @escaping (Peer, CachedPeerData?, Message) -> Bool) -> Signal<Bool, NoError> {
++    return account.postbox.transaction(userInteractive: true) { transaction -> Bool in
++        guard messageId.namespace == Namespaces.Message.Cloud, messageId.id > 0, messageId.id < Int32.max,
++              messageId.peerId != account.peerId,
++              let peer = transaction.getPeer(messageId.peerId), !peer.isDeleted, !peer.isForumOrMonoForum,
++              peerKeepsReadState(peer),
++              let message = transaction.getMessage(messageId), message.groupingKey == groupingKey,
++              message.threadId == nil, message.effectivelyIncoming(account.peerId) else { return false }
++
++        switch peer {
++        case is TelegramUser, is TelegramChannel:
++            break
++        case let group as TelegramGroup where group.membership == .Member && group.migrationReference == nil:
++            break
++        default:
++            return false
++        }
++
++        let cachedData = transaction.getPeerCachedData(peerId: peer.id)
++        if let channel = cachedData as? CachedChannelData, channel.isNotAccessible || channel.migrationReference != nil {
++            return false
++        }
++        guard let readState = transaction.getCombinedPeerReadState(peer.id),
++              let state = readState.states.first(where: { $0.0 == messageId.namespace })?.1,
++              case let .idBased(maxIncomingReadId, _, _, _, _) = state,
++              messageId.id > maxIncomingReadId,
++              !readState.states.contains(where: { $0.0 != messageId.namespace && $0.1.count != 0 }),
++              isEligible(peer, cachedData, message) else { return false }
++
++        if let groupingKey {
++            guard let album = transaction.getMessageGroup(messageId),
++                  album.contains(where: { $0.id == messageId }),
++                  album.allSatisfy({ $0.groupingKey == groupingKey && $0.id.peerId == peer.id && $0.id.namespace == messageId.namespace && $0.id.id <= messageId.id }) else { return false }
++        }
++        transaction.applyInteractiveReadThroughIndex(message.index)
++        account.stateManager.notifyAppliedIncomingReadMessages([messageId])
++        return true
++    }
++}
++
+ func _internal_applyMaxReadIndexInteractively(transaction: Transaction, stateManager: AccountStateManager, index: MessageIndex) {
+     // A channel the account is not a member of has no read state on the server
+     // (NonMemberChannelReadState.swift): nothing moves locally and no push is queued.
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+index 21020ed..10bc02b 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+@@ -179,6 +179,10 @@ public extension TelegramEngine {
+             return _internal_applyMaxReadMessageIdInteractively(postbox: self.account.postbox, stateManager: self.account.stateManager, messageId: messageId)
+         }
+ 
++        public func applyReadThroughMessageInteractively(messageId: MessageId, groupingKey: Int64?, isEligible: @escaping (Peer, CachedPeerData?, Message) -> Bool) -> Signal<Bool, NoError> {
++            return _internal_applyReadThroughMessageInteractively(account: self.account, messageId: messageId, groupingKey: groupingKey, isEligible: isEligible)
++        }
++
+         public func sendScheduledMessageNowInteractively(messageId: MessageId) -> Signal<Never, NoError> {
+             return _internal_sendScheduledMessageNowInteractively(postbox: self.account.postbox, messageId: messageId)
+         }

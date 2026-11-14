@@ -322,7 +322,7 @@ public enum UIChatListEntry : Identifiable, Comparable {
     }
     
     case chat(EngineChatList.Item, [PeerListState.InputActivities.Activity], UIChatAdditionalItem?, filter: ChatListFilter, generalStatus: ItemHideStatus?, selectedForum: PeerId?, appearMode: PeerListState.AppearMode, hideContent: Bool, folders: FilterData?, communityCategories: [PeerId: ChatListFilterPeerCategories], canPreviewChat: Bool, hidesStories: Bool, filtersZalgoPreview: Bool)
-    case group(Int, EngineChatList.GroupItem, Bool, ItemHideStatus, PeerListState.AppearMode, Bool, EngineStorySubscriptions?)
+    case group(Int, EngineChatList.GroupItem, Bool, ItemHideStatus, PeerListState.AppearMode, Bool, EngineStorySubscriptions?, filtersZalgoPreview: Bool)
     case reveal([ChatListFilter], ChatListFilter, ChatListFilterBadges)
     case empty(ChatListFilter, PeerListMode, SplitViewState, PeerEquatable?, hideContent: Bool)
     case systemDeprecated(ChatListFilter)
@@ -343,8 +343,8 @@ public enum UIChatListEntry : Identifiable, Comparable {
             } else {
                 return false
             }
-        case let .group(index, item, animated, isHidden, appearMode, hideContent, storyState):
-            if case .group(index, item, animated, isHidden, appearMode, hideContent, storyState) = rhs {
+        case let .group(index, item, animated, isHidden, appearMode, hideContent, storyState, filtersZalgoPreview):
+            if case .group(index, item, animated, isHidden, appearMode, hideContent, storyState, filtersZalgoPreview) = rhs {
                 return true
             } else {
                 return false
@@ -457,7 +457,7 @@ public enum UIChatListEntry : Identifiable, Comparable {
             return ChatListIndex(pinningIndex: 0, messageIndex: MessageIndex.absoluteUpperBound().globalPredecessor())
         case .space:
             return ChatListIndex(pinningIndex: 0, messageIndex: MessageIndex.absoluteUpperBound())
-        case let .group(id, _, _, _, _, _, _):
+        case let .group(id, _, _, _, _, _, _, _):
             var index = MessageIndex.absoluteUpperBound().globalPredecessor().globalPredecessor()
             for _ in 0 ..< id {
                 index = index.peerLocalPredecessor()
@@ -502,7 +502,7 @@ public enum UIChatListEntry : Identifiable, Comparable {
             } else {
                 return .chatId(entry.id, entry.renderedPeer.peerId, ChatListUIHooks.shared.chatListFilterId(filterId))
             }
-        case let .group(_, group, _, _, _, _, _):
+        case let .group(_, group, _, _, _, _, _, _):
             return .groupId(group.id)
         case .reveal:
             return .reveal
@@ -564,7 +564,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<UIChatListEntry>]?,
                 
                 return ChatListRowItem(initialSize, context: arguments.context, stableId: entry.entry.stableId, mode: mode, messages: messages, index: entry.entry.index, readState: item.readCounters, draft: item.draft, pinnedType: pinnedType, renderedPeer: item.renderedPeer, peerPresence: item.presence, forumTopicData: item.forumTopicData, forumTopicItems: item.topForumTopicItems, activities: activities, associatedGroupId: groupId, isMuted: item.isMuted, hasFailed: item.hasFailed, hasUnreadMentions: item.hasUnseenMentions, hasUnreadReactions: item.hasUnseenReactions, hasUnreadVotes: item.hasUnseenPollVotes, filter: filter, hideStatus: hideStatus, appearMode: appearMode, hideContent: hideContent, getHideProgress: arguments.getHideProgress, selectedForum: selectedForum, autoremoveTimeout: item.autoremoveTimeout, story: hidesStories ? nil : item.storyStats, openStory: arguments.openStory, isContact: item.isContact, displayAsTopics: item.displayAsTopicList, folders: filterData, communityCategories: communityCategories, canPreviewChat: previewChat, filtersZalgoPreview: filtersZalgoPreview)
 
-            case let .group(_, item, animated, hideStatus, appearMode, hideContent, storyState):
+            case let .group(_, item, animated, hideStatus, appearMode, hideContent, storyState, filtersZalgoPreview):
                 var messages:[Message] = []
                 if let message = item.topMessage {
                     messages.append(message._asMessage())
@@ -1069,11 +1069,11 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
                 if !update.list.hasLater, state.appear != .short {
                     let hideStatus: ItemHideStatus = hiddenItems.archive
                     for (i, group) in update.list.groupItems.reversed().enumerated() {
-                        mapped.append(.group(i, group, animateGroupNextTransition.swap(nil) == group.id, hideStatus, state.controllerAppear, state.appear == .short, storyState))
+                        mapped.append(.group(i, group, animateGroupNextTransition.swap(nil) == group.id, hideStatus, state.controllerAppear, state.appear == .short, storyState, filtersZalgoPreview: filtersZalgoPreview && group.items.count == 1))
                     }
                     if state.mode == .plain, state.filterData.filter == .allChats, !update.list.hasLater {
                         if update.list.groupItems.isEmpty, let storyState = storyState, !storyState.items.isEmpty {
-                            mapped.append(.group(0, .init(id: .archive, topMessage: nil, items: [], unreadCount: 0), animateGroupNextTransition.swap(nil) == .archive, hideStatus, state.controllerAppear, state.appear == .short, storyState))
+                            mapped.append(.group(0, .init(id: .archive, topMessage: nil, items: [], unreadCount: 0), animateGroupNextTransition.swap(nil) == .archive, hideStatus, state.controllerAppear, state.appear == .short, storyState, filtersZalgoPreview: false))
                         }
                     }
                 }

@@ -64,4 +64,25 @@ final class ChatZalgoTextFilterTests: XCTestCase {
         XCTAssertEqual(original.string, prefix + text)
         XCTAssertNil(ChatZalgoTextFilter.presentation(for: original, in: NSRange(location: Int.max, length: 1)))
     }
+
+    func testArchiveBodyEntitiesNeverResolveToDuplicatedPeerTitleText() {
+        let caption = "👩 Date"
+        let prefix = caption + "\r"
+        let text = (prefix + "📎 " + caption) as NSString
+        let offset = ChatListTextBodyOffset(value: prefix.utf16.count)
+        let bodyRange = offset.entityRange(in: text, matching: caption)
+        XCTAssertEqual(bodyRange.location, (prefix + "📎 ").utf16.count)
+        XCTAssertEqual(text.substring(with: bodyRange), caption)
+        XCTAssertEqual(offset.entityRange(in: text, matching: prefix).location, NSNotFound)
+    }
+
+    func testArchiveBodyEntitiesResolveToTheActualCaptionAfterAMatchingMediaIcon() {
+        let caption = "📎"
+        let prefix = "📎 Club\r📎 "
+        let text = (prefix + caption) as NSString
+        let offset = ChatListTextBodyOffset(value: "📎 Club\r".utf16.count)
+        let range = offset.entityRange(in: text, matching: caption)
+        XCTAssertEqual(range, NSRange(location: prefix.utf16.count, length: caption.utf16.count))
+        XCTAssertEqual(offset.entityRange(in: text, matching: "📎 ").location, NSNotFound)
+    }
 }

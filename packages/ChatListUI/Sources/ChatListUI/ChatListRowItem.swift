@@ -499,7 +499,7 @@ public class ChatListRowItem: TableRowItem {
 
     public let isArchiveItem: Bool
     
-    public init(_ initialSize:NSSize, context: any AccountContextProtocol, stableId: UIChatListEntryId, pinnedType: ChatListPinnedType, groupId: EngineChatList.Group, groupItems: [EngineChatList.GroupItem.Item], messages: [Message], unreadCount: Int, activities: [PeerListState.InputActivities.Activity] = [], animateGroup: Bool = false, hideStatus: ItemHideStatus = .normal, hasFailed: Bool = false, filter: ChatListFilter = .allChats, appearMode: PeerListState.AppearMode = .normal, hideContent: Bool = false, getHideProgress:(()->CGFloat?)? = nil, openStory: @escaping(StoryInitialIndex?, Bool, Bool)->Void = { _, _, _ in }, storyState: EngineStorySubscriptions? = nil, isContact: Bool = false) {
+    public init(_ initialSize:NSSize, context: any AccountContextProtocol, stableId: UIChatListEntryId, pinnedType: ChatListPinnedType, groupId: EngineChatList.Group, groupItems: [EngineChatList.GroupItem.Item], messages: [Message], unreadCount: Int, activities: [PeerListState.InputActivities.Activity] = [], animateGroup: Bool = false, hideStatus: ItemHideStatus = .normal, hasFailed: Bool = false, filter: ChatListFilter = .allChats, appearMode: PeerListState.AppearMode = .normal, hideContent: Bool = false, getHideProgress:(()->CGFloat?)? = nil, openStory: @escaping(StoryInitialIndex?, Bool, Bool)->Void = { _, _, _ in }, storyState: EngineStorySubscriptions? = nil, isContact: Bool = false, filtersZalgoPreview: Bool = false) {
         let relativeDateReferenceTimestamp = Date().timeIntervalSince1970
         self.groupId = groupId
         self.peer = nil
@@ -610,7 +610,9 @@ public class ChatListRowItem: TableRowItem {
         
         var messageText: NSAttributedString
         if groupItems.count == 1 {
-            messageText = chatListText(account: context.account, for: message, messagesCount: 1, folder: true)
+            let recordBodyOffset: ((Int) -> Void)? = filtersZalgoPreview && ChatListZalgoPreview.isEligible(message) ? { bodyOffset = $0 } : nil
+            messageText = chatListText(account: context.account, for: message, messagesCount: 1, folder: true, messageBodyOffset: recordBodyOffset)
+        var bodyOffset: Int?
         } else {
             let textString = NSMutableAttributedString(string: "")
             var isFirst = true
@@ -636,9 +638,12 @@ public class ChatListRowItem: TableRowItem {
             messageText = .initialize(string: strings().chatListArchiveStoryCountOther(storyState.items.count), color: theme.chatList.grayTextColor, font: .normal(.text))
         }
         
-        if let messageText = messageText.trimmed.mutableCopy() as? NSMutableAttributedString, !messageText.string
-            .isEmpty {
-            self.messageLayout = .init(messageText, maximumNumberOfLines: 2)
+        let preview = ChatListZalgoPreview.trimmedArchivePreview(messageText, bodyOffset: bodyOffset)
+        if !preview.text.string.isEmpty {
+            if let bodyOffset = preview.bodyOffset {
+                self.messageDisplayTransform = ChatListZalgoPreview.transform(enabled: filtersZalgoPreview, message: message, hasDraft: false, prefixLength: bodyOffset)
+            }
+            self.messageLayout = .init(preview.text, maximumNumberOfLines: 2, displayTextTransform: messageDisplayTransform)
             self.messageSelectedMaxLines = 2
             self.messageSelectedCutout = nil
         }

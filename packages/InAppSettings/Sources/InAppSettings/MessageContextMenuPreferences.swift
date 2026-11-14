@@ -14,12 +14,13 @@ public struct MessageContextMenuPreferences {
         case senderSearch
         case messageDetails
         case addFilter
+        case repeatMessage
 
         fileprivate var defaultVisibility: Visibility {
             switch self {
             case .reactionsPanel, .viewsPanel, .addFilter:
                 return .shown
-            case .hideMessage:
+            case .hideMessage, .repeatMessage:
                 return .hidden
             case .senderSearch, .messageDetails:
                 return .extended

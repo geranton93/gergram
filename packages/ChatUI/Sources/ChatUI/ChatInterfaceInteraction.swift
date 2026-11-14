@@ -152,6 +152,7 @@ public final class ChatInteraction : InterfaceObserver  {
     private let forwardSelection = ChatForwardSelection()
     private let composerForwardPreparation = ChatForwardSendPreparation()
     private let quickForwardAction = ChatQuickForwardAction()
+    let repeatMessageAction = ChatRepeatMessageAction()
     let receivedAudioTranscription = ChatReceivedAudioTranscriptionAction()
 
     func quickForward(_ object: ChatHistoryForwardMessagesObject, peerId: PeerId, threadId: Int64?, analyticsContext: AnalyticsContext, action: ChatDeferredSendAction) {
@@ -163,6 +164,7 @@ public final class ChatInteraction : InterfaceObserver  {
     func invalidateDeferredSendActions() {
         deferredSendRevision = UUID()
         composerForwardPreparation.reset()
+        repeatMessageAction.cancel()
     }
 
     public func captureDeferredSendAction() -> ChatDeferredSendAction {

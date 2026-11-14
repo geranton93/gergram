@@ -1591,6 +1591,12 @@ public func chatMenuItems(for message: Message, entry: ChatHistoryEntry?, textLa
            let search = ChatSenderMessageSearchAction.menuItem(for: data.message, interaction: chatInteraction) {
             fourthBlock.append(search)
         }
+        if case .general = source, !isService, isNotFailed, entry?.isFakeMessage == false,
+           data.chatLocation == chatInteraction.chatLocation,
+           menuPreferences.isVisible(.repeatMessage, extendedMenu: extendedMenu),
+           let repeatMessage = chatInteraction.repeatMessageAction.menuItem(for: data.message, interaction: chatInteraction) {
+            fourthBlock.append(repeatMessage)
+        }
         
         
         if let peer = peer, peer.isChannel, !peer.isAdmin {

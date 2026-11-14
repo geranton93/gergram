@@ -16,6 +16,7 @@ final class ChatMessageContextMenuTests: XCTestCase {
         XCTAssertEqual(preferences.visibility(for: .senderSearch), .extended)
         XCTAssertEqual(preferences.visibility(for: .messageDetails), .extended)
         XCTAssertEqual(preferences.visibility(for: .addFilter), .shown)
+        XCTAssertEqual(preferences.visibility(for: .repeatMessage), .hidden)
     }
 
     func testSelectionsPersistIndependentlyAndUnknownValueUsesDefault() throws {

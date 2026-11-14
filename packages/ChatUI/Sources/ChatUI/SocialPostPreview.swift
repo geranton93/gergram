@@ -1,6 +1,11 @@
 import Foundation
 
 enum SocialPostPreview {
+    static func hasUsableMediaSize(_ size: CGSize?) -> Bool {
+        guard let size else { return false }
+        return size.width.isFinite && size.height.isFinite && size.width >= 200 && size.height > 0
+    }
+
     static func prefersLargeMedia(for url: String) -> Bool {
         guard url.utf8.count <= 4096,
               url.utf8.allSatisfy({ $0 > 32 && $0 != 127 }),

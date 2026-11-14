@@ -157,11 +157,24 @@ public class ChatInputAccessory: View {
                     }
                 }
             }
-            let toggleLinkSize:(Bool)->Void = { [weak self] big in
-                self?.chatInteraction.update {
-                    $0.updatedInterfaceState {
-                        $0.withUpdatedLargeMedia(big)
-                    }
+            let previewURL = urlPreview.0
+            let webpageID = urlPreview.1.webpageId
+            let editMessageID = state.interfaceState.editState?.message.id
+            let peerID = state.peer?.id
+            let currentLinkSize: (ChatPresentationInterfaceState) -> Bool? = { current in
+                guard let preview = current.urlPreview, preview.0 == previewURL,
+                      preview.1.webpageId == webpageID,
+                      let peer = current.peer, peer.id == peerID, !peer.webUrlRestricted,
+                      current.interfaceState.suggestPost == nil,
+                      current.interfaceState.editState?.message.id == editMessageID,
+                      current.interfaceState.composeDisableUrlPreview != preview.0,
+                      case let .Loaded(content) = preview.1.content else { return nil }
+                return SocialPostPreview.selectedMediaSize(for: content, explicitSize: current.interfaceState.largeMedia)
+            }
+            let toggleLinkSize: (Bool) -> Void = { [weak self] big in
+                self?.chatInteraction.update { current in
+                    guard currentLinkSize(current) != nil else { return current }
+                    return current.updatedInterfaceState { $0.withUpdatedLargeMedia(big) }
                 }
             }
 
@@ -175,25 +188,16 @@ public class ChatInputAccessory: View {
                     toggleLinkPosition(true)
                 }, itemImage: !state.interfaceState.linkBelowMessage ? nil : MenuAnimation.menu_check_selected.value))
 
-                if let presentation = self?.chatInteraction.presentation, let urlPreview = presentation.urlPreview {
-                    switch urlPreview.1.content {
-                    case let .Loaded(content):
-                        if let defaultValue = content.isMediaLargeByDefault {
-                            menu.addItem(ContextSeparatorItem())
+                if let presentation = self?.chatInteraction.presentation, let value = currentLinkSize(presentation) {
+                    menu.addItem(ContextSeparatorItem())
 
-                            let value = state.interfaceState.largeMedia ?? defaultValue
+                    menu.addItem(ContextMenuItem(strings().chatInputEditLinkLargerMedia, handler: {
+                        toggleLinkSize(true)
+                    }, itemImage: value ? MenuAnimation.menu_check_selected.value : nil))
 
-                            menu.addItem(ContextMenuItem(strings().chatInputEditLinkLargerMedia, handler: {
-                                toggleLinkSize(true)
-                            }, itemImage: value ? MenuAnimation.menu_check_selected.value : nil))
-
-                            menu.addItem(ContextMenuItem(strings().chatInputEditLinkSmallerMedia, handler: {
-                                toggleLinkSize(false)
-                            }, itemImage: !value ? MenuAnimation.menu_check_selected.value : nil))
-                        }
-                    default:
-                        break
-                    }
+                    menu.addItem(ContextMenuItem(strings().chatInputEditLinkSmallerMedia, handler: {
+                        toggleLinkSize(false)
+                    }, itemImage: !value ? MenuAnimation.menu_check_selected.value : nil))
                 }
 
                 menu.addItem(ContextSeparatorItem())

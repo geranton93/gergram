@@ -3303,6 +3303,12 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         chatInteraction.canAnimateUpdates = { [weak self] in
             return self?.genericView.window != nil
         }
+        chatInteraction.canInspectMessageDetails = { [weak self, weak chatInteraction] in
+            guard let self, let chatInteraction, self.chatInteraction === chatInteraction else { return false }
+            return self.isAnalyticsVisible && self.navigationController?.controller === self
+                && self.genericView.window === self.context.window && !self.genericView.isHiddenOrHasHiddenAncestor
+                && ChatUIHooks.shared.appIsLockedValue() != true
+        }
 
         self.ableToNextController = { [weak self] controller, f in
             let proceed = { f(controller, true) }

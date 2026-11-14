@@ -1,7 +1,7 @@
 import Foundation
 
 struct ChatMessageDetails {
-    enum Field: String, CaseIterable {
+    enum Field: String {
         case id = "Id"
         case sent = "Sent"
         case edited = "Edited"
@@ -13,6 +13,9 @@ struct ChatMessageDetails {
         case fileName = "FileName"
         case resolution = "Resolution"
         case mediaDataCenter = "MediaDataCenter"
+
+        static let messageFields: [Self] = [.id, .sent, .edited, .forwarded, .views, .forwards]
+        static let attachmentFields: [Self] = [.fileSize, .mimeType, .fileName, .resolution, .mediaDataCenter]
 
         func menuValue(_ value: String) -> String {
             let limit = self == .fileName ? 40 : 64
@@ -33,6 +36,25 @@ struct ChatMessageDetails {
             guard let dimensions, dimensions.width > 0, dimensions.height > 0 else { return 0 }
             return Int64(dimensions.width) * Int64(dimensions.height)
         }
+
+        func value(for field: Field) -> String? {
+            switch field {
+            case .fileSize:
+                guard let fileSize, fileSize > 0 else { return nil }
+                return ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
+            case .mimeType:
+                return ChatMessageDetails.visibleMetadata(mimeType)
+            case .fileName:
+                return ChatMessageDetails.visibleMetadata(fileName)
+            case .resolution:
+                guard let dimensions, dimensions.width > 0, dimensions.height > 0 else { return nil }
+                return "\(dimensions.width) × \(dimensions.height)"
+            case .mediaDataCenter:
+                return ChatMessageDetails.positiveCount(dataCenter)
+            default:
+                return nil
+            }
+        }
     }
 
     let id: Int32
@@ -41,7 +63,6 @@ struct ChatMessageDetails {
     let forwardedAt: Int32?
     let views: Int?
     let forwards: Int?
-    let media: MediaDetails?
 
     func value(for field: Field, dateFormatter: DateFormatter) -> String? {
         switch field {
@@ -57,18 +78,8 @@ struct ChatMessageDetails {
             return Self.positiveCount(views)
         case .forwards:
             return Self.positiveCount(forwards)
-        case .fileSize:
-            guard let size = media?.fileSize, size > 0 else { return nil }
-            return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
-        case .mimeType:
-            return Self.visibleMetadata(media?.mimeType)
-        case .fileName:
-            return Self.visibleMetadata(media?.fileName)
-        case .resolution:
-            guard let dimensions = media?.dimensions, dimensions.width > 0, dimensions.height > 0 else { return nil }
-            return "\(dimensions.width) × \(dimensions.height)"
-        case .mediaDataCenter:
-            return Self.positiveCount(media?.dataCenter)
+        default:
+            return nil
         }
     }
 

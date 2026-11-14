@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import ChatModeTypes
 import LocalAnimations
 import Localization
@@ -10,6 +10,21 @@ import TelegramUtils
 import TGUIKit
 
 enum ChatMessageDetailsAction {
+    enum AttachmentID: Hashable {
+        case file(MediaId)
+        case image(MediaId)
+    }
+
+    struct AttachmentDetails {
+        let selection: AttachmentSelection
+        let details: ChatMessageDetails.MediaDetails
+    }
+
+    struct AttachmentSelection: Equatable {
+        let id: AttachmentID
+        let resourceId: MediaResourceId
+    }
+
     static func menuItem(for message: Message, cachedData: CachedPeerData?, interaction: ChatInteraction) -> ContextMenuItem? {
         guard supportsChat(interaction), let peer = message.peers[message.id.peerId],
               supportsMessage(message, peer: peer, cachedData: cachedData, interaction: interaction) else {
@@ -19,17 +34,41 @@ enum ChatMessageDetailsAction {
         let id = message.id
         let location = interaction.chatLocation
         let mode = interaction.mode
-        let details = Self.details(for: message, interaction: interaction)
+        let details = Self.details(for: message)
         let formatter = DateSelectorUtil.chatFullDateFormatter
         let menu = ContextMenu()
-        for field in ChatMessageDetails.Field.allCases {
-            guard let value = details.value(for: field, dateFormatter: formatter) else { continue }
+
+        func addField(_ field: ChatMessageDetails.Field, value: String?, to targetMenu: ContextMenu, attachment: AttachmentSelection? = nil) {
+            guard let value else { return }
             let label = localizedString("Gergram.Chat.MessageDetails\(field.rawValue)")
             let title = String(format: localizedString("Gergram.Chat.MessageDetailsField"), label, field.menuValue(value))
-            menu.addItem(ContextMenuItem(title, handler: { [weak interaction] in
+            let item = ContextMenuItem(title, handler: { [weak interaction] in
                 guard let interaction, interaction.chatLocation == location, interaction.mode == mode else { return }
-                copy(field, from: id, interaction: interaction)
-            }, itemImage: MenuAnimation.menu_copy.value, removeTail: false))
+                copy(field, from: id, attachment: attachment, interaction: interaction)
+            }, itemImage: MenuAnimation.menu_copy.value, removeTail: false)
+            setLiteralTitle(title, for: item, in: targetMenu)
+            targetMenu.addItem(item)
+        }
+
+        for field in ChatMessageDetails.Field.messageFields {
+            addField(field, value: details.value(for: field, dateFormatter: formatter), to: menu)
+        }
+        let attachments = attachmentDetails(for: message.media, isConcealed: isConcealed(message, interaction: interaction))
+        for (index, attachment) in attachments.enumerated() {
+            let fieldsMenu = attachments.count == 1 ? menu : ContextMenu()
+            for field in ChatMessageDetails.Field.attachmentFields {
+                addField(field, value: attachment.details.value(for: field), to: fieldsMenu, attachment: attachment.selection)
+            }
+            if attachments.count > 1 {
+                let label = String(format: localizedString("Gergram.Chat.MessageDetailsAttachment"), String(index + 1))
+                let title = attachment.details.value(for: .fileName).map {
+                    String(format: localizedString("Gergram.Chat.MessageDetailsField"), label, ChatMessageDetails.Field.fileName.menuValue($0))
+                } ?? label
+                let attachmentItem = ContextMenuItem(title, itemImage: MenuAnimation.menu_file.value, removeTail: false)
+                setLiteralTitle(title, for: attachmentItem, in: menu)
+                attachmentItem.submenu = fieldsMenu
+                menu.addItem(attachmentItem)
+            }
         }
 
         let item = ContextMenuItem(localizedString("Gergram.Chat.MessageDetails"), itemImage: MenuAnimation.menu_show_info.value)
@@ -37,11 +76,18 @@ enum ChatMessageDetailsAction {
         return item
     }
 
+    private static func setLiteralTitle(_ title: String, for item: ContextMenuItem, in menu: ContextMenu) {
+        item.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.medium(.text),
+            .foregroundColor: menu.presentation.primaryColor(item)
+        ])
+    }
+
     private static func supportsChat(_ interaction: ChatInteraction) -> Bool {
         let context = interaction.interactionContext
-        guard !interaction.isLogInteraction, !context.isFrozen, (context.isCurrent || context.isExternal),
+        guard !interaction.isLogInteraction, !interaction.isGlobalSearchMessage, !context.isFrozen, (context.isCurrent || context.isExternal),
               context.window.isVisible, interaction.presentation.reportMode == nil, interaction.presentation.state != .selecting,
-              !interaction.presentation.isNotAccessible, interaction.canAnimateUpdates() else {
+              !interaction.presentation.isNotAccessible, interaction.canInspectMessageDetails() else {
             return false
         }
         switch interaction.mode {
@@ -58,6 +104,7 @@ enum ChatMessageDetailsAction {
         guard peerId == interaction.peerId, peerId.namespace != Namespaces.Peer.SecretChat,
               message.id.namespace == Namespaces.Message.Cloud, message.id.id > 0,
               peerId.namespace != Namespaces.Peer.CloudUser || peerId == context.peerId || cachedData is CachedUserData,
+              peer.restrictionText(context.contentSettings) == nil,
               !peer.isCopyProtectionEnabled, !peer.isCopyProtected(cachedData: cachedData),
               !message.isCopyProtected(cachedData: cachedData), !message.containsSecretMedia,
               message.autoclearTimeout == nil, message.autoremoveAttribute == nil,
@@ -69,7 +116,7 @@ enum ChatMessageDetailsAction {
         return canForwardMessage(message, chatInteraction: interaction)
     }
 
-    private static func details(for message: Message, interaction: ChatInteraction) -> ChatMessageDetails {
+    private static func details(for message: Message) -> ChatMessageDetails {
         let forwarded: Int32? = message.forwardInfo.flatMap { info in
             info.psaType?.isEmpty == false || message.media.contains(where: { $0 is TelegramMediaStory }) ? nil : info.date
         }
@@ -79,60 +126,80 @@ enum ChatMessageDetailsAction {
             editedAt: message.editedAttribute?.date,
             forwardedAt: forwarded,
             views: message.attributes.lazy.compactMap { ($0 as? ViewCountMessageAttribute)?.count }.first,
-            forwards: message.attributes.lazy.compactMap { ($0 as? ForwardCountMessageAttribute)?.count }.first,
-            media: mediaDetails(
-                for: message.media,
-                isConcealed: message.isMediaSpoilered || message.isSensitiveContent(
-                    platform: "ios", contentSettings: interaction.interactionContext.contentSettings
-                )
-            )
+            forwards: message.attributes.lazy.compactMap { ($0 as? ForwardCountMessageAttribute)?.count }.first
         )
     }
 
-    static func mediaDetails(for attachments: [Media], isConcealed: Bool) -> ChatMessageDetails.MediaDetails? {
-        guard !isConcealed else { return nil }
+    private static func isConcealed(_ message: Message, interaction: ChatInteraction) -> Bool {
+        message.isMediaSpoilered || message.isSensitiveContent(platform: "ios", contentSettings: interaction.interactionContext.contentSettings)
+    }
 
+    static func attachmentDetails(for attachments: [Media], isConcealed: Bool) -> [AttachmentDetails] {
+        guard !isConcealed else { return [] }
+        var ids: Set<AttachmentID> = []
+        var ambiguousIds: Set<AttachmentID> = []
+        var result: [AttachmentDetails] = []
         for media in attachments {
-            if let file = media as? TelegramMediaFile, let resource = file.resource as? CloudDocumentMediaResource {
-                return .init(
-                    fileSize: file.size.flatMap { $0 > 0 ? $0 : nil } ?? resource.size,
-                    mimeType: file.mimeType,
-                    fileName: file.fileName,
-                    dimensions: file.dimensions.map { ($0.width, $0.height) },
-                    dataCenter: resource.datacenterId
-                )
+            let id: AttachmentID
+            if let file = media as? TelegramMediaFile {
+                id = .file(file.fileId)
+            } else if let image = media as? TelegramMediaImage {
+                id = .image(image.imageId)
+            } else {
+                continue
             }
-            if let image = media as? TelegramMediaImage {
-                let videos = image.videoRepresentations.compactMap {
-                    imageDetails(resource: $0.resource, dimensions: $0.dimensions, mimeType: "video/mp4")
-                }
-                if let video = videos.max(by: { $0.pixelArea < $1.pixelArea }) {
-                    return video
-                }
-                let photos = image.representations.compactMap {
-                    imageDetails(resource: $0.resource, dimensions: $0.dimensions, mimeType: "image/jpeg")
-                }
-                if let photo = photos.max(by: { $0.pixelArea < $1.pixelArea }) {
-                    return photo
-                }
+            guard ids.insert(id).inserted else {
+                ambiguousIds.insert(id)
+                continue
             }
+            if let (resourceId, details) = mediaDetails(for: media), ChatMessageDetails.Field.attachmentFields.contains(where: { details.value(for: $0) != nil }) {
+                result.append(.init(selection: .init(id: id, resourceId: resourceId), details: details))
+            }
+        }
+
+        return result.filter { !ambiguousIds.contains($0.selection.id) }
+    }
+
+    private static func mediaDetails(for media: Media) -> (MediaResourceId, ChatMessageDetails.MediaDetails)? {
+        if let file = media as? TelegramMediaFile, let resource = file.resource as? CloudDocumentMediaResource {
+            return (resource.id, .init(
+                fileSize: file.size.flatMap { $0 > 0 ? $0 : nil } ?? resource.size,
+                mimeType: file.mimeType,
+                fileName: file.fileName,
+                dimensions: file.dimensions.map { ($0.width, $0.height) },
+                dataCenter: resource.datacenterId
+            ))
+        }
+        if let image = media as? TelegramMediaImage {
+            if let video = image.video, let details = mediaDetails(for: video) {
+                return details
+            }
+            let videos = image.videoRepresentations.lazy.compactMap {
+                imageDetails(resource: $0.resource, dimensions: $0.dimensions, mimeType: "video/mp4")
+            }
+            if let video = videos.max(by: { $0.1.pixelArea < $1.1.pixelArea }) {
+                return video
+            }
+            return image.representations.lazy.compactMap {
+                imageDetails(resource: $0.resource, dimensions: $0.dimensions, mimeType: "image/jpeg")
+            }.max(by: { $0.1.pixelArea < $1.1.pixelArea })
         }
         return nil
     }
 
-    private static func imageDetails(resource: TelegramMediaResource, dimensions: PixelDimensions, mimeType: String) -> ChatMessageDetails.MediaDetails? {
+    private static func imageDetails(resource: TelegramMediaResource, dimensions: PixelDimensions, mimeType: String) -> (MediaResourceId, ChatMessageDetails.MediaDetails)? {
         let dataCenter = (resource as? CloudPhotoSizeMediaResource)?.datacenterId ?? (resource as? CloudFileMediaResource)?.datacenterId
         guard let dataCenter, dimensions.width > 0, dimensions.height > 0 else { return nil }
-        return .init(
+        return (resource.id, .init(
             fileSize: resource.size,
             mimeType: mimeType,
             fileName: nil,
             dimensions: (dimensions.width, dimensions.height),
             dataCenter: dataCenter
-        )
+        ))
     }
 
-    private static func copy(_ field: ChatMessageDetails.Field, from id: MessageId, interaction: ChatInteraction) {
+    private static func copy(_ field: ChatMessageDetails.Field, from id: MessageId, attachment: AttachmentSelection?, interaction: ChatInteraction) {
         guard supportsChat(interaction), interaction.peerId == id.peerId else { return }
         let location = interaction.chatLocation
         let mode = interaction.mode
@@ -146,12 +213,22 @@ enum ChatMessageDetailsAction {
             guard let interaction, supportsChat(interaction),
                   interaction.chatLocation == location, interaction.mode == mode,
                   let (message, peer, cachedData) = result,
-                  supportsMessage(message, peer: peer, cachedData: cachedData, interaction: interaction),
-                  let value = details(for: message, interaction: interaction).value(for: field, dateFormatter: DateSelectorUtil.chatFullDateFormatter) else {
+                  supportsMessage(message, peer: peer, cachedData: cachedData, interaction: interaction) else {
                 return
             }
+            let value: String?
+            if let attachment {
+                value = attachmentValue(for: field, selection: attachment, in: message.media, isConcealed: isConcealed(message, interaction: interaction))
+            } else {
+                value = details(for: message).value(for: field, dateFormatter: DateSelectorUtil.chatFullDateFormatter)
+            }
+            guard let value else { return }
             copyToClipboard(value)
             showModalText(for: context.window, text: strings().contextAlertCopied)
         })
+    }
+
+    static func attachmentValue(for field: ChatMessageDetails.Field, selection: AttachmentSelection, in attachments: [Media], isConcealed: Bool) -> String? {
+        attachmentDetails(for: attachments, isConcealed: isConcealed).first { $0.selection == selection }?.details.value(for: field)
     }
 }

@@ -806,6 +806,7 @@ public final class ChatInteraction : InterfaceObserver  {
     public var removeAd:(Data)->Void = { _ in }
     
     public var canAnimateUpdates:()->Bool = { true }
+    var canInspectMessageDetails: () -> Bool = { false }
     
     public var boostToUnrestrict:(BoostChannelSource)->Void = { _ in }
     
@@ -1896,6 +1897,7 @@ public final class ChatInteraction : InterfaceObserver  {
         self.removeAd = { _ in }
         self.readUntilMessage = nil
         self.canAnimateUpdates = { true }
+        self.canInspectMessageDetails = { false }
         self.boostToUnrestrict = { _ in }
         self.executeReplymarkup = { _ in }
         self.toggleUnderMouseMessage = { }

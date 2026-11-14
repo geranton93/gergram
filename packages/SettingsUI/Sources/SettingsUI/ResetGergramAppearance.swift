@@ -7,6 +7,7 @@ func resetGergramAppearance(defaults: UserDefaults? = nil) {
     (defaults.map(ProfileJoinDatePreferences.init) ?? .shared).setVisible(false)
     (defaults.map(ChatWallpaperVisibilityPreferences.init) ?? .shared).setHidden(false)
     (defaults.map(ComposerEmojiHoverPreferences.init) ?? .shared).setEnabled(true)
+    (defaults.map(ComposerBotCommandsPreferences.init) ?? .shared).setHidden(false)
     (defaults.map(StreamerModeMenuBarPreferences.init) ?? .shared).setVisible(true)
     (defaults.map(PremiumStatusVisibilityPreferences.init) ?? .shared).setHidden(false)
     (defaults.map(ChatReplyAppearancePreferences.init) ?? .shared).setSimplified(false)

@@ -604,6 +604,9 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(25), title: localizedString("Gergram.Appearance.Reset"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .resetGergramAppearance)
         }),
+        SettingsSearchableItem(id: .appearance(26), title: localizedString("Gergram.Composer.HideBotCommands"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .botCommands)
+        }),
     ]
 }
 

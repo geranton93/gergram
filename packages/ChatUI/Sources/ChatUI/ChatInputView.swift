@@ -636,6 +636,7 @@ public class ChatInputView: View, Notifable {
     
     private let sendActivityDisposable = MetaDisposable()
     private let channelBottomActionDisposable = MetaDisposable()
+    private let composerBotCommandsDisposable = MetaDisposable()
     private var channelBottomAction = ChannelBottomActionPreferences.shared.action
     private(set) var isChannelBottomActionRowHidden = false
     public let ready = Promise<Bool>()
@@ -922,6 +923,21 @@ public class ChatInputView: View, Notifable {
                 self.updateLayout(size: self.frame.size, transition: .immediate)
             }
         }))
+        composerBotCommandsDisposable.set((ComposerBotCommandsPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] hidesButton in
+            self?.updateComposerBotCommandsVisibility(hidesButton)
+        }))
+    }
+
+    private func updateComposerBotCommandsVisibility(_ hidesButton: Bool) {
+        let wasVisible = botMenuView != nil
+        let state = chatInteraction.presentation
+        if hidesButton, let menu = state.botMenu, menu.closingComposerCommands != menu {
+            chatInteraction.update(animated: false) { $0.updateBotMenu { $0?.closingComposerCommands } }
+        }
+        updateAttachments(chatInteraction.presentation, false)
+        if wasVisible != (botMenuView != nil) {
+            inputDidUpdateLayout(animated: false)
+        }
     }
 
     private func scheduleInlineRichDraftStore() {
@@ -2095,7 +2111,8 @@ public class ChatInputView: View, Notifable {
     
     public func updateAttachments(_ inputState:ChatPresentationInterfaceState, _ animated:Bool = true) -> Void {
         var updated: Bool = false
-        if let botMenu = inputState.botMenu, !botMenu.isEmpty {
+        if let botMenu = inputState.botMenu,
+           botMenu.showsComposerButton(hidesBotCommands: ComposerBotCommandsPreferences.shared.hidesButton) {
             let current: ChatInputMenuView
             if let view = self.botMenuView {
                 current = view
@@ -2389,6 +2406,7 @@ public class ChatInputView: View, Notifable {
         self.richDraftDisposable.dispose()
         self.incomingTypingDraftDisposable.dispose()
         self.channelBottomActionDisposable.dispose()
+        self.composerBotCommandsDisposable.dispose()
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Return)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Delete)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Z, modifierFlags: [.command], forceCheckFlags: true)

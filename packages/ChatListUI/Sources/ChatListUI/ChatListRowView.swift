@@ -333,6 +333,7 @@ public final class ChatListTopicNameAndTextLayout {
     private let message: Message
     private let items: [EngineChatList.ForumTopicData]
     private let draft:EngineChatList.Draft?
+    private let filtersZalgoPreview: Bool
     
     public private(set) var size: NSSize = .zero
     
@@ -349,11 +350,12 @@ public final class ChatListTopicNameAndTextLayout {
     public private(set) var allNames: TextViewLayout?
     public private(set) var allSelectedNames: TextViewLayout?
 
-    public init(_ context: any AccountContextProtocol, message: Message, items: [EngineChatList.ForumTopicData], draft: EngineChatList.Draft?) {
+    public init(_ context: any AccountContextProtocol, message: Message, items: [EngineChatList.ForumTopicData], draft: EngineChatList.Draft?, filtersZalgoPreview: Bool = false) {
         self.message = message
         self.items = items
         self.context = context
         self.draft = draft
+        self.filtersZalgoPreview = filtersZalgoPreview
     }
     
     public var fastTrack: Bool {
@@ -400,6 +402,7 @@ public final class ChatListTopicNameAndTextLayout {
             _ = attr.append(string: "\n")
             
             let text = chatListText(account: context.account, for: message, messagesCount: 1, draft: draft, folder: false, applyUserName: false, isPremium: context.isPremium).mutableCopy() as! NSMutableAttributedString
+            let previewLength = text.length
             
             if let author = message.author {
                 let ignore: Bool
@@ -413,7 +416,8 @@ public final class ChatListTopicNameAndTextLayout {
                     text.insert(.initialize(string: "\(name): ", color: theme.colors.text, font: .normal(.text)), at: 0)
                 }
             }
-            
+            let transform = ChatListZalgoPreview.transform(enabled: filtersZalgoPreview, message: message, hasDraft: draft?.text.isEmpty == false,
+                                                           prefixLength: attr.length + text.length - previewLength)
             attr.append(text)
             attr.setSelected(color: theme.colors.underSelectedColor, range: attr.range)
             
@@ -422,8 +426,8 @@ public final class ChatListTopicNameAndTextLayout {
             let selectedAttr = attr.mutableCopy() as! NSMutableAttributedString
             selectedAttr.addAttribute(.foregroundColor, value: theme.colors.underSelectedColor, range: selectedAttr.range)
             
-            self.selectedMain = .init(selectedAttr, maximumNumberOfLines: 2, mayItems: false, truncatingColor: isMonoforum ? theme.colors.underSelectedColor : theme.colors.grayText)
-            self.mainText = .init(attr, maximumNumberOfLines: 2, mayItems: false, truncatingColor: theme.colors.grayText)
+            self.selectedMain = .init(selectedAttr, maximumNumberOfLines: 2, mayItems: false, truncatingColor: isMonoforum ? theme.colors.underSelectedColor : theme.colors.grayText, displayTextTransform: transform)
+            self.mainText = .init(attr, maximumNumberOfLines: 2, mayItems: false, truncatingColor: theme.colors.grayText, displayTextTransform: transform)
             
             self.mainText?.measure(width: width - 20)
             self.selectedMain?.measure(width: width - 20)

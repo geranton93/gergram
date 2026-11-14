@@ -3,6 +3,7 @@ import TGUIKit
 import TelegramCore
 import TelegramContext
 import ChatUI
+import InAppSettings
 import Postbox
 import SwiftSignalKit
 import Localization
@@ -43,6 +44,8 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
     private var searchPeerId: PeerId?
     private let searchLoading = MetaDisposable()
     private let inputActivities = MetaDisposable()
+    private let previewSettings = MetaDisposable()
+    private var filtersZalgoPreview = FastSettings.filterZalgoText
     private let activityScope = ValuePromise<ActivityScope?>(nil, ignoreRepeated: true)
     private var activities: [PeerActivitySpace: [PeerListState.InputActivities.Activity]] = [:]
     private var content: (items: [EngineChatList.Item], selectedThreadId: Int64?, kind: ChatSidebarKind, parentPeer: EngineRenderedPeer)?
@@ -95,6 +98,13 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
             self.activities = scopedActivities
             self.update(items: content.items, selectedThreadId: content.selectedThreadId, kind: content.kind, parentPeer: content.parentPeer)
         }))
+        previewSettings.set((FastSettings.filterZalgoTextSignal |> deliverOnMainQueue).start(next: { [weak self] enabled in
+            guard let self, self.filtersZalgoPreview != enabled else { return }
+            self.filtersZalgoPreview = enabled
+            if let content = self.content {
+                self.update(items: content.items, selectedThreadId: content.selectedThreadId, kind: content.kind, parentPeer: content.parentPeer)
+            }
+        }))
     }
 
     required init(frame frameRect: NSRect) {
@@ -119,6 +129,7 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
     deinit {
         searchLoading.dispose()
         inputActivities.dispose()
+        previewSettings.dispose()
     }
 
     public func setSelecting(_ selecting: Bool) {
@@ -233,7 +244,7 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
         var rows: [(Int, TableRowItem)] = []
         var selectedRow: ChatListRowItem?
         let messages = items.flatMap(\.messages).sorted { $0.index > $1.index }.prefix(1).map { $0._asMessage() }
-        let root = SidebarRootRowItem(NSMakeSize(max(bounds.width, 320), 70), context: context, stableId: .chatId(.chatList(parentPeer.peerId), parentPeer.peerId, -1), mode: .chat, messages: messages, renderedPeer: parentPeer, titleOverride: kind != .channelMessages ? localizedString("Chat.Sidebar.AllMessages") : nil)
+        let root = SidebarRootRowItem(NSMakeSize(max(bounds.width, 320), 70), context: context, stableId: .chatId(.chatList(parentPeer.peerId), parentPeer.peerId, -1), mode: .chat, messages: messages, renderedPeer: parentPeer, titleOverride: kind != .channelMessages ? localizedString("Chat.Sidebar.AllMessages") : nil, filtersZalgoPreview: filtersZalgoPreview)
         root.isForumSidebarRow = true
         rows.append((0, root))
         rootRowId = root.stableId
@@ -250,7 +261,7 @@ public final class ForumSidebarRowsView<Context: AccountContextProtocol>: View, 
                 mode = .topic(id, threadData)
             }
             let space = PeerActivitySpace(peerId: parentPeer.peerId, category: .thread(threadId))
-            let row = ChatListRowItem(NSMakeSize(max(bounds.width, 320), 70), context: context, stableId: .chatId(item.id, item.renderedPeer.peerId, -1), mode: mode, messages: item.messages.map { $0._asMessage() }, index: item.chatListIndex, readState: item.readCounters, draft: item.draft, pinnedType: item.chatListIndex.pinningIndex == nil ? .none : .some, renderedPeer: item.renderedPeer, peerPresence: item.presence, forumTopicData: item.forumTopicData, forumTopicItems: item.topForumTopicItems, activities: activities[space] ?? [], isMuted: item.isMuted, hasFailed: item.hasFailed, hasUnreadMentions: item.hasUnseenMentions, hasUnreadReactions: item.hasUnseenReactions, hasUnreadVotes: item.hasUnseenPollVotes, story: item.storyStats, isContact: item.isContact, titleOverride: kind == .channelMessages ? item.renderedPeer.peer?._asPeer().displayTitle : nil, savedMessagesParentPeerId: kind.usesSourceChats ? parentPeer.peerId : nil)
+            let row = ChatListRowItem(NSMakeSize(max(bounds.width, 320), 70), context: context, stableId: .chatId(item.id, item.renderedPeer.peerId, -1), mode: mode, messages: item.messages.map { $0._asMessage() }, index: item.chatListIndex, readState: item.readCounters, draft: item.draft, pinnedType: item.chatListIndex.pinningIndex == nil ? .none : .some, renderedPeer: item.renderedPeer, peerPresence: item.presence, forumTopicData: item.forumTopicData, forumTopicItems: item.topForumTopicItems, activities: activities[space] ?? [], isMuted: item.isMuted, hasFailed: item.hasFailed, hasUnreadMentions: item.hasUnseenMentions, hasUnreadReactions: item.hasUnseenReactions, hasUnreadVotes: item.hasUnseenPollVotes, story: item.storyStats, isContact: item.isContact, titleOverride: kind == .channelMessages ? item.renderedPeer.peer?._asPeer().displayTitle : nil, savedMessagesParentPeerId: kind.usesSourceChats ? parentPeer.peerId : nil, filtersZalgoPreview: filtersZalgoPreview)
             row.isForumSidebarRow = true
             row.sidebarSelection = selection.isActive ? selection.selectedIds.contains(threadId) : nil
             rows.append((rows.count, row))

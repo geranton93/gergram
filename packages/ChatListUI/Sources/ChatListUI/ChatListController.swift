@@ -321,7 +321,7 @@ public enum UIChatListEntry : Identifiable, Comparable {
         public var active: [GiftAuctionContext.State]
     }
     
-    case chat(EngineChatList.Item, [PeerListState.InputActivities.Activity], UIChatAdditionalItem?, filter: ChatListFilter, generalStatus: ItemHideStatus?, selectedForum: PeerId?, appearMode: PeerListState.AppearMode, hideContent: Bool, folders: FilterData?, communityCategories: [PeerId: ChatListFilterPeerCategories], canPreviewChat: Bool, hidesStories: Bool)
+    case chat(EngineChatList.Item, [PeerListState.InputActivities.Activity], UIChatAdditionalItem?, filter: ChatListFilter, generalStatus: ItemHideStatus?, selectedForum: PeerId?, appearMode: PeerListState.AppearMode, hideContent: Bool, folders: FilterData?, communityCategories: [PeerId: ChatListFilterPeerCategories], canPreviewChat: Bool, hidesStories: Bool, filtersZalgoPreview: Bool)
     case group(Int, EngineChatList.GroupItem, Bool, ItemHideStatus, PeerListState.AppearMode, Bool, EngineStorySubscriptions?)
     case reveal([ChatListFilter], ChatListFilter, ChatListFilterBadges)
     case empty(ChatListFilter, PeerListMode, SplitViewState, PeerEquatable?, hideContent: Bool)
@@ -337,8 +337,8 @@ public enum UIChatListEntry : Identifiable, Comparable {
     case htmlDemo(Int, String)
     public static func == (lhs: UIChatListEntry, rhs: UIChatListEntry) -> Bool {
         switch lhs {
-        case let .chat(entry, activity, additionItem, filter, generalStatus, selectedForum, appearMode, hideContent, folders, communityCategories, canPreviewChat, hidesStories):
-            if case .chat(entry, activity, additionItem, filter, generalStatus, selectedForum, appearMode, hideContent, folders, communityCategories, canPreviewChat, hidesStories) = rhs {
+        case let .chat(entry, activity, additionItem, filter, generalStatus, selectedForum, appearMode, hideContent, folders, communityCategories, canPreviewChat, hidesStories, filtersZalgoPreview):
+            if case .chat(entry, activity, additionItem, filter, generalStatus, selectedForum, appearMode, hideContent, folders, communityCategories, canPreviewChat, hidesStories, filtersZalgoPreview) = rhs {
                return true
             } else {
                 return false
@@ -426,7 +426,7 @@ public enum UIChatListEntry : Identifiable, Comparable {
 
     public var index: ChatListIndex {
         switch self {
-        case let .chat(entry, _, additionItem, _, _, _, _, _, _, _, _, _):
+        case let .chat(entry, _, additionItem, _, _, _, _, _, _, _, _, _, _):
             if let additionItem = additionItem {
                 var current = MessageIndex.absoluteUpperBound().globalPredecessor()
                 for _ in 0 ..< additionItem.index {
@@ -496,7 +496,7 @@ public enum UIChatListEntry : Identifiable, Comparable {
     
     public var stableId: UIChatListEntryId {
         switch self {
-        case let .chat(entry, _, _, filterId, _, _, _, _, _, _, _, _):
+        case let .chat(entry, _, _, filterId, _, _, _, _, _, _, _, _, _):
             if entry.renderedPeer.peer.map({ TelegramUtilsHooks.shared.peerIsForum($0._asPeer()) }) == true, entry.threadData == nil {
                 return .forum(entry.renderedPeer.peerId)
             } else {
@@ -541,7 +541,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<UIChatListEntry>]?,
                 
         func makeItem(_ entry: AppearanceWrapperEntry<UIChatListEntry>) -> TableRowItem {
             switch entry.entry {
-            case let .chat(item, activities, addition, filter, hideStatus, selectedForum, appearMode, hideContent, filterData, communityCategories, previewChat, hidesStories):
+            case let .chat(item, activities, addition, filter, hideStatus, selectedForum, appearMode, hideContent, filterData, communityCategories, previewChat, hidesStories, filtersZalgoPreview):
                 var pinnedType: ChatListPinnedType = .some
                 if let addition = addition {
                     pinnedType = .ad(addition.item)
@@ -562,7 +562,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<UIChatListEntry>]?,
                     }
                 }
                 
-                return ChatListRowItem(initialSize, context: arguments.context, stableId: entry.entry.stableId, mode: mode, messages: messages, index: entry.entry.index, readState: item.readCounters, draft: item.draft, pinnedType: pinnedType, renderedPeer: item.renderedPeer, peerPresence: item.presence, forumTopicData: item.forumTopicData, forumTopicItems: item.topForumTopicItems, activities: activities, associatedGroupId: groupId, isMuted: item.isMuted, hasFailed: item.hasFailed, hasUnreadMentions: item.hasUnseenMentions, hasUnreadReactions: item.hasUnseenReactions, hasUnreadVotes: item.hasUnseenPollVotes, filter: filter, hideStatus: hideStatus, appearMode: appearMode, hideContent: hideContent, getHideProgress: arguments.getHideProgress, selectedForum: selectedForum, autoremoveTimeout: item.autoremoveTimeout, story: hidesStories ? nil : item.storyStats, openStory: arguments.openStory, isContact: item.isContact, displayAsTopics: item.displayAsTopicList, folders: filterData, communityCategories: communityCategories, canPreviewChat: previewChat)
+                return ChatListRowItem(initialSize, context: arguments.context, stableId: entry.entry.stableId, mode: mode, messages: messages, index: entry.entry.index, readState: item.readCounters, draft: item.draft, pinnedType: pinnedType, renderedPeer: item.renderedPeer, peerPresence: item.presence, forumTopicData: item.forumTopicData, forumTopicItems: item.topForumTopicItems, activities: activities, associatedGroupId: groupId, isMuted: item.isMuted, hasFailed: item.hasFailed, hasUnreadMentions: item.hasUnseenMentions, hasUnreadReactions: item.hasUnseenReactions, hasUnreadVotes: item.hasUnseenPollVotes, filter: filter, hideStatus: hideStatus, appearMode: appearMode, hideContent: hideContent, getHideProgress: arguments.getHideProgress, selectedForum: selectedForum, autoremoveTimeout: item.autoremoveTimeout, story: hidesStories ? nil : item.storyStats, openStory: arguments.openStory, isContact: item.isContact, displayAsTopics: item.displayAsTopicList, folders: filterData, communityCategories: communityCategories, canPreviewChat: previewChat, filtersZalgoPreview: filtersZalgoPreview)
 
             case let .group(_, item, animated, hideStatus, appearMode, hideContent, storyState):
                 var messages:[Message] = []
@@ -1007,7 +1007,7 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
         
         
         
-        let list:Signal<TableUpdateTransition, NoError> = combineLatest(queue: prepareQueue, chatHistoryView, appearanceSignal, stateUpdater |> map(ChatListStateProjection.init) |> distinctUntilChanged, appNotificationSettings(accountManager: context.sharedContext.accountManager), additionalSettings(accountManager: context.sharedContext.accountManager), storyState, suspiciousSession, suggestions, birthdays, myBirthday, subState, appConfiguration, context.giftAuctionsManager.state, PendingChatRemovals.get(context).hiddenPeerIds) |> mapToQueue { value, appearance, state, inAppSettings, additionalSettings, archiveStories, suspiciousSession, suggestionsAndCrashReport, birthdays, myBirthday, missingBalanceState, appConfiguration, activeAuctions, pendingRemovals -> Signal<TableUpdateTransition, NoError> in
+        let list:Signal<TableUpdateTransition, NoError> = combineLatest(queue: prepareQueue, chatHistoryView, appearanceSignal, stateUpdater |> map(ChatListStateProjection.init) |> distinctUntilChanged, appNotificationSettings(accountManager: context.sharedContext.accountManager), additionalSettings(accountManager: context.sharedContext.accountManager), storyState, suspiciousSession, suggestions, birthdays, myBirthday, subState, appConfiguration, context.giftAuctionsManager.state, PendingChatRemovals.get(context).hiddenPeerIds, FastSettings.filterZalgoTextSignal) |> mapToQueue { value, appearance, state, inAppSettings, additionalSettings, archiveStories, suspiciousSession, suggestionsAndCrashReport, birthdays, myBirthday, missingBalanceState, appConfiguration, activeAuctions, pendingRemovals, filtersZalgoPreview -> Signal<TableUpdateTransition, NoError> in
             let (suggestions, crashReportCard) = suggestionsAndCrashReport
             let storyState = additionalSettings.hideChatListStories ? nil : archiveStories
                                 
@@ -1062,7 +1062,7 @@ public class ChatListController<Context: AccountContextProtocol> : PeersListCont
                 case let .chatList(peerId):
                     space = .init(peerId: peerId, category: .global)
                 }
-                return .chat(item.0, state.activities.activities[space] ?? [], item.1, filter: filterData.filter, generalStatus: generalStatus, selectedForum: state.selectedForum, appearMode: state.controllerAppear, hideContent: state.appear == .short, folders: rowFolders, communityCategories: update.communityCategories, canPreviewChat: additionalSettings.previewChats, hidesStories: additionalSettings.hideChatListStories)
+                return .chat(item.0, state.activities.activities[space] ?? [], item.1, filter: filterData.filter, generalStatus: generalStatus, selectedForum: state.selectedForum, appearMode: state.controllerAppear, hideContent: state.appear == .short, folders: rowFolders, communityCategories: update.communityCategories, canPreviewChat: additionalSettings.previewChats, hidesStories: additionalSettings.hideChatListStories, filtersZalgoPreview: filtersZalgoPreview)
             }
             
             if case .filter = filterData.filter, mapped.isEmpty {} else {

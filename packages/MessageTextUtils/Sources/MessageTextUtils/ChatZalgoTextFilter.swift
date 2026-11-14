@@ -1,18 +1,29 @@
 import Foundation
 
-enum ChatZalgoTextFilter {
-    static func presentation(for source: NSAttributedString) -> NSAttributedString? {
-        guard let filtered = filteredText(source.string) else {
+public enum ChatZalgoTextFilter {
+    public static func presentation(for source: NSAttributedString) -> NSAttributedString? {
+        filteredText(source.string).map { preservingAttributes(of: source, text: $0) }
+    }
+
+    public static func presentation(for source: NSAttributedString, in range: NSRange) -> NSAttributedString? {
+        let text = source.string as NSString
+        guard range.length > 0, range.location >= 0, range.location <= text.length, range.length <= text.length - range.location else { return nil }
+        if range.location == 0, range.length == text.length { return presentation(for: source) }
+        guard let filtered = filteredText(text.substring(with: range)) else {
             return nil
         }
-        let result = NSMutableAttributedString(string: filtered)
+        return preservingAttributes(of: source, text: text.replacingCharacters(in: range, with: filtered))
+    }
+
+    private static func preservingAttributes(of source: NSAttributedString, text: String) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: text)
         source.enumerateAttributes(in: NSRange(location: 0, length: source.length), options: []) { attributes, range, _ in
             result.setAttributes(attributes, range: range)
         }
         return NSAttributedString(attributedString: result)
     }
 
-    static func displayName(_ name: String, enabled: Bool) -> String {
+    public static func displayName(_ name: String, enabled: Bool) -> String {
         guard enabled else { return name }
         return filteredText(name) ?? name
     }

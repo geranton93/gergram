@@ -15,6 +15,7 @@ import GeneralRows
 import InputTextView
 import LocalAnimations
 import Localization
+import MessageTextUtils
 import MessageUtils
 import PremiumStatusUI
 import PremiumUI

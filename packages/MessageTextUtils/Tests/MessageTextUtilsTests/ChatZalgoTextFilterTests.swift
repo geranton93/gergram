@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import ChatUI
+@testable import MessageTextUtils
 
 final class ChatZalgoTextFilterTests: XCTestCase {
     func testDisplayNamesRespectPreferenceAndPreserveOrdinaryScripts() {
@@ -47,5 +47,21 @@ final class ChatZalgoTextFilterTests: XCTestCase {
         XCTAssertEqual(display.attribute(linkKey, at: linkRange.location, effectiveRange: nil) as? String, url)
         XCTAssertEqual(display.attribute(markKey, at: 3, effectiveRange: nil) as? String, "mark style")
         XCTAssertNil(display.attribute(markKey, at: 2, effectiveRange: nil))
+    }
+
+    func testPreviewRangePreservesTheNativeTopicAndAuthorPrefix() throws {
+        let prefix = "👩 Topic\u{202E}\nA\u{0301}\u{0308}\u{0327}: "
+        let text = "a\u{1D185}\u{0301}\u{0308}https://example.com\u{202E}"
+        let original = NSMutableAttributedString(string: prefix + text)
+        let key = NSAttributedString.Key("testLink")
+        let linkRange = (original.string as NSString).range(of: "https://example.com")
+        original.addAttribute(key, value: "https://example.com", range: linkRange)
+        let previewRange = NSRange(location: prefix.utf16.count, length: text.utf16.count)
+        let display = try XCTUnwrap(ChatZalgoTextFilter.presentation(for: original, in: previewRange))
+        XCTAssertEqual(display.string, prefix + "a\u{2060}\u{2060}\u{2060}\u{2060}https://example.com\u{2060}")
+        XCTAssertEqual(display.length, original.length)
+        XCTAssertEqual(display.attribute(key, at: linkRange.location, effectiveRange: nil) as? String, "https://example.com")
+        XCTAssertEqual(original.string, prefix + text)
+        XCTAssertNil(ChatZalgoTextFilter.presentation(for: original, in: NSRange(location: Int.max, length: 1)))
     }
 }

@@ -262,6 +262,7 @@ public class ChatListRowItem: TableRowItem {
 
 
     private var messageLayout:TextViewLayout?
+    private var messageDisplayTransform: ((NSAttributedString) -> NSAttributedString?)?
     private var messageSelectedLayout:TextViewLayout?
     private var messageSelectedMaxLines: Int32 = 2
     private var messageSelectedCutout: TextViewCutout? = nil
@@ -475,7 +476,7 @@ public class ChatListRowItem: TableRowItem {
     public let activities: [PeerListState.InputActivities.Activity]
     
     public var toolTip: String? {
-        return messageLayout?.attributedString.string
+        return messageLayout?.displayString
     }
     
     public private(set) var isOnline: Bool?
@@ -744,7 +745,7 @@ public class ChatListRowItem: TableRowItem {
     public let monoforumMessagesSelected: TextViewLayout?
 
 
-    public init(_ initialSize:NSSize, context: any AccountContextProtocol, stableId: UIChatListEntryId, mode: Mode, messages: [Message], index: ChatListIndex? = nil, readState:EnginePeerReadCounters? = nil, draft:EngineChatList.Draft? = nil, pinnedType:ChatListPinnedType = .none, renderedPeer:EngineRenderedPeer, peerPresence: EnginePeer.Presence? = nil, forumTopicData: EngineChatList.ForumTopicData? = nil, forumTopicItems:[EngineChatList.ForumTopicData] = [], activities: [PeerListState.InputActivities.Activity] = [], highlightText: String? = nil, associatedGroupId: EngineChatList.Group = .root, isMuted:Bool = false, hasFailed: Bool = false, hasUnreadMentions: Bool = false, hasUnreadReactions: Bool = false, hasUnreadVotes: Bool = false, showBadge: Bool = true, filter: ChatListFilter = .allChats, hideStatus: ItemHideStatus? = nil, titleMode: TitleMode = .normal, appearMode: PeerListState.AppearMode = .normal, hideContent: Bool = false, getHideProgress:(()->CGFloat?)? = nil, selectedForum: PeerId? = nil, autoremoveTimeout: Int32? = nil, story: EngineChatList.StoryStats? = nil, openStory: @escaping(StoryInitialIndex?, Bool, Bool)->Void = { _, _, _ in }, storyState: EngineStorySubscriptions? = nil, isContact: Bool = false, displayAsTopics: Bool = false, folders: FilterData? = nil, communityCategories: [PeerId: ChatListFilterPeerCategories] = [:], canPreviewChat: Bool = false, titleOverride: String? = nil, savedMessagesParentPeerId: PeerId? = nil) {
+    public init(_ initialSize:NSSize, context: any AccountContextProtocol, stableId: UIChatListEntryId, mode: Mode, messages: [Message], index: ChatListIndex? = nil, readState:EnginePeerReadCounters? = nil, draft:EngineChatList.Draft? = nil, pinnedType:ChatListPinnedType = .none, renderedPeer:EngineRenderedPeer, peerPresence: EnginePeer.Presence? = nil, forumTopicData: EngineChatList.ForumTopicData? = nil, forumTopicItems:[EngineChatList.ForumTopicData] = [], activities: [PeerListState.InputActivities.Activity] = [], highlightText: String? = nil, associatedGroupId: EngineChatList.Group = .root, isMuted:Bool = false, hasFailed: Bool = false, hasUnreadMentions: Bool = false, hasUnreadReactions: Bool = false, hasUnreadVotes: Bool = false, showBadge: Bool = true, filter: ChatListFilter = .allChats, hideStatus: ItemHideStatus? = nil, titleMode: TitleMode = .normal, appearMode: PeerListState.AppearMode = .normal, hideContent: Bool = false, getHideProgress:(()->CGFloat?)? = nil, selectedForum: PeerId? = nil, autoremoveTimeout: Int32? = nil, story: EngineChatList.StoryStats? = nil, openStory: @escaping(StoryInitialIndex?, Bool, Bool)->Void = { _, _, _ in }, storyState: EngineStorySubscriptions? = nil, isContact: Bool = false, displayAsTopics: Bool = false, folders: FilterData? = nil, communityCategories: [PeerId: ChatListFilterPeerCategories] = [:], canPreviewChat: Bool = false, titleOverride: String? = nil, savedMessagesParentPeerId: PeerId? = nil, filtersZalgoPreview: Bool = false) {
         self.savedMessagesParentPeerId = savedMessagesParentPeerId
         let relativeDateReferenceTimestamp = Date().timeIntervalSince1970
         
@@ -947,7 +948,7 @@ public class ChatListRowItem: TableRowItem {
         self.displaySelectedUsesMayItemsFalse = false
                 
         if !forumTopicItems.isEmpty, let message = messages.first, tags == nil {
-            self.topicsLayout = .init(context, message: message, items: forumTopicItems, draft: draft)
+            self.topicsLayout = .init(context, message: message, items: forumTopicItems, draft: draft, filtersZalgoPreview: filtersZalgoPreview)
         }
     
         
@@ -1173,12 +1174,13 @@ public class ChatListRowItem: TableRowItem {
                 }
             } else {
                 messageText = chatListText(account: context.account, for: message, messagesCount: messages.count, renderedPeer: renderedPeer, draft: draft, folder: false, applyUserName: false, isPremium: context.isPremium)
+                self.messageDisplayTransform = ChatListZalgoPreview.transform(enabled: filtersZalgoPreview, message: message, hasDraft: draft?.text.isEmpty == false)
                 if !textLeftCutout.isZero {
                     textCutout = TextViewCutout(topLeft: CGSize(width: textLeftCutout, height: 14))
                 }
             }
             if let messageText = messageText?.trimmed, !messageText.string.isEmpty {
-                self.messageLayout = .init(messageText, maximumNumberOfLines: chatNameLayout != nil || tags != nil ? 1 : 2, cutout: textCutout)
+                self.messageLayout = .init(messageText, maximumNumberOfLines: chatNameLayout != nil || tags != nil ? 1 : 2, cutout: textCutout, displayTextTransform: messageDisplayTransform)
                 
                 self.messageSelectedMaxLines = chatNameLayout != nil || tags != nil ? 1 : 2
                 self.messageSelectedCutout = textCutout
@@ -1597,7 +1599,7 @@ public class ChatListRowItem: TableRowItem {
 
     public override var accessibilityValue: String? {
         let message = messages.first
-        return ChatListRowItem.accessibilityValue(isArchive: isGroup, hasMessage: message != nil, incoming: message?.flags.contains(.Incoming) ?? false, author: chatNameLayout?.attributedString.string, read: isRead, preview: messageLayout?.attributedString.string)
+        return ChatListRowItem.accessibilityValue(isArchive: isGroup, hasMessage: message != nil, incoming: message?.flags.contains(.Incoming) ?? false, author: chatNameLayout?.attributedString.string, read: isRead, preview: messageLayout?.displayString)
     }
 
     public override var accessibilityRole: NSAccessibility.Role? {
@@ -2559,7 +2561,7 @@ public class ChatListRowItem: TableRowItem {
                     let selectedText = src.mutableCopy() as! NSMutableAttributedString
                     if let color = selectedText.attribute(.selectedColor, at: 0, effectiveRange: nil) {
                         selectedText.addAttribute(NSAttributedString.Key.foregroundColor, value: color, range: selectedText.range)
-                        messageSelectedLayout = .init(selectedText, maximumNumberOfLines: messageSelectedMaxLines, cutout: messageSelectedCutout)
+                        messageSelectedLayout = .init(selectedText, maximumNumberOfLines: messageSelectedMaxLines, cutout: messageSelectedCutout, displayTextTransform: messageDisplayTransform)
                     }
                 }
                 if let width = messageSelectedPendingWidth {

@@ -26,10 +26,14 @@ public struct WhisperModelCache {
         isCancelled: () -> Bool = { false }
     ) throws {
         if isCancelled() { throw CancellationError() }
-        let trustedArtifact = try artifact(model)
         let source = try SpeechModelStagedFileValidator.openStagedFile(at: stagedFile)
         defer { close(source) }
+        try install(stagedDescriptor: source, for: model, isCancelled: isCancelled)
+    }
 
+    func install(stagedDescriptor source: Int32, for model: SpeechModelArtifact.Model, isCancelled: () -> Bool) throws {
+        if isCancelled() { throw CancellationError() }
+        let trustedArtifact = try artifact(model)
         try withCacheDirectory(create: true, lock: LOCK_EX, ifMissing: (), isCancelled: isCancelled) { cache in
             try Self.unlink(Self.installationName, from: cache)
             let staged = openat(cache, Self.installationName, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)

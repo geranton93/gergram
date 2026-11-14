@@ -34,6 +34,10 @@ public final class ChatReactionVisibilityPreferences {
         } else {
             kinds.remove(kind)
         }
+        setHiddenKinds(kinds)
+    }
+
+    public func setHiddenKinds(_ kinds: Set<ChatKind>) {
         defaults.set(kinds.map(\.rawValue).sorted(), forKey: Self.key)
         hiddenKinds.set(kinds)
     }

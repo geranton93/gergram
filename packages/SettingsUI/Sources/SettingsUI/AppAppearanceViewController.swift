@@ -265,6 +265,7 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
     case adaptiveMusicCover
     case avatarRadius
     case singleAvatarRadius
+    case resetGergramAppearance
     public func isEqual(to other: ItemListItemTag) -> Bool {
         if let other = other as? ThemeSettingsEntryTag, self == other {
             return true
@@ -319,6 +320,8 @@ public enum ThemeSettingsEntryTag: ItemListItemTag {
             return .general(_id_avatar_radius)
         case .singleAvatarRadius:
             return .general(_id_single_avatar_radius)
+        case .resetGergramAppearance:
+            return .general(_id_reset_gergram_appearance)
         case .accentColor:
             return .custom(_id_theme_accent_list)
         }
@@ -407,6 +410,7 @@ private let _id_greeting_sticker = InputDataIdentifier("_id_greeting_sticker")
 private let _id_adaptive_music_cover = InputDataIdentifier("_id_adaptive_music_cover")
 private let _id_avatar_radius = InputDataIdentifier("_id_avatar_radius")
 private let _id_single_avatar_radius = InputDataIdentifier("_id_single_avatar_radius")
+private let _id_reset_gergram_appearance = InputDataIdentifier("_id_reset_gergram_appearance")
 private let _id_simple_quotes_and_replies = InputDataIdentifier("_id_simple_quotes_and_replies")
 private let _id_composer_emoji_hover = InputDataIdentifier("_id_composer_emoji_hover")
 private let _id_custom_chat_wallpapers = InputDataIdentifier("_id_custom_chat_wallpapers")
@@ -423,7 +427,7 @@ private func editedIndicatorTitle(_ style: ChatEditedIndicatorStyle) -> String {
     }
 }
 
-private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, editedIndicatorStyle: ChatEditedIndicatorStyle, showsProfileJoinDate: Bool, hidesCustomChatWallpapers: Bool, opensComposerEmojiOnHover: Bool, showsStreamerModeMenuBar: Bool, hidesPremiumStatuses: Bool, simplifiesQuotesAndReplies: Bool, hiddenReactionKinds: Set<ChatReactionVisibilityPreferences.ChatKind>, hidesMessageTails: Bool, messageWidth: ChatMessageWidth, revealsMediaSpoilers: Bool, monospaceFont: ChatMonospaceFont, messageBubbleRadius: Int, animatesSwitches: Bool, hidesFastShare: Bool, hidesGreetingSticker: Bool, adaptiveMusicCover: Bool, avatarCorners: AvatarCornerAppearance, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
+private func appAppearanceEntries(appearance: Appearance, state: State, settings: ThemePaletteSettings, cloudThemes: [TelegramTheme], generated:  CloudThemesCachedData, autoNightSettings: AutoNightThemePreferences, animatedEmojiStickers: [String: StickerPackItem], dockIcons: TelegramApplicationIcons, dockSettings: DockSettings, editedIndicatorStyle: ChatEditedIndicatorStyle, showsProfileJoinDate: Bool, hidesCustomChatWallpapers: Bool, opensComposerEmojiOnHover: Bool, showsStreamerModeMenuBar: Bool, hidesPremiumStatuses: Bool, simplifiesQuotesAndReplies: Bool, hiddenReactionKinds: Set<ChatReactionVisibilityPreferences.ChatKind>, hidesMessageTails: Bool, messageWidth: ChatMessageWidth, revealsMediaSpoilers: Bool, monospaceFont: ChatMonospaceFont, messageBubbleRadius: Int, animatesSwitches: Bool, hidesFastShare: Bool, hidesGreetingSticker: Bool, adaptiveMusicCover: Bool, avatarCorners: AvatarCornerAppearance, requestAppearanceReset: @escaping () -> Void, arguments: AppAppearanceViewArguments) -> [InputDataEntry] {
     
     var entries:[InputDataEntry] = []
     var sectionId: Int32 = 0
@@ -786,7 +790,11 @@ private func appAppearanceEntries(appearance: Appearance, state: State, settings
     }
     
     #endif
-    
+
+    entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_reset_gergram_appearance,
+                            data: .init(name: localizedString("Gergram.Appearance.Reset"), color: appearance.presentation.colors.redUI,
+                                        viewType: .singleItem, action: requestAppearanceReset)))
+
     return entries
 }
 
@@ -802,6 +810,8 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
     
     
     let actionsDisposable = DisposableSet()
+    let resetRequests = ValuePipe<Void>()
+    let requestAppearanceReset = { resetRequests.putNext(()) }
     
     
     let initialState = State(revealed: false)
@@ -1007,7 +1017,7 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
     } |> deliverOnMainQueue
     
     let signal:Signal<InputDataSignalValue, NoError> = combineLatest(queue: prepareQueue, themeUnmodifiedSettings(accountManager: context.sharedContext.accountManager), SettingsHooks.shared.cloudThemes(context), nightSettings, appearanceSignal, animatedEmojiStickers, statePromise.get(), context.engine.resources.applicationIcons(), dockSettings(accountManager: context.sharedContext.accountManager), ChatEditedIndicatorPreferences.shared.signal, ProfileJoinDatePreferences.shared.signal, ChatWallpaperVisibilityPreferences.shared.signal, ComposerEmojiHoverPreferences.shared.signal, StreamerModeMenuBarPreferences.shared.signal, PremiumStatusVisibilityPreferences.shared.signal, ChatReplyAppearancePreferences.shared.signal, ChatReactionVisibilityPreferences.shared.signal, MessageBubbleTailPreferences.shared.signal, ChatMessageWidthPreferences.shared.signal, ChatMediaSpoilerPreferences.shared.signal, ChatMonospaceFontPreferences.shared.signal, MessageBubbleRadiusPreferences.shared.signal, SwitchAnimationPreferences.shared.signal, ChatAffordancePreferences.shared.hidesFastShareSignal, ChatAffordancePreferences.shared.hidesGreetingStickerSignal, ProfileMusicCoverPreferences.shared.signal, AvatarCornerPreferences.shared.signal) |> map { themeSettings, themes, autoNightSettings, appearance, animatedEmojiStickers, state, dockIcons, dockSettings, editedIndicatorStyle, showsProfileJoinDate, hidesCustomChatWallpapers, opensComposerEmojiOnHover, showsStreamerModeMenuBar, hidesPremiumStatuses, simplifiesQuotesAndReplies, hiddenReactionKinds, hidesMessageTails, messageWidth, revealsMediaSpoilers, monospaceFont, messageBubbleRadius, animatesSwitches, hidesFastShare, hidesGreetingSticker, adaptiveMusicCover, avatarCorners in
-        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, editedIndicatorStyle: editedIndicatorStyle, showsProfileJoinDate: showsProfileJoinDate, hidesCustomChatWallpapers: hidesCustomChatWallpapers, opensComposerEmojiOnHover: opensComposerEmojiOnHover, showsStreamerModeMenuBar: showsStreamerModeMenuBar, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hiddenReactionKinds: hiddenReactionKinds, hidesMessageTails: hidesMessageTails, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius, animatesSwitches: animatesSwitches, hidesFastShare: hidesFastShare, hidesGreetingSticker: hidesGreetingSticker, adaptiveMusicCover: adaptiveMusicCover, avatarCorners: avatarCorners, arguments: arguments)
+        return appAppearanceEntries(appearance: appearance, state: state, settings: themeSettings, cloudThemes: themes.themes.reversed(), generated: themes, autoNightSettings: autoNightSettings, animatedEmojiStickers: animatedEmojiStickers, dockIcons: dockIcons, dockSettings: dockSettings, editedIndicatorStyle: editedIndicatorStyle, showsProfileJoinDate: showsProfileJoinDate, hidesCustomChatWallpapers: hidesCustomChatWallpapers, opensComposerEmojiOnHover: opensComposerEmojiOnHover, showsStreamerModeMenuBar: showsStreamerModeMenuBar, hidesPremiumStatuses: hidesPremiumStatuses, simplifiesQuotesAndReplies: simplifiesQuotesAndReplies, hiddenReactionKinds: hiddenReactionKinds, hidesMessageTails: hidesMessageTails, messageWidth: messageWidth, revealsMediaSpoilers: revealsMediaSpoilers, monospaceFont: monospaceFont, messageBubbleRadius: messageBubbleRadius, animatesSwitches: animatesSwitches, hidesFastShare: hidesFastShare, hidesGreetingSticker: hidesGreetingSticker, adaptiveMusicCover: adaptiveMusicCover, avatarCorners: avatarCorners, requestAppearanceReset: requestAppearanceReset, arguments: arguments)
     }
     |> map { entries in
          return InputDataSignalValue(entries: entries, animated: true)
@@ -1067,6 +1077,19 @@ public func AppAppearanceViewController(context: any AccountContextProtocol, foc
         
     })
     controller.analyticsScreen = .settingsAppearance
+    actionsDisposable.add((resetRequests.signal() |> deliverOnMainQueue).start(next: { [weak controller] _ in
+        guard let controller, let window = controller.window,
+              controller.navigationController?.controller === controller, context.window === window,
+              window.isVisible, (context.isCurrent || context.isExternal), !hasModals(window) else { return }
+        let title = localizedString("Gergram.Appearance.Reset")
+        verifyAlert_button(for: window, header: title, information: localizedString("Gergram.Appearance.ResetDescription"),
+                           ok: localizedString("Gergram.Appearance.ResetConfirm"), successHandler: { [weak controller, weak window] _ in
+            guard let controller, let window, controller.window === window,
+                  controller.navigationController?.controller === controller, context.window === window,
+                  window.isVisible, (context.isCurrent || context.isExternal) else { return }
+            resetGergramAppearance()
+        })
+    }))
     
     controller.updateRightBarView = { view in
         if let view = view as? ImageBarView {

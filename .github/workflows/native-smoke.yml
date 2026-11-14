@@ -1,0 +1,88 @@
+name: Native macOS smoke build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - gergram/native-smoke
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check out pinned dependencies
+        run: |
+          git -c url.https://github.com/.insteadOf=git@github.com: \
+              -c url.https://gitlab.com/.insteadOf=git@gitlab.com: \
+              submodule update --init --recursive --depth 1 --jobs 4
+
+      - name: Prepare the build host
+        run: |
+          BUILD_LOG_DIR="$RUNNER_TEMP/gergram-smoke-logs"
+          mkdir -p "$BUILD_LOG_DIR"
+          printf 'BUILD_LOG_DIR=%s\n' "$BUILD_LOG_DIR" >> "$GITHUB_ENV"
+          {
+            xcodebuild -version
+            xcodebuild -checkFirstLaunchStatus
+            rustup --version
+            for formula in cmake ninja meson nasm yasm openssl@3 zlib autoconf libtool automake pkg-config; do
+              if ! brew list --versions "$formula" >/dev/null; then
+                brew install "$formula"
+              fi
+            done
+            printf 'OPENSSL_ROOT_DIR=%s\n' "$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+            if ! arch -x86_64 /usr/bin/true; then
+              sudo softwareupdate --install-rosetta --agree-to-license
+            fi
+            if ! xcrun --sdk macosx metal --version; then
+              xcodebuild -downloadComponent MetalToolchain
+            fi
+            xcrun --sdk macosx metal --version
+            attributes=submodules/tg_owt/src/third_party/abseil-cpp/absl/base/attributes.h
+            /usr/bin/sed -i '' \
+                -e 's|^#define ABSL_ATTRIBUTE_LIFETIME_BOUND \[\[clang::lifetimebound\]\]|#define ABSL_ATTRIBUTE_LIFETIME_BOUND|' \
+                -e 's|^#define ABSL_ATTRIBUTE_LIFETIME_BOUND __attribute__((lifetimebound))|#define ABSL_ATTRIBUTE_LIFETIME_BOUND|' \
+                "$attributes"
+          } 2>&1 | tee "$BUILD_LOG_DIR/setup.log"
+
+      - name: Prepare native frameworks
+        run: |
+          bash scripts/configure_frameworks.sh 2>&1 | tee "$BUILD_LOG_DIR/frameworks.log"
+
+      - name: Build Gergram Debug
+        run: |
+          xcodebuild -workspace Telegram-Mac.xcworkspace -scheme Telegram \
+              -configuration Debug -destination 'platform=macOS,arch=arm64' \
+              -derivedDataPath "$RUNNER_TEMP/gergram-derived" \
+              -showBuildTimingSummary CODE_SIGNING_ALLOWED=NO \
+              COMPILER_INDEX_STORE_ENABLE=NO ONLY_ACTIVE_ARCH=YES build \
+              2>&1 | tee "$BUILD_LOG_DIR/xcodebuild.log"
+          test -x "$RUNNER_TEMP/gergram-derived/Build/Products/Debug/Telegram.app/Contents/MacOS/Telegram"
+
+      - name: Save build logs
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: native-macos-smoke-logs
+          path: ${{ runner.temp }}/gergram-smoke-logs/*.log
+          retention-days: 7
+          if-no-files-found: ignore

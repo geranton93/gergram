@@ -31,12 +31,14 @@ private final class MediaPlayerLoadedState {
     let frameSource: MediaFrameSource
     let mediaBuffers: MediaPlaybackBuffers
     let controlTimebase: MediaPlayerControlTimebase
+    let relativeVideoSeek: Bool
     var lostAudioSession: Bool = false
     var extraVideoFrames: ([MediaTrackFrame], CMTime)?
-    init(frameSource: MediaFrameSource, mediaBuffers: MediaPlaybackBuffers, controlTimebase: MediaPlayerControlTimebase) {
+    init(frameSource: MediaFrameSource, mediaBuffers: MediaPlaybackBuffers, controlTimebase: MediaPlayerControlTimebase, relativeVideoSeek: Bool) {
         self.frameSource = frameSource
         self.mediaBuffers = mediaBuffers
         self.controlTimebase = controlTimebase
+        self.relativeVideoSeek = relativeVideoSeek
     }
     deinit {
         var bp:Int = 0
@@ -221,7 +223,42 @@ private final class MediaPlayerContext {
         self.seek(timestamp: timestamp, action: action)
     }
     
-    fileprivate func seek(timestamp: Double, action: MediaPlayerPlaybackAction) {
+    fileprivate func seekVideo(by seconds: Double) {
+        assert(self.queue.isCurrent())
+        guard self.isSeekable, seconds.isFinite, !seconds.isZero else {
+            return
+        }
+
+        let loadedState: MediaPlayerLoadedState
+        let action: MediaPlayerPlaybackAction
+        switch self.state {
+        case .empty, .seeking:
+            return
+        case let .paused(state):
+            loadedState = state
+            action = .pause
+        case let .playing(state):
+            loadedState = state
+            action = .play
+        }
+
+        guard let videoBuffer = loadedState.mediaBuffers.videoBuffer else {
+            return
+        }
+        let duration = CMTimeGetSeconds(videoBuffer.duration)
+        let timestamp = CMTimeGetSeconds(CMTimebaseGetTime(loadedState.controlTimebase.timebase))
+        guard duration.isFinite, duration > 0, timestamp.isFinite else {
+            return
+        }
+
+        let target = min(max(timestamp + seconds, 0), duration)
+        guard target != min(max(timestamp, 0), duration) else {
+            return
+        }
+        self.seek(timestamp: target, action: action, relativeVideoSeek: true)
+    }
+
+    fileprivate func seek(timestamp: Double, action: MediaPlayerPlaybackAction, relativeVideoSeek: Bool = false) {
         assert(self.queue.isCurrent())
         
         self.stoppedAtEnd = false
@@ -311,7 +348,7 @@ private final class MediaPlayerContext {
                     result = object
                 }
                 if let result = result {
-                    strongSelf.seekingCompleted(seekResult: result)
+                    strongSelf.seekingCompleted(seekResult: result, relativeVideoSeek: relativeVideoSeek)
                 } else {
                     assertionFailure()
                 }
@@ -320,7 +357,18 @@ private final class MediaPlayerContext {
         }))
     }
     
-    fileprivate func seekingCompleted(seekResult: MediaFrameSourceSeekResult) {
+    private static func videoRestoreTimestamp(for result: MediaFrameSourceSeekResult, atPausedEnd: Bool) -> CMTime {
+        guard atPausedEnd, let duration = result.buffers.videoBuffer?.duration,
+              duration.isNumeric, CMTimeCompare(result.timestamp, duration) >= 0,
+              let lastFrame = result.extraDecodedVideoFrames.filter({ $0.position.isNumeric }).max(by: {
+                  CMTimeCompare($0.position, $1.position) < 0
+              }) else {
+            return result.timestamp
+        }
+        return lastFrame.position
+    }
+
+    private func seekingCompleted(seekResult: MediaFrameSourceSeekResult, relativeVideoSeek: Bool) {
         if traceEvents {
             print("seekingCompleted at \(CMTimeGetSeconds(seekResult.timestamp))")
         }
@@ -386,8 +434,9 @@ private final class MediaPlayerContext {
             controlTimebase = MediaPlayerControlTimebase(timebase: timebase, isAudio: false)
         }
         
-        var loadedState: MediaPlayerLoadedState? = MediaPlayerLoadedState(frameSource: frameSource, mediaBuffers: buffers, controlTimebase: controlTimebase)
-        loadedState!.extraVideoFrames = (seekResult.extraDecodedVideoFrames, seekResult.timestamp)
+        var loadedState: MediaPlayerLoadedState? = MediaPlayerLoadedState(frameSource: frameSource, mediaBuffers: buffers, controlTimebase: controlTimebase, relativeVideoSeek: relativeVideoSeek)
+        let restoreTimestamp = Self.videoRestoreTimestamp(for: seekResult, atPausedEnd: relativeVideoSeek && action == .pause && !self.enableSound)
+        loadedState!.extraVideoFrames = (seekResult.extraDecodedVideoFrames, restoreTimestamp)
         self.timebasePromise.set(.single(loadedState!.controlTimebase.timebase))
         
         
@@ -814,7 +863,8 @@ private final class MediaPlayerContext {
             }
         }
         
-        if let videoTrackFrameBuffer = loadedState.mediaBuffers.videoBuffer, videoTrackFrameBuffer.hasFrames {
+        if let videoTrackFrameBuffer = loadedState.mediaBuffers.videoBuffer,
+           videoTrackFrameBuffer.hasFrames || (loadedState.relativeVideoSeek && loadedState.extraVideoFrames?.0.isEmpty == false) {
             self.videoRenderer.state = (loadedState.controlTimebase.timebase, true, videoTrackFrameBuffer.rotationAngle, videoTrackFrameBuffer.aspect)
         }
         
@@ -865,6 +915,9 @@ private final class MediaPlayerContext {
             if !self.stoppedAtEnd {
                 switch self.actionAtEnd {
                 case let .loop(f):
+                    if loadedState.relativeVideoSeek, case .paused = self.state {
+                        return
+                    }
                     self.stoppedAtEnd = false
                     self.seek(timestamp: 0.0, action: .play)
                     f?()
@@ -1076,6 +1129,12 @@ public final class MediaPlayer {
     public func seek(timestamp: Double) {
         contextRef.with { context in
             context.seek(timestamp: timestamp)
+        }
+    }
+
+    public func seekVideo(by seconds: Double) {
+        contextRef.with { context in
+            context.seekVideo(by: seconds)
         }
     }
 

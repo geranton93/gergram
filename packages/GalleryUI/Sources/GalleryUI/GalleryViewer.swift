@@ -30,6 +30,7 @@ import FoundationUtils
 import ObjcUtils
 import InputDataUI
 import AppAnalytics
+import KeyboardKey
 
 public final class GalleryInteractions {
     public var dismiss:(NSEvent)->KeyHandlerResult = { _ in return .rejected}
@@ -436,9 +437,11 @@ public class GalleryViewer: NSResponder {
             }
         }, with:self, for: .Space)
 
-        window.setGalleryKeyHandler({ [weak self] event in
-            return self?.handleGIFPlaybackShortcut(event) == true ? .invoked : .rejected
-        }, with: self, for: .K)
+        for key: KeyboardKey in [.J, .K, .L] {
+            window.setGalleryKeyHandler({ [weak self] event in
+                return self?.handleGIFPlaybackShortcut(event) == true ? .invoked : .rejected
+            }, with: self, for: key)
+        }
         
         window.setGalleryKeyHandler({ [weak self] event in
             guard let `self` = self else {return .rejected}
@@ -1036,8 +1039,18 @@ public class GalleryViewer: NSResponder {
               item.media.isVideo, item.media.isAnimated else {
             return false
         }
-        if !event.isARepeat {
+        guard !event.isARepeat else {
+            return true
+        }
+        switch KeyboardKey(rawValue: event.keyCode) {
+        case .J:
+            item.seek(by: -10)
+        case .L:
+            item.seek(by: 10)
+        case .K, .Space:
             item.togglePlayerOrPause()
+        default:
+            return false
         }
         return true
     }

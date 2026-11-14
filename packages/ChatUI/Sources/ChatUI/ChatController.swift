@@ -11420,6 +11420,18 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     }, itemImage: MenuAnimation.menu_show_info.value))
                 }
 
+                if !self.isAdChat, peerView.peerId == peerId,
+                   let linkedId = discussionLinkedChannelId(in: peerView, contentSettings: context.contentSettings) {
+                    items.append(ContextMenuItem(strings().storyAvatarContextOpenChannel, handler: { [weak self] in
+                        guard let self, self.mode == .history, !self.isAdChat, self.chatLocation == chatLocation,
+                              self.context.isCurrent || self.context.isExternal, !self.context.isFrozen,
+                              self.navigationController?.controller === self, self.genericView.window === self.context.window,
+                              let current = self.currentPeerView, current.peerId == peerId,
+                              discussionLinkedChannelId(in: current, contentSettings: self.context.contentSettings) == linkedId else { return }
+                        self.chatInteraction.openInfo(linkedId, true, nil, nil)
+                    }, itemImage: MenuAnimation.menu_channel.value))
+                }
+
 
                 if let notificationSettings = peerView.notificationSettings as? TelegramPeerNotificationSettings, !self.isAdChat {
                     if chatInteraction.peerId != context.peerId && chatSidebarKind(chatInteraction.presentation) == nil {

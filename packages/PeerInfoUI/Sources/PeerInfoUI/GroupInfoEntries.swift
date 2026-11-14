@@ -124,6 +124,8 @@ private struct Result {
 }
 
 final class GroupInfoArguments<Context: AccountContextProtocol> : PeerInfoArguments<Context> {
+
+    var openDiscussionLinkedChannel: ((PeerId) -> Void)?
     
     private let addMemberDisposable = MetaDisposable()
     private let removeMemberDisposable = MetaDisposable()

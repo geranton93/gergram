@@ -24,6 +24,7 @@ import GroupCallScreenUI
 import WebAppUI
 import InlineStickerLayer
 import AppAnalytics
+import MessageUtils
 
 struct UserInfoPersonalChannel : Equatable {
     let peer: EnginePeer
@@ -791,6 +792,14 @@ public class PeerInfoController<Context: AccountContextProtocol>: EditableViewCo
         }, mediaController: { [weak self] in
             return self?.mediaController
         })
+        _groupArguments.openDiscussionLinkedChannel = { [weak self] linkedId in
+            guard let self, self.threadInfo == nil, self.state == .Normal, !self._groupArguments.isAd,
+                  self.context.isCurrent || self.context.isExternal, !self.context.isFrozen,
+                  self.navigationController?.controller === self, self.view.window === self.context.window,
+                  let current = self.peerView.with({ $0 }), current.peerId == self.peerId,
+                  discussionLinkedChannelId(in: current, contentSettings: self.context.contentSettings) == linkedId else { return }
+            self._groupArguments.peerChat(linkedId)
+        }
         
         _userArguments = UserInfoArguments(context: context, peerId: peerId, state: UserInfoState(), isAd: isAd, pushViewController: pushViewController, pullNavigation:{ [weak self] () -> NavigationViewController? in
              return self?.navigationController

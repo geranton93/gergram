@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import ImageIO
 
 enum MessageShotRenderer {
@@ -46,20 +47,28 @@ enum MessageShotRenderer {
 
     struct Row {
         let header: NSAttributedString
+        let headerDecoration: HeaderDecoration?
         let body: NSAttributedString
         let background: NSColor
         let reply: Reply?
         let attachments: [Attachment]
         let footer: NSAttributedString?
 
-        init(header: NSAttributedString, body: NSAttributedString, background: NSColor, reply: Reply? = nil, attachments: [Attachment] = [], footer: NSAttributedString? = nil) {
+        init(header: NSAttributedString, headerDecoration: HeaderDecoration? = nil, body: NSAttributedString, background: NSColor, reply: Reply? = nil, attachments: [Attachment] = [], footer: NSAttributedString? = nil) {
             self.header = header
+            self.headerDecoration = headerDecoration
             self.body = body
             self.background = background
             self.reply = reply
             self.attachments = attachments
             self.footer = footer
         }
+    }
+
+    struct HeaderDecoration {
+        let label: String
+        let foreground: NSColor
+        let background: NSColor
     }
 
     struct SpoilerRedaction {
@@ -116,8 +125,17 @@ enum MessageShotRenderer {
 
     private struct RowLayout {
         let headerHeight: CGFloat
+        let headerTextWidth: CGFloat
+        let decoration: DecorationLayout?
         let parts: [(Part, CGSize)]
         let height: CGFloat
+    }
+
+    private struct DecorationLayout {
+        let line: CTLine
+        let ascent: CGFloat
+        let background: NSColor
+        let size: CGSize
     }
 
     static func thumbnail(at path: String) -> CGImage? {
@@ -172,7 +190,7 @@ enum MessageShotRenderer {
             let labels = row.attachments.reduce(0) { $0 + $1.label.length }
             let separators = max(0, row.attachments.count - (row.body.length == 0 ? 1 : 0))
             let replyLength = row.reply.map { $0.title.length + $0.excerpt.length } ?? 0
-            return length + row.header.length + row.body.length + labels + separators + replyLength + (row.footer?.length ?? 0)
+            return length + row.header.length + (row.headerDecoration?.label.utf16.count ?? 0) + row.body.length + labels + separators + replyLength + (row.footer?.length ?? 0)
         }
         guard textLength <= 16_000 else { return nil }
 
@@ -186,6 +204,11 @@ enum MessageShotRenderer {
         let cardWidth = width - 2 * margin
         let textWidth = cardWidth - 2 * padding
         let drawingOptions: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+        let decorationHorizontalPadding: CGFloat = 6
+        let decorationVerticalPadding: CGFloat = 2
+        let decorationSpacing: CGFloat = 8
+        let maximumDecorationWidth: CGFloat = 140
+        let decorationFont = NSFont.systemFont(ofSize: 11, weight: .medium)
 
         func height(of text: NSAttributedString, width: CGFloat) -> CGFloat {
             ceil(text.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: drawingOptions).height)
@@ -196,9 +219,36 @@ enum MessageShotRenderer {
                 + replySpacing + height(of: reply.excerpt, width: replyTextWidth)
         }
 
+        func measureDecoration(_ decoration: HeaderDecoration) -> DecorationLayout {
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: decorationFont,
+                .foregroundColor: decoration.foreground
+            ]
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: decoration.label, attributes: attributes))
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            let naturalWidth = ceil(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+            let contentWidth = min(naturalWidth, maximumDecorationWidth - 2 * decorationHorizontalPadding)
+            let displayLine: CTLine
+            if naturalWidth > contentWidth {
+                let ellipsis = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attributes))
+                displayLine = CTLineCreateTruncatedLine(line, contentWidth, .end, ellipsis) ?? ellipsis
+            } else {
+                displayLine = line
+            }
+            return DecorationLayout(
+                line: displayLine, ascent: ascent, background: decoration.background,
+                size: CGSize(width: contentWidth + 2 * decorationHorizontalPadding,
+                             height: ceil(ascent + descent) + 2 * decorationVerticalPadding)
+            )
+        }
+
         func measure(withThumbnails: Bool) -> [RowLayout] {
             rows.map { row in
-                let header = row.header.length == 0 ? 0 : height(of: row.header, width: textWidth)
+                let decoration = row.headerDecoration.map(measureDecoration)
+                let headerTextWidth = textWidth - (decoration.map { $0.size.width + decorationSpacing } ?? 0)
+                let headerTextHeight = row.header.length == 0 ? 0 : height(of: row.header, width: headerTextWidth)
+                let header = max(headerTextHeight, decoration?.size.height ?? 0)
                 var content: [Part] = row.reply.map { [.reply($0)] } ?? []
                 content += parts(for: row, withThumbnails: withThumbnails)
                 if let footer = row.footer, footer.length > 0 {
@@ -217,7 +267,7 @@ enum MessageShotRenderer {
                 }
                 let spacingCount = max(0, parts.count - (header > 0 ? 0 : 1))
                 let body = parts.reduce(CGFloat(0)) { $0 + $1.1.height }
-                return RowLayout(headerHeight: header, parts: parts, height: header + body + CGFloat(spacingCount) * textSpacing + 2 * padding)
+                return RowLayout(headerHeight: header, headerTextWidth: headerTextWidth, decoration: decoration, parts: parts, height: header + body + CGFloat(spacingCount) * textSpacing + 2 * padding)
             }
         }
         let canvasInsets = 2 * margin + CGFloat(rows.count - 1) * rowSpacing
@@ -257,8 +307,22 @@ enum MessageShotRenderer {
             let textX = card.minX + padding
             var textY = card.minY + padding
             if layout.headerHeight > 0 {
-                let header = NSRect(x: textX, y: textY, width: textWidth, height: layout.headerHeight)
+                let header = NSRect(x: textX, y: textY, width: layout.headerTextWidth, height: layout.headerHeight)
                 row.header.draw(with: header, options: drawingOptions)
+                if let decoration = layout.decoration {
+                    let x = textX + textWidth - decoration.size.width
+                    let rect = CGRect(origin: CGPoint(x: x, y: textY), size: decoration.size)
+                    decoration.background.setFill()
+                    NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+                    bitmap.saveGState()
+                    bitmap.clip(to: rect)
+                    bitmap.translateBy(x: rect.minX + decorationHorizontalPadding, y: rect.minY + decorationVerticalPadding + decoration.ascent)
+                    bitmap.scaleBy(x: 1, y: -1)
+                    bitmap.textMatrix = .identity
+                    bitmap.textPosition = .zero
+                    CTLineDraw(decoration.line, bitmap)
+                    bitmap.restoreGState()
+                }
                 textY += layout.headerHeight + textSpacing
             }
             for (part, size) in layout.parts {

@@ -85,6 +85,13 @@ enum ChatMessageShotAction {
             options.showsBackground.toggle()
             options.save()
         }, state: options.showsBackground ? .on : .off))
+        if messages.contains(where: { headerDecorationLabel(for: $0, interaction: interaction) != nil }) {
+            menu.addItem(ContextMenuItem(localizedString("Gergram.Chat.MessageShotShowHeaderDecorations"), handler: {
+                var options = MessageShotOptions()
+                options.showsHeaderDecorations.toggle()
+                options.save()
+            }, state: options.showsHeaderDecorations ? .on : .off))
+        }
         if messages.contains(where: { reactions(for: $0, accountPeerId: interaction.interactionContext.peerId).contains(where: { $0.count > 0 }) }) {
             menu.addItem(ContextMenuItem(localizedString("Gergram.Chat.MessageShotShowReactions"), handler: {
                 var options = MessageShotOptions()
@@ -116,6 +123,24 @@ enum ChatMessageShotAction {
         case .dark: return strings().appearanceSettingsColorThemeDark
         case .nightAccent: return strings().appearanceSettingsColorThemeNightAccent
         }
+    }
+
+    private static func headerDecorationLabel(for message: Message, interaction: ChatInteraction) -> String? {
+        guard message.effectiveAuthor?.id == message.author?.id,
+              ChatChannelAuthorBadge.showsDirectAuthor(
+                in: (message.peers[message.id.peerId] as? TelegramChannel)?.info,
+                author: (message.author as? TelegramChannel)?.info,
+                displaysAuthor: message.effectiveAuthor?.displayTitle.isEmpty == false,
+                isIncoming: message.isIncoming(interaction.interactionContext.account, true)
+              ) else { return nil }
+        return strings().chatChannelBadge
+    }
+
+    private static func headerDecorations(for messages: [Message], interaction: ChatInteraction, options: MessageShotOptions) -> [MessageId: String] {
+        guard options.showsHeaderDecorations else { return [:] }
+        return Dictionary(uniqueKeysWithValues: messages.compactMap { message in
+            headerDecorationLabel(for: message, interaction: interaction).map { (message.id, $0) }
+        })
     }
 
     private static func reactions(for message: Message, accountPeerId: PeerId) -> [MessageReaction] {
@@ -359,9 +384,10 @@ enum ChatMessageShotAction {
                 return
             }
             let replies = replyExcerpts(in: snapshot, interaction: interaction)
+            let decorations = headerDecorations(for: snapshot.messages, interaction: interaction, options: options)
             let canvasBackground = options.showsBackground ? palette.background : nil
             guard snapshot.messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
-                  let png = MessageShotRenderer.png(rows: rows(for: snapshot.messages, replies: replies, previews: previews, interaction: interaction, options: options, palette: palette, fontSize: presentationTheme.fontSize), background: canvasBackground) else {
+                  let png = MessageShotRenderer.png(rows: rows(for: snapshot.messages, replies: replies, previews: previews, decorations: decorations, interaction: interaction, options: options, palette: palette, fontSize: presentationTheme.fontSize), background: canvasBackground) else {
                 showModalText(for: context.window, text: localizedString("Gergram.Chat.MessageShotRenderFailed"))
                 return
             }
@@ -374,7 +400,8 @@ enum ChatMessageShotAction {
                 |> map { [weak interaction] current -> Bool? in
                     guard let interaction, isCurrent(interaction) else { return nil }
                     guard let current, unchanged(current, since: renderedVersions),
-                          supportsSnapshot(current, ids: ids, interaction: interaction) else { return false }
+                          supportsSnapshot(current, ids: ids, interaction: interaction),
+                          headerDecorations(for: current.messages, interaction: interaction, options: options) == decorations else { return false }
                     if !replies.isEmpty {
                         let currentReplies = replyExcerpts(in: current, interaction: interaction)
                         guard replies.allSatisfy({ currentReplies[$0.key] == $0.value }) else { return false }
@@ -428,7 +455,7 @@ enum ChatMessageShotAction {
         }
     }
 
-    private static func rows(for messages: [Message], replies: [MessageId: ReplyExcerpt], previews: [MessageId: Preview], interaction: ChatInteraction, options: MessageShotOptions, palette: ColorPalette, fontSize: CGFloat) -> [MessageShotRenderer.Row] {
+    private static func rows(for messages: [Message], replies: [MessageId: ReplyExcerpt], previews: [MessageId: Preview], decorations: [MessageId: String], interaction: ChatInteraction, options: MessageShotOptions, palette: ColorPalette, fontSize: CGFloat) -> [MessageShotRenderer.Row] {
         let context = interaction.interactionContext
         let colors = TelegramChatColors(palette, true)
         return messages.sorted { $0.index < $1.index }.map { message in
@@ -493,7 +520,8 @@ enum ChatMessageShotAction {
                     accent: palette.accent
                 )
             }
-            return MessageShotRenderer.Row(header: header, body: text, background: colors.bubbleBackgroundColor(incoming, true), reply: reply, attachments: attachments, footer: footer)
+            let decoration = options.headerDecoration(decorations[message.id], foreground: colors.textColor(incoming, true), background: secondary.withAlphaComponent(0.12))
+            return MessageShotRenderer.Row(header: header, headerDecoration: decoration, body: text, background: colors.bubbleBackgroundColor(incoming, true), reply: reply, attachments: attachments, footer: footer)
         }
     }
 }

@@ -118,6 +118,80 @@ final class MessageShotTests: XCTestCase {
         XCTAssertEqual(options.headerTitle(author: nil, timestamp: "Date"), "")
     }
 
+    func testHeaderDecorationsDefaultToVisibleAndPersistIndependentlyOfTimestamps() throws {
+        let suiteName = "MessageShotTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var options = MessageShotOptions(defaults: defaults)
+        XCTAssertTrue(options.showsHeaderDecorations)
+        XCTAssertEqual(options.headerDecoration("  Channel\n badge ", foreground: .white, background: .black)?.label, "Channel badge")
+        XCTAssertNil(options.headerDecoration(" \t ", foreground: .white, background: .black))
+        XCTAssertNil(options.headerDecoration(String(repeating: "a", count: 129), foreground: .white, background: .black))
+
+        options.showsHeaderDecorations = false
+        options.save(to: defaults)
+        options = MessageShotOptions(defaults: defaults)
+        XCTAssertFalse(options.showsHeaderDecorations)
+        XCTAssertNil(options.headerDecoration("Channel", foreground: .white, background: .black))
+        XCTAssertEqual(options.headerTitle(author: "Sender", timestamp: "Date"), "Sender • Date")
+    }
+
+    func testHiddenHeaderDecorationMatchesUndecoratedExport() throws {
+        let suiteName = "MessageShotTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var options = MessageShotOptions(defaults: defaults)
+        let header = text(options.headerTitle(author: "Sender", timestamp: "Date"))
+        let body = text("Caption")
+        func png(_ decoration: MessageShotRenderer.HeaderDecoration?) throws -> Data {
+            let row = MessageShotRenderer.Row(header: header, headerDecoration: decoration, body: body, background: .white)
+            return try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: nil))
+        }
+
+        let visible = try png(options.headerDecoration("Channel", foreground: .white, background: .black))
+        options.showsHeaderDecorations = false
+        let hidden = try png(options.headerDecoration("Channel", foreground: .white, background: .black))
+        XCTAssertEqual(hidden, try png(nil))
+        XCTAssertNotEqual(visible, hidden)
+    }
+
+    func testLongHeaderDecorationHasBoundedWidthAndTruncatesBeforeHiddenText() throws {
+        let common = String(repeating: "W", count: 50)
+        func png(_ label: String) throws -> Data {
+            let decoration = MessageShotRenderer.HeaderDecoration(label: label, foreground: .white, background: .red)
+            let row = MessageShotRenderer.Row(header: text("Sender • Date"), headerDecoration: decoration, body: text("Body"), background: .black)
+            return try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: nil))
+        }
+        let pngWithBadge = try png(common + " left")
+        XCTAssertEqual(pngWithBadge, try png(common + " right"))
+        let image = try XCTUnwrap(NSBitmapImageRep(data: pngWithBadge))
+        func isRed(_ x: Int, _ y: Int) -> Bool {
+            guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+            return color.redComponent > 0.7 && color.greenComponent < 0.3 && color.blueComponent < 0.3
+        }
+        let redColumns = (0 ..< image.pixelsWide).filter { x in (55 ... 95).contains { isRed(x, $0) } }
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(redColumns.first), (532 - 140) * 2)
+        XCTAssertLessThan(try XCTUnwrap(redColumns.last), 532 * 2)
+        XCTAssertGreaterThan(redColumns.count, 250)
+    }
+
+    func testHeaderDecorationUsesSuppliedContrastColorsInBothPalettes() throws {
+        for (foreground, background, card) in [
+            (NSColor.white, NSColor.black, NSColor.white),
+            (NSColor.black, NSColor.white, NSColor.black)
+        ] {
+            let decoration = MessageShotRenderer.HeaderDecoration(label: "CHANNEL", foreground: foreground, background: background)
+            let row = MessageShotRenderer.Row(header: text(""), headerDecoration: decoration, body: text(""), background: card)
+            let image = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(MessageShotRenderer.png(rows: [row], background: nil))))
+            let pixels = (950 ... 1040).flatMap { x in
+                (64 ... 80).compactMap { image.colorAt(x: x, y: $0)?.usingColorSpace(.deviceRGB)?.redComponent }
+            }
+            XCTAssertTrue(pixels.contains { $0 < 0.1 })
+            XCTAssertTrue(pixels.contains { $0 > 0.9 })
+        }
+    }
+
     func testBackgroundDefaultsToVisibleAndPersistsIndependentlyOfTimestamps() throws {
         let suiteName = "MessageShotTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

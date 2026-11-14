@@ -4,6 +4,18 @@ import TGUIKit
 import TelegramCore
 
 enum ChatReactionAvatarVisibility {
+    static func threadRootMessages(
+        isThreadMode: Bool,
+        topId: MessageId?,
+        hasEarlierMessages: Bool,
+        isLoading: Bool,
+        hasEarlierHole: Bool,
+        cached: [MessageId: [Message]]?
+    ) -> [Message]? {
+        guard isThreadMode, let topId, !hasEarlierMessages, !isLoading, !hasEarlierHole else { return nil }
+        return cached?[topId]
+    }
+
     static func eligibleReactionCounts(_ reactions: [MessageReaction]) -> Bool {
         return reactions.allSatisfy { $0.count > 0 } && reactions.reduce(0, { $0 + Int64($1.count) }) <= 3
     }

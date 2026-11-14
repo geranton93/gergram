@@ -4375,6 +4375,16 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             : .single([])
         let historyPresentation = combineLatest(historyUiState, localVisibility, locallyRevealedMessageId.get(), FastSettings.showMessageTimestampSecondsSignal, FastSettings.filterZalgoTextSignal, ChatEditedIndicatorPreferences.shared.appearanceSignal, PremiumStatusVisibilityPreferences.shared.signal, ChatReplyAppearancePreferences.shared.signal, ChatReactionVisibilityPreferences.shared.signal, MessageBubbleTailPreferences.shared.signal, ChatMessageWidthPreferences.shared.signal, ChatMediaSpoilerPreferences.shared.signal, ChatMonospaceFontPreferences.shared.signal, MessageBubbleRadiusPreferences.shared.signal, ChatAffordancePreferences.shared.hidesFastShareSignal)
         typealias HistoryUpdate = (ChatHistoryViewUpdate, TableSavingSide?, ChatHistoryLocationInput, ChatLocation, Int)
+        func threadRootMessages(location: ChatLocation, view: MessageHistoryView, initialData: ChatHistoryCombinedInitialData) -> [Message]? {
+            return ChatReactionAvatarVisibility.threadRootMessages(
+                isThreadMode: mode.isThreadMode,
+                topId: location.threadMsgId,
+                hasEarlierMessages: view.earlierId != nil,
+                isLoading: view.isLoading,
+                hasEarlierHole: view.holeEarlier,
+                cached: initialData.cachedDataMessages
+            )
+        }
         let historyWithFilteredSenders: Signal<(HistoryUpdate, Set<PeerId>, Set<PeerId>), NoError>
         if supportsLocalMessageVisibility {
             let localShadowBans: Signal<Set<PeerId>, NoError> = peerId.namespace != Namespaces.Peer.SecretChat
@@ -4392,7 +4402,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
             ) |> mapToSignal { update, hideBlockedSenders, showInChat, shadowBannedSenderIds in
                 guard ChatBlockedSenderVisibility.Candidates.shouldFilter(hidesBlocked: hideBlockedSenders, showsFilteredSenders: showInChat, locallyHidden: shadowBannedSenderIds),
                       update.3.peerId == peerId, update.2.tag == nil,
-                      case let .HistoryView(view, _, _, _) = update.0 else {
+                      case let .HistoryView(view, _, _, initialData) = update.0 else {
                     return .single((update, [], []))
                 }
                 var senderIds: Set<PeerId> = []
@@ -4400,6 +4410,9 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                 for entry in view.entries {
                     senderIds.formUnion(ChatBlockedSenderVisibility.candidates(for: entry.message, accountPeerId: context.peerId))
                     reactionAvatarIds.formUnion(ChatReactionAvatarVisibility.candidates(for: entry.message, accountPeerId: context.peerId))
+                }
+                for message in threadRootMessages(location: update.3, view: view, initialData: initialData) ?? [] {
+                    reactionAvatarIds.formUnion(ChatReactionAvatarVisibility.candidates(for: message, accountPeerId: context.peerId))
                 }
                 let candidates = ChatBlockedSenderVisibility.Candidates(messageSenders: senderIds, reactionAvatars: reactionAvatarIds)
                 let blockedCandidates = candidates.blockedPeerIds
@@ -4571,21 +4584,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                         accountPeerId: context.peerId
                     )
                     
-                    let topMessages: [Message]?
-                    switch chatLocation {
-                    case let .thread(data):
-                        if mode.isThreadMode {
-                            if view.earlierId == nil, !view.isLoading, !view.holeEarlier {
-                                topMessages = initialData.cachedDataMessages?[data.effectiveTopId]
-                            } else {
-                                topMessages = nil
-                            }
-                        } else {
-                            topMessages = nil
-                        }
-                    case .peer:
-                        topMessages = nil
-                    }
+                    let topMessages = threadRootMessages(location: chatLocation, view: view, initialData: initialData)
                     
                     var ads:(fixed: Message?, opportunistic: [Message]) = (fixed: nil, opportunistic: [])
                    

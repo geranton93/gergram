@@ -77,6 +77,36 @@ final class ChatReactionAvatarVisibilityTests: XCTestCase {
         XCTAssertTrue(ChatReactionAvatarVisibility.candidates(for: message(channelId, channel: broadcast, reaction: reactions), accountPeerId: account).isEmpty)
     }
 
+    func testOnlyRenderedCachedThreadRootContributesDistinctAvatarCandidates() {
+        let reaction = MessageReaction(value: .builtin("👍"), count: 1, chosenOrder: nil)
+        let attributes = ReactionsMessageAttribute(canViewList: true, isTags: false, reactions: [reaction], recentPeers: [recent(reaction.value, reactor)], topPeers: [])
+        let root = message(room, reaction: attributes)
+        let albumMember = message(room, messageId: 2, reaction: attributes)
+        let otherKey = MessageId(peerId: room, namespace: Namespaces.Message.Cloud, id: 3)
+        let cache = [root.id: [root, albumMember], otherKey: [message(room, messageId: 3, reaction: attributes)]]
+        func rootMessages(isThreadMode: Bool = true, topId: MessageId?, hasEarlier: Bool = false, isLoading: Bool = false, hasHole: Bool = false) -> [Message]? {
+            ChatReactionAvatarVisibility.threadRootMessages(isThreadMode: isThreadMode, topId: topId, hasEarlierMessages: hasEarlier, isLoading: isLoading, hasEarlierHole: hasHole, cached: cache)
+        }
+
+        let messages = rootMessages(topId: root.id)
+        XCTAssertEqual(messages?.map(\.id), [root.id, albumMember.id])
+        XCTAssertNil(rootMessages(isThreadMode: false, topId: root.id))
+        XCTAssertNil(rootMessages(topId: nil))
+        XCTAssertNil(rootMessages(topId: albumMember.id))
+        XCTAssertNil(rootMessages(topId: root.id, hasEarlier: true))
+        XCTAssertNil(rootMessages(topId: root.id, isLoading: true))
+        XCTAssertNil(rootMessages(topId: root.id, hasHole: true))
+
+        let reactionIds = (messages ?? []).reduce(into: Set<PeerId>()) { ids, message in
+            ids.formUnion(ChatReactionAvatarVisibility.candidates(for: message, accountPeerId: account))
+        }
+        let candidates = ChatBlockedSenderVisibility.Candidates(messageSenders: [author], reactionAvatars: reactionIds)
+        XCTAssertEqual(candidates.blockedPeerIds, [author, reactor])
+        let hidden = candidates.project(knownBlocked: [reactor], locallyHidden: [])
+        XCTAssertEqual(hidden.reactionAvatars, [reactor])
+        XCTAssertTrue(hidden.messageSenders.isEmpty)
+    }
+
     private func user(_ id: PeerId) -> TelegramUser {
         TelegramUser(id: id, accessHash: nil, firstName: "User", lastName: nil, username: nil, phone: nil, photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil)
     }
@@ -89,11 +119,11 @@ final class ChatReactionAvatarVisibilityTests: XCTestCase {
         .init(value: reaction, isLarge: false, isUnseen: false, isMy: id == account, peerId: id, timestamp: nil)
     }
 
-    private func message(_ id: PeerId, channel: TelegramChannel? = nil, reaction: ReactionsMessageAttribute) -> Message {
+    private func message(_ id: PeerId, messageId: Int32 = 1, channel: TelegramChannel? = nil, reaction: ReactionsMessageAttribute) -> Message {
         var peers: [PeerId: Peer] = [reactor: user(reactor), account: user(account)]
         if let channel {
             peers[channel.id] = channel
         }
-        return Message(stableId: 1, stableVersion: 1, id: .init(peerId: id, namespace: Namespaces.Message.Cloud, id: 1), globallyUniqueId: nil, groupingKey: nil, groupInfo: nil, threadId: nil, timestamp: 0, flags: [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: user(account), text: "Message", attributes: [reaction], media: [], peers: SimpleDictionary(peers), associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
+        return Message(stableId: UInt32(messageId), stableVersion: 1, id: .init(peerId: id, namespace: Namespaces.Message.Cloud, id: messageId), globallyUniqueId: nil, groupingKey: nil, groupInfo: nil, threadId: nil, timestamp: 0, flags: [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: user(account), text: "Message", attributes: [reaction], media: [], peers: SimpleDictionary(peers), associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
     }
 }

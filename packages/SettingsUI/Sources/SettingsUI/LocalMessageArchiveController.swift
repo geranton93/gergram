@@ -1,6 +1,7 @@
 import AlertsUI
 import Foundation
 import GeneralRows
+import InAppSettings
 import InputDataUI
 import Localization
 import Postbox
@@ -57,6 +58,11 @@ private struct ArchiveEntry: Equatable {
         localizedString(id.kind == .edit ? "Gergram.Archive.Edited" : "Gergram.Archive.Deleted")
     }
 
+    func displayKindTitle(deletedMark: String) -> String {
+        guard id.kind == .deletion else { return kindTitle }
+        return String(format: localizedString("Gergram.Archive.DeletedKindWithMark"), kindTitle, deletedMark)
+    }
+
     var displayChatTitle: String {
         chatTitle ?? localizedString("Gergram.Archive.UnavailableChat")
     }
@@ -76,6 +82,7 @@ private final class ArchiveScreenModel {
     private let accountId: Int64
     private let scope: LocalArchiveScope
     private let operation = MetaDisposable()
+    weak var archiveController: InputDataController?
     private weak var detailController: InputDataController?
     private var page = ArchivePageState()
     private var currentCursor: LocalArchivePage.Cursor?
@@ -110,6 +117,12 @@ private final class ArchiveScreenModel {
     func loadOlder() {
         guard !page.isBusy, let olderCursor else { return }
         load(before: olderCursor)
+    }
+
+    func editDeletedMark() {
+        guard scope == .account, let context, let archiveController,
+              let navigation = activeArchiveMarkNavigation(for: archiveController, context: context) else { return }
+        navigation.push(archiveDeletedMarkController(context: context))
     }
 
     private func load(before cursor: LocalArchivePage.Cursor?) {
@@ -196,7 +209,7 @@ private final class ArchiveScreenModel {
                 )))
             }
         }
-        let detail = InputDataController(dataSignal: .single(InputDataSignalValue(entries: entries)), title: entry.kindTitle, hasDone: false)
+        let detail = InputDataController(dataSignal: .single(InputDataSignalValue(entries: entries)), title: entry.displayKindTitle(deletedMark: ArchiveDeletedMarkPreferences.shared.mark), hasDone: false)
         self.detailController = detail
         context.bindings.rootNavigation().push(detail)
     }
@@ -276,6 +289,42 @@ private final class ArchiveScreenModel {
     }
 }
 
+private func activeArchiveMarkNavigation(
+    for controller: InputDataController, context: any AccountContextProtocol
+) -> NavigationViewController? {
+    guard context.isCurrent, !context.isFrozen, let navigation = controller.navigationController,
+          navigation.controller === controller, controller.window === context.window,
+          context.window.isVisible, !hasModals(context.window) else { return nil }
+    return navigation
+}
+
+private func archiveDeletedMarkController(
+    context: any AccountContextProtocol, preferences: ArchiveDeletedMarkPreferences = .shared
+) -> InputDataController {
+    let identifier = InputDataIdentifier("deleted-mark-text")
+    let title = localizedString("Gergram.Archive.DeletedMark")
+    let mark = preferences.mark
+    let entries: [InputDataEntry] = [
+        .sectionId(0, type: .normal),
+        .input(sectionId: 1, index: 0, value: .string(mark == ArchiveDeletedMarkPreferences.defaultMark ? "" : mark), error: nil,
+               identifier: identifier, mode: .plain, data: .init(viewType: .singleItem),
+               placeholder: nil, inputPlaceholder: ArchiveDeletedMarkPreferences.defaultMark, filter: { $0 },
+               limit: Int32(ArchiveDeletedMarkPreferences.maximumCustomTextUTF16Length)),
+        .desc(sectionId: 1, index: 1, text: .plain(localizedString("Gergram.Archive.DeletedMarkHelp")),
+              data: .init(viewType: .textBottomItem))
+    ]
+    let controller = InputDataController(dataSignal: .single(InputDataSignalValue(entries: entries)), title: title)
+    controller.validateData = { [weak controller, weak context] data in
+        guard let controller, let context, activeArchiveMarkNavigation(for: controller, context: context) != nil,
+              let value = data[identifier]?.stringValue else { return .none }
+        guard preferences.setCustomMark(value) else {
+            return .fail(.alert(localizedString("Gergram.Archive.InvalidDeletedMark")))
+        }
+        return .success(.navigationBack)
+    }
+    return controller
+}
+
 private func archiveDate(_ timestamp: Int64) -> String {
     DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(timestamp)), dateStyle: .medium, timeStyle: .short)
 }
@@ -299,7 +348,8 @@ func localMessageArchiveController(
     } else {
         preferences = .single(.defaultSettings)
     }
-    let signal = combineLatest(preferences, model.pages.get()) |> map { [weak model] settings, page -> InputDataSignalValue in
+    let signal = combineLatest(preferences, model.pages.get(), ArchiveDeletedMarkPreferences.shared.signal)
+    |> map { [weak model] settings, page, deletedMark -> InputDataSignalValue in
         var entries: [InputDataEntry] = [.sectionId(0, type: .normal)]
         if scope == .account {
             let options = ArchiveCaptureOption.allCases
@@ -313,11 +363,15 @@ func localMessageArchiveController(
                 )))
             }
             entries.append(.desc(sectionId: 1, index: 3, text: .plain(localizedString("Gergram.Archive.Description")), data: .init(viewType: .textBottomItem)))
+            entries.append(.general(sectionId: 1, index: 4, value: .none, error: nil, identifier: InputDataIdentifier("deleted-mark"), data: .init(
+                name: localizedString("Gergram.Archive.DeletedMark"), color: theme.colors.text, type: .nextContext(deletedMark),
+                viewType: .singleItem, action: { [weak model] in model?.editDeletedMark() }
+            )))
         }
         entries.append(.sectionId(1, type: .normal))
 
         for (index, entry) in page.entries.enumerated() {
-            let label = String(format: localizedString("Gergram.Archive.Row"), entry.kindTitle, entry.displayChatTitle)
+            let label = String(format: localizedString("Gergram.Archive.Row"), entry.displayKindTitle(deletedMark: deletedMark), entry.displayChatTitle)
             entries.append(.general(sectionId: 2, index: Int32(index), value: .none, error: nil, identifier: InputDataIdentifier(entry.stableId), data: .init(
                 name: label, color: theme.colors.text, type: .next, viewType: bestGeneralViewType(page.entries, for: index), enabled: !page.isBusy,
                 description: archiveDate(entry.capturedAt), action: { [weak model] in model?.show(entry) }
@@ -347,6 +401,7 @@ func localMessageArchiveController(
         return InputDataSignalValue(entries: entries)
     }
     let controller = InputDataController(dataSignal: signal, title: localizedString(titleKey), removeAfterDisappear: false, hasDone: false)
+    model.archiveController = controller
     controller.contextObject = model
     controller.didAppear = { [weak model] _ in model?.loadCurrent() }
     model.loadNewest()

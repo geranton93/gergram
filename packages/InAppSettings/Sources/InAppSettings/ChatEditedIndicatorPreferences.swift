@@ -23,8 +23,8 @@ public struct ChatEditedIndicatorAppearance: Equatable {
 
 public final class ChatEditedIndicatorPreferences {
     public static let shared = ChatEditedIndicatorPreferences(defaults: .standard)
-    public static let maximumCustomTextLength = 16
-    public static let maximumCustomTextUTF16Length = 48
+    public static let maximumCustomTextLength = ChatIndicatorCustomText.maximumLength
+    public static let maximumCustomTextUTF16Length = ChatIndicatorCustomText.maximumUTF16Length
 
     private static let key = "Gergram.Chat.EditedIndicatorStyle"
     private static let textKey = "Gergram.Chat.EditedIndicatorCustomText"
@@ -55,7 +55,7 @@ public final class ChatEditedIndicatorPreferences {
 
     @discardableResult
     public func setCustomText(_ value: String) -> Bool {
-        guard let text = Self.validCustomText(value) else { return false }
+        guard let text = ChatIndicatorCustomText.validated(value) else { return false }
         defaults.set(text, forKey: Self.textKey)
         current.set(appearance)
         return true
@@ -69,27 +69,7 @@ public final class ChatEditedIndicatorPreferences {
 
     private static func load(from defaults: UserDefaults) -> ChatEditedIndicatorAppearance {
         let style = defaults.string(forKey: Self.key).flatMap(ChatEditedIndicatorStyle.init(rawValue:)) ?? .text
-        let text = defaults.string(forKey: Self.textKey).flatMap(Self.validCustomText)
+        let text = defaults.string(forKey: Self.textKey).flatMap(ChatIndicatorCustomText.validated)
         return .init(style: style, customText: text)
-    }
-
-    private static func validCustomText(_ value: String) -> String? {
-        guard value.utf16.prefix(maximumCustomTextUTF16Length + 1).count <= maximumCustomTextUTF16Length else { return nil }
-        let containsForbiddenScalar = value.unicodeScalars.contains { scalar in
-            switch scalar.properties.generalCategory {
-            case .control, .lineSeparator, .paragraphSeparator:
-                return true
-            case .format:
-                return scalar.value != 0x200C && scalar.value != 0x200D
-                    && !(0xE0020 ... 0xE007F).contains(scalar.value)
-            default:
-                return false
-            }
-        }
-        guard !containsForbiddenScalar else { return nil }
-        let text = value.trimmingCharacters(in: .whitespaces)
-        guard text.count <= maximumCustomTextLength,
-              text.isEmpty || text.unicodeScalars.contains(where: { !$0.properties.isDefaultIgnorableCodePoint }) else { return nil }
-        return text
     }
 }

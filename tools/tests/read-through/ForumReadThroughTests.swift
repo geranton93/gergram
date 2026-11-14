@@ -90,7 +90,7 @@ final class ForumReadThroughTests: XCTestCase {
         let transaction = account.postbox.data
         XCTAssertFalse(read(account, through: 13, thread: 20))
         XCTAssertFalse(read(account, through: 12))
-        transaction.holes.insert(11)
+        transaction.holes = [11...11]
         XCTAssertFalse(read(account, through: 13))
         XCTAssertTrue(account.network.requests.isEmpty)
         XCTAssertTrue(account.stateManager.notifications.isEmpty)
@@ -98,11 +98,21 @@ final class ForumReadThroughTests: XCTestCase {
 
     func testIgnoresHolesOutsideTheSelectedRangeAndRejectsReread() {
         let account = setup()
-        account.postbox.data.holes = IndexSet([10, 14])
+        account.postbox.data.holes = [2...10, 14...19, 21...22]
         XCTAssertTrue(read(account, through: 13))
         XCTAssertFalse(read(account, through: 13))
         XCTAssertEqual(account.network.requests.count, 1)
         XCTAssertEqual(account.stateManager.notifications, [id(13)])
+    }
+
+    func testRejectsFirstHoleStraddlingTheCursorOrStartingAtTheTarget() {
+        for hole: ClosedRange<Int32> in [8...11, 13...16] {
+            let account = setup()
+            account.postbox.data.holes = [21...22, hole, 25...30]
+            XCTAssertFalse(read(account, through: 13))
+            XCTAssertTrue(account.network.requests.isEmpty)
+            XCTAssertTrue(account.stateManager.notifications.isEmpty)
+        }
     }
 
     func testReadRangeIsBoundedBeforeTheNetworkRequest() {

@@ -11,7 +11,10 @@ FIXTURE = Path(__file__).resolve().parent
 PIN = "24638bc69bd083981b178dd1e7f921eebbf7fc46"
 POSTBOX = Path("submodules/Postbox/Sources")
 MESSAGES = Path("submodules/TelegramCore/Sources/TelegramEngine/Messages")
-PATCH = ROOT / "scripts/telegram-ios-read-through.patch"
+PATCHES = (
+    ROOT / "scripts/telegram-ios-read-through.patch",
+    ROOT / "scripts/telegram-ios-read-forum-through.patch",
+)
 CHAT_UI = ROOT / "packages/ChatUI"
 READ_STATE = POSTBOX / "MessageHistoryReadStateTable.swift"
 READ_TRANSACTION = MESSAGES / "ApplyMaxReadIndexInteractively.swift"
@@ -43,9 +46,14 @@ def prepare_source(source, destination):
         target.write_bytes(pinned_bytes(source, path))
     subprocess.run(["git", "init", "-q", str(destination)], check=True)
     apply = ["git", "-C", str(destination), "apply"]
-    subprocess.run([*apply, "--check", str(PATCH)], check=True)
-    subprocess.run([*apply, str(PATCH)], check=True)
-    subprocess.run([*apply, "--reverse", "--check", str(PATCH)], check=True)
+    # The prepare script preflights all groups even when later groups touch the same file.
+    for patch in PATCHES:
+        subprocess.run([*apply, "--check", str(patch)], check=True)
+    # Applying the first group leaves the same starting point as an already prepared checkout.
+    for patch in PATCHES:
+        subprocess.run([*apply, str(patch)], check=True)
+    for patch in PATCHES:
+        subprocess.run([*apply, "--reverse", "--check", str(patch)], check=True)
 
 
 def extract_function(source, name, indent=""):

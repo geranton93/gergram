@@ -322,7 +322,7 @@ final class Transaction {
     var writes: [MessageIndex] = []
     var messages: [MessageId: Message] = [:]
     var threads: [Int64: MessageHistoryThreadData] = [:]
-    var holes: IndexSet = []
+    var holes: [ClosedRange<Int32>] = []
     private var afterCommitActions: [() -> Void] = []
     func getPeer(_ id: PeerId) -> Peer? { peer?.id == id ? peer : nil }
     func getPeerCachedData(peerId: PeerId) -> CachedPeerData? { cachedData }
@@ -333,7 +333,14 @@ final class Transaction {
     func getMessageHistoryThreadInfo(peerId: PeerId, threadId: Int64) -> StoredMessageHistoryThreadInfo? {
         threads[threadId].flatMap(StoredMessageHistoryThreadInfo.init)
     }
-    func getThreadIndexHoles(peerId: PeerId, threadId: Int64, namespace: MessageId.Namespace) -> IndexSet { holes }
+    enum HoleSpace { case everywhere }
+    func getThreadIndexHole(peerId: PeerId, threadId: Int64, namespace: MessageId.Namespace, containing id: MessageId.Id) -> [HoleSpace: ClosedRange<Int32>] {
+        // The pinned table orders each space by the upper bound, exclusive of id.
+        if let first = holes.filter({ $0.upperBound > id }).min(by: { $0.upperBound < $1.upperBound }) {
+            return [.everywhere: first]
+        }
+        return [:]
+    }
     func setMessageHistoryThreadInfo(peerId: PeerId, threadId: Int64, info: StoredMessageHistoryThreadInfo?) {
         threads[threadId] = info?.data
     }

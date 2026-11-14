@@ -1,0 +1,107 @@
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
+index 0e26cab..adc1358 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
+@@ -400,3 +400,88 @@ func _internal_markAllChatsAsReadInteractively(transaction: Transaction, network
+         _internal_togglePeerUnreadMarkInteractively(transaction: transaction, network: network, viewTracker: viewTracker, peerId: peerId, setToValue: false)
+     }
+ }
++
++private func forumReadThroughTarget(transaction: Transaction, accountPeerId: PeerId, messageId: MessageId, threadId: Int64, groupingKey: Int64?, isEligible: (Peer, CachedPeerData?, Message) -> Bool) -> (Api.InputPeer, MessageHistoryThreadData)? {
++    guard threadId > 1, threadId < Int64(Int32.max), threadId != Message.newTopicThreadId,
++          messageId.peerId.namespace == Namespaces.Peer.CloudChannel, messageId.namespace == Namespaces.Message.Cloud,
++          Int64(messageId.id) > threadId, messageId.id < Int32.max,
++          let peer = transaction.getPeer(messageId.peerId) as? TelegramChannel, case .group = peer.info,
++          peer.flags.contains(.isForum), !peer.flags.contains(.isMonoforum), peer.participationStatus == .member,
++          let inputPeer = apiInputPeer(peer),
++          let message = transaction.getMessage(messageId), message.threadId == threadId,
++          message.groupingKey == groupingKey, message.effectivelyIncoming(accountPeerId),
++          let data = transaction.getMessageHistoryThreadInfo(peerId: peer.id, threadId: threadId)?.data.get(MessageHistoryThreadData.self) else { return nil }
++
++    let cachedData = transaction.getPeerCachedData(peerId: peer.id)
++    if let channel = cachedData as? CachedChannelData, channel.isNotAccessible || channel.migrationReference != nil {
++        return nil
++    }
++    guard isEligible(peer, cachedData, message) else { return nil }
++    if let groupingKey {
++        guard let album = transaction.getMessageGroup(messageId), album.contains(where: { $0.id == messageId }),
++              album.allSatisfy({ $0.groupingKey == groupingKey && $0.threadId == threadId && $0.id.peerId == peer.id
++                  && $0.id.namespace == messageId.namespace && $0.id.id <= messageId.id }) else { return nil }
++    }
++    return (inputPeer, data)
++}
++
++private func forumReadThroughState(transaction: Transaction, accountPeerId: PeerId, messageId: MessageId, threadId: Int64, data: MessageHistoryThreadData) -> MessageHistoryThreadData? {
++    guard messageId.id > data.maxIncomingReadId, data.maxIncomingReadId >= 0 else { return nil }
++    let fromId = max(data.maxIncomingReadId, Int32(threadId))
++    let targetId = messageId.id
++    guard (1...512).contains(targetId - fromId) else { return nil }
++    // The native query finds the first hole with an upper ID above fromId.
++    if let hole = transaction.getThreadIndexHole(peerId: messageId.peerId, threadId: threadId, namespace: messageId.namespace, containing: fromId)[.everywhere],
++       hole.lowerBound <= targetId {
++        return nil
++    }
++
++    var incomingCount = 0
++    for id in (fromId + 1)...targetId {
++        let candidateId = MessageId(peerId: messageId.peerId, namespace: messageId.namespace, id: id)
++        if let candidate = transaction.getMessage(candidateId), candidate.threadId == threadId,
++           candidate.effectivelyIncoming(accountPeerId) {
++            incomingCount += 1
++        }
++    }
++
++    var updated = data
++    updated.maxIncomingReadId = messageId.id
++    updated.maxKnownMessageId = max(data.maxKnownMessageId, messageId.id)
++    updated.incomingUnreadCount = max(0, data.incomingUnreadCount - Int32(incomingCount))
++    return updated
++}
++
++func _internal_applyReadThroughForumTopicInteractively(account: Account, messageId: MessageId, threadId: Int64, groupingKey: Int64?, isEligible: @escaping (Peer, CachedPeerData?, Message) -> Bool) -> Signal<Bool, NoError> {
++    func checkedTarget(_ transaction: Transaction) -> (Api.InputPeer, MessageHistoryThreadData)? {
++        guard let (peer, data) = forumReadThroughTarget(transaction: transaction, accountPeerId: account.peerId,
++                                                       messageId: messageId, threadId: threadId, groupingKey: groupingKey, isEligible: isEligible),
++              let updated = forumReadThroughState(transaction: transaction, accountPeerId: account.peerId,
++                                                  messageId: messageId, threadId: threadId, data: data) else { return nil }
++        return (peer, updated)
++    }
++
++    return account.postbox.transaction(userInteractive: true) { transaction in
++        return checkedTarget(transaction)?.0
++    }
++    |> mapToSignal { inputPeer -> Signal<Bool, NoError> in
++        guard let inputPeer else { return .single(false) }
++        return account.network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(threadId), readMaxId: messageId.id))
++        |> `catch` { _ -> Signal<Api.Bool, NoError> in
++            return .single(.boolFalse)
++        }
++        |> timeout(30.0, queue: .concurrentDefaultQueue(), alternate: .single(.boolFalse))
++        |> mapToSignal { result -> Signal<Bool, NoError> in
++            guard case .boolTrue = result else { return .single(false) }
++            return account.postbox.transaction(userInteractive: true) { transaction in
++                if let (_, updated) = checkedTarget(transaction), let entry = StoredMessageHistoryThreadInfo(updated) {
++                    transaction.setMessageHistoryThreadInfo(peerId: messageId.peerId, threadId: threadId, info: entry)
++                    transaction.afterCommit {
++                        account.stateManager.notifyAppliedIncomingReadMessages([messageId])
++                    }
++                }
++                return true
++            }
++        }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+index 21020ed..5648974 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+@@ -2193,3 +2193,9 @@ func _internal_monoforumPerformSuggestedPostAction(account: Account, id: EngineM
+         }
+     }
+ }
++
++public extension TelegramEngine.Messages {
++    func applyReadThroughForumTopicInteractively(messageId: MessageId, threadId: Int64, groupingKey: Int64?, isEligible: @escaping (Peer, CachedPeerData?, Message) -> Bool) -> Signal<Bool, NoError> {
++        return _internal_applyReadThroughForumTopicInteractively(account: self.account, messageId: messageId, threadId: threadId, groupingKey: groupingKey, isEligible: isEligible)
++    }
++}

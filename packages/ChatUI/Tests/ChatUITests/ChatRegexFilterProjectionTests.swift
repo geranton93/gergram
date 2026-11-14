@@ -10,12 +10,12 @@ final class ChatRegexFilterProjectionTests: XCTestCase {
     private let accountPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: ._internalFromInt64Value(100))
     private let channelId = PeerId(namespace: Namespaces.Peer.CloudChannel, id: ._internalFromInt64Value(200))
 
-    private func entry(_ id: Int32, action: ReplyMarkupButtonAction? = nil, media: [Media] = []) -> MessageHistoryEntry {
+    private func entry(_ id: Int32, action: ReplyMarkupButtonAction? = nil, media: [Media] = [], groupingKey: Int64? = nil, incoming: Bool = true) -> MessageHistoryEntry {
         let markup = action.map { action in
             ReplyMarkupMessageAttribute(rows: [ReplyMarkupRow(buttons: [ReplyMarkupButton(title: "Open", titleWhenForwarded: nil, action: action, style: nil)])], flags: [], placeholder: nil)
         }
         let message = Message(stableId: UInt32(id), stableVersion: 0, id: MessageId(peerId: channelId, namespace: Namespaces.Message.Cloud, id: id),
-            globallyUniqueId: nil, groupingKey: nil, groupInfo: nil, threadId: nil, timestamp: id, flags: [.Incoming], tags: [], globalTags: [],
+            globallyUniqueId: nil, groupingKey: groupingKey, groupInfo: nil, threadId: nil, timestamp: id, flags: incoming ? [.Incoming] : [], tags: [], globalTags: [],
             localTags: [], customTags: [], forwardInfo: nil, author: nil, text: "Message", attributes: markup.map { [$0] } ?? [], media: media,
             peers: SimpleDictionary(), associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:],
             associatedThreadInfo: nil, associatedStories: [:])
@@ -85,5 +85,29 @@ final class ChatRegexFilterProjectionTests: XCTestCase {
         let oversizedCallback = entry(2, action: .callback(requiresPassword: false, data: MemoryBuffer(data: Data(large.utf8))))
         let control = entry(3, action: .copyText(payload: "Ordinary payload"))
         assertHidden([oversizedQuery, oversizedCallback, control], by: .init(pattern: "unmatched", isReversed: true), expected: [control])
+    }
+
+    func testMatchesTheFourSupportedServiceTypesAndKeepsOtherEventsVisible() {
+        let image = TelegramMediaImage(imageId: MediaId(namespace: 0, id: 1), representations: [], immediateThumbnailData: nil,
+                                       reference: nil, partialReference: nil, flags: [])
+        let phone = TelegramMediaAction(action: .phoneCall(callId: 2, discardReason: nil, duration: 4, isVideo: false))
+        let call = entry(1, media: [phone])
+        let photo = entry(2, media: [TelegramMediaAction(action: .photoUpdated(image: image))])
+        let suggestion = entry(3, media: [TelegramMediaAction(action: .suggestedProfilePhoto(image: image))])
+        let wallpaper = entry(4, media: [TelegramMediaAction(action: .setChatWallpaper(wallpaper: .color(0x224466), forBoth: true))])
+        let deletion = entry(5, media: [TelegramMediaAction(action: .photoUpdated(image: nil))])
+        let missingSuggestion = entry(6, media: [TelegramMediaAction(action: .suggestedProfilePhoto(image: nil))])
+        let cleared = entry(7, media: [TelegramMediaAction(action: .historyCleared)])
+        let autoDelete = entry(8, media: [TelegramMediaAction(action: .messageAutoremoveTimeoutUpdated(period: 120, autoSettingSource: nil))])
+        let outgoing = entry(9, media: [phone], incoming: false)
+        let grouped = entry(10, media: [phone], groupingKey: 42)
+        let mixed = entry(11, media: [image, phone])
+        let entries = [call, photo, suggestion, wallpaper, deletion, missingSuggestion, cleared, autoDelete, outgoing, grouped, mixed]
+        assertHidden(entries, by: .init(pattern: "<type>16</type>"), expected: [call])
+        assertHidden(entries, by: .init(pattern: "<type>11</type>"), expected: [photo])
+        assertHidden(entries, by: .init(pattern: "<type>21</type>"), expected: [suggestion])
+        assertHidden(entries, by: .init(pattern: "<type>22</type>"), expected: [wallpaper])
+        assertHidden(entries, by: .init(pattern: "Message|120|224466"), expected: [])
+        assertHidden(entries, by: .init(pattern: "unmatched", isReversed: true), expected: [call, photo, suggestion, wallpaper])
     }
 }

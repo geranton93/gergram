@@ -26,7 +26,10 @@ enum ChatRegexFilterProjection {
                 for entry in entries {
                     let message = entry.message
                     guard message.id.namespace == Namespaces.Message.Cloud, message.effectivelyIncoming(accountPeerId),
-                          message.adAttribute == nil, !message.media.contains(where: { $0 is TelegramMediaAction }) else { continue }
+                          message.adAttribute == nil else { continue }
+                    if message.media.contains(where: { $0 is TelegramMediaAction }), serviceType(message) == nil {
+                        continue
+                    }
                     let key = ChatLocalHiddenItem(message)
                     if messages[key] == nil {
                         orderedItems.append(key)
@@ -50,6 +53,9 @@ enum ChatRegexFilterProjection {
     }
 
     private static func makeInput(_ messages: [Message]) -> String? {
+        if let message = messages.first, let type = serviceType(message) {
+            return "\n<type>\(type)</type>"
+        }
         var result = ""
         var remaining = LocalMessageFilterEvaluation.maximumInputLength
 
@@ -111,6 +117,17 @@ enum ChatRegexFilterProjection {
             guard append("<type>\(mediaType(message))</type>"), messages.count == 1 || append("\n") else { return nil }
         }
         return result
+    }
+
+    private static func serviceType(_ message: Message) -> Int? {
+        guard message.groupingKey == nil, message.media.count == 1, let media = message.media.first as? TelegramMediaAction else { return nil }
+        switch media.action {
+        case .photoUpdated(image: .some): return 11
+        case .phoneCall: return 16
+        case .suggestedProfilePhoto(image: .some): return 21
+        case .setChatWallpaper: return 22
+        default: return nil
+        }
     }
 
     private static func mediaType(_ message: Message) -> Int {

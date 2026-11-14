@@ -24,9 +24,9 @@ for marker, code in [
     ("__PREVIEW__", section(row, "    private struct Press {", "    public override func interactionContentView")),
     ("__REBIND__", section(row, "    public override func set(item: TableRowItem", "        guard let item = item as? ContextMediaRowItem else { return }") + "    }"),
     ("__GESTURE__", section(row, "    public func index(at point:", "    public override func layout()")),
-    ("__CANVAS_SHOW__", section(canvas, "        var dragImage: CGImage?", "        showPopover(for: control, with: entertainment)")),
+    ("__CANVAS_SHOW__", section(canvas, "        var dragImage: CGImage?", "\n    }\n\n    private func ownsPicker(")),
     ("__CANVAS_VISIBILITY__", section(canvas, "    private func updatePickerVisibility(", "    deinit")),
-    ("__CANVAS_TEARDOWN__", section(canvas, "    private func invalidateDragRoutes(", "    private func pick(")),
+    ("__CANVAS_TEARDOWN__", section(canvas, "    private func ownsPicker(", "    private func pick(")),
 ]:
     fixture = fixture.replace(marker, code)
 

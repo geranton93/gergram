@@ -246,16 +246,28 @@ typealias CGImage = Int
 final class CanvasInteractions {
     var dragItem: ((Int, CGImage?, CanvasDragPhase) -> Void)?
     var cancelItemDrag: (() -> Void)?
+    var imageCanvasPickerOwner: UUID?
+    var retireImageCanvasPicker: (() -> Void)?
+    var sendSticker: (Int, Int, Int, Int) -> Void = { _, _, _, _ in }
+    var sendAnimatedEmoji: (Int, Int, Int, Int, Int) -> Void = { _, _, _, _, _ in }
+    var sendEmoji: (Int, Int) -> Void = { _, _ in }
+    var sendGIF: (Int, Int, Int) -> Void = { _, _, _ in }
 }
+
+typealias EntertainmentInteractions = CanvasInteractions
 
 final class CanvasEntertainment {
     var interactions: CanvasInteractions? = CanvasInteractions()
-    func closePopover() {}
+    var closes = 0
+    func closePopover() { closes += 1 }
 }
 
 final class CanvasPicker {
-    let entertainment = CanvasEntertainment()
+    let entertainment: CanvasEntertainment
+    let disposable = MetaDisposable()
     let dragDisposable = MetaDisposable()
+    weak var pickerInteractions: EntertainmentInteractions?
+    var pickerOwner: UUID?
     var stopAcceptingDrags: (() -> Void)?
     var dropDisposable: MetaDisposable?
     var visibilityChanged: ((Bool) -> Void)?
@@ -264,9 +276,17 @@ final class CanvasPicker {
     var disposed: [Int] = []
     var callbacks: [(CanvasPick) -> Void] = []
 
+    init(entertainment: CanvasEntertainment = CanvasEntertainment()) {
+        self.entertainment = entertainment
+    }
+
+    deinit { releasePickerOwnership() }
+
     func show() {
+        guard let interactions = entertainment.interactions else { return }
         invalidateDragRoutes(preservingDrop: false)
-        let interactions = entertainment.interactions
+        disposable.set(nil)
+        let owner = claimPickerOwnership(on: interactions)
         let drag = { [weak self] (event: CanvasEvent) in
             guard let self else { return }
             switch event {
@@ -576,6 +596,56 @@ final class ContextMediaPreviewTests: XCTestCase {
         picker.callbacks[2](CanvasPick(image: 20))
         XCTAssertEqual(picker.disposed, [10, 20, 20])
         XCTAssertEqual(picker.events, [.moved(nil, first), .ended, .moved(nil, first), .ended, .dropped(20, second)])
+    }
+
+    @objc func testReplacingCanvasOwnerRejectsItsOldDelayedDrop() throws {
+        let shared = CanvasEntertainment()
+        let firstPicker = CanvasPicker(entertainment: shared)
+        let secondPicker = CanvasPicker(entertainment: shared)
+        let interactions = try XCTUnwrap(shared.interactions)
+        firstPicker.show()
+        let oldDrag = try XCTUnwrap(interactions.dragItem)
+        oldDrag(10, nil, .moved(first))
+        oldDrag(10, nil, .ended(second))
+        secondPicker.show()
+        firstPicker.callbacks[1](CanvasPick(image: 10))
+        oldDrag(10, nil, .moved(first))
+        XCTAssertEqual(firstPicker.requested, [10, 10])
+        XCTAssertEqual(firstPicker.disposed, [10, 10])
+        XCTAssertEqual(firstPicker.events, [.moved(nil, first), .ended])
+    }
+
+    @objc func testLateCloseFromFirstCanvasPreservesSecondOwnerRoutes() throws {
+        let shared = CanvasEntertainment()
+        let firstPicker = CanvasPicker(entertainment: shared)
+        let secondPicker = CanvasPicker(entertainment: shared)
+        let interactions = try XCTUnwrap(shared.interactions)
+        firstPicker.show()
+        interactions.dragItem?(10, nil, .moved(first))
+        secondPicker.show()
+        let closesAfterReplacement = shared.closes
+        firstPicker.close()
+        XCTAssertEqual(shared.closes, closesAfterReplacement)
+        XCTAssertNotNil(interactions.cancelItemDrag)
+        interactions.dragItem?(20, nil, .moved(second))
+        XCTAssertEqual(firstPicker.disposed, [10])
+        XCTAssertEqual(firstPicker.events, [.moved(nil, first), .ended])
+        XCTAssertEqual(secondPicker.requested, [20])
+    }
+
+    @objc func testDeinitializingDisplacedCanvasDoesNotClearSecondOwnersRoutes() throws {
+        let shared = CanvasEntertainment()
+        var firstPicker: CanvasPicker? = CanvasPicker(entertainment: shared)
+        weak let retiredPicker = firstPicker
+        let secondPicker = CanvasPicker(entertainment: shared)
+        let interactions = try XCTUnwrap(shared.interactions)
+        firstPicker?.show()
+        secondPicker.show()
+        firstPicker = nil
+        XCTAssertNil(retiredPicker)
+        XCTAssertNotNil(interactions.cancelItemDrag)
+        interactions.dragItem?(20, nil, .moved(second))
+        XCTAssertEqual(secondPicker.requested, [20])
     }
 
     @objc func testAppKitConversionOfOffsetRowFromWindowCoordinates() {

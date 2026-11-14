@@ -27,6 +27,16 @@ extension ChatInteraction: ChatInteractionProtocol {
         fileSendConfirmationKind?(file).map { ChatMediaSendConfirmationPreferences.shared.isEnabled(for: $0) } ?? false
     }
 
+    public func shouldDeferInlineResultSendFlight(_ result: ChatContextResult) -> Bool {
+        guard ChatMediaSendConfirmationPreferences.shared.isEnabled(for: .gif) else { return false }
+        switch mode {
+        case .history, .thread, .scheduled:
+            return isInlineGifResult(result)
+        default:
+            return false
+        }
+    }
+
     public func sendFile(_ file: TelegramMediaFile, silent: Bool, query: String?, scheduled: Bool, collectionId: ItemCollectionId?) {
         self.sendAppFile(file, silent, query, scheduled, collectionId, nil, nil)
     }

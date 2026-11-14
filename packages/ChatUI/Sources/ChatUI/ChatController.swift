@@ -2639,6 +2639,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
     private let peerInputActivitiesDisposable:MetaDisposable = MetaDisposable()
     private let connectionStatusDisposable:MetaDisposable = MetaDisposable()
     private let mediaSendConfirmation = ChatMediaSendConfirmation()
+    private let inlineGifSend = ChatInlineGifSend()
     private let messagesActionDisposable:MetaDisposable = MetaDisposable()
     private let bulkDeleteSelection = ChatBulkDeleteSelectionAction()
     private let unblockDisposable:MetaDisposable = MetaDisposable()
@@ -6485,7 +6486,26 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         
         chatInteraction.afterSentTransition = afterSentTransition
         
-        chatInteraction.sendInlineResult = { [weak self] (results,result) in
+        chatInteraction.sendInlineResult = { [weak self] results, result in
+            func apply(_ controller: ChatController, atDate: Int32?, silent: Bool, schedulingAnalyticsContext: AnalyticsContext) {
+                let destinationPeerId = makePeerId()
+                let origin = Analytics.shared.captureContext(engine: context.engine, peerId: destinationPeerId, inherited: schedulingAnalyticsContext.restricting(peerId: results.botId))
+                let presentation = origin.beginPresentation()
+                defer { presentation.end() }
+                guard let message = context.engine.messages.outgoingMessageWithChatContextResult(to: destinationPeerId, threadId: threadId64(), botId: results.botId, result: result, replyToMessageId: takeReplyId(), replyToStoryId: nil, hideVia: false, silentPosting: silent, scheduleTime: atDate, sendPaidMessageStars: takePaidMessageStars(), postpone: false, correlationId: nil) else { return }
+                let sendObservation = controller.makeMessageSendObservation(chatAnalyticsMessageKind(result), analyticsContext: origin, scheduled: atDate != nil, silent: silent)
+                _ = origin.preservingPresentation(enqueueMessages(account: context.account, peerId: destinationPeerId, messages: [message])).start(next: { ids in
+                    sendObservation?.complete(expectedCount: 1, resultCount: ids.count, acceptedCount: ids.compactMap { $0 }.count)
+                })
+                controller.nextTransaction.set(handler: afterSentTransition)
+            }
+            if let self {
+                if (self.inlineGifSend.isPending || self.mediaSendConfirmation.isPending), isInlineGifResult(result) { return }
+                if self.chatInteraction.shouldDeferInlineResultSendFlight(result) {
+                    self.confirmInlineGifSend(destination: makePeerId(), thread: threadId64, enqueue: apply)
+                    return
+                }
+            }
             let deferredSendAction = self?.chatInteraction.captureDeferredSendAction()
             let confirmationAction = self?.chatInteraction.captureDeferredSendAction()
             let schedulingAnalyticsContext = self?.chatInteraction.captureAnalyticsContext() ?? Analytics.shared.unresolvedContext()
@@ -6496,27 +6516,15 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
                     guard let strongSelf = strongSelf else {
                         return
                     }
-                    func apply(_ controller: ChatController, atDate: Int32?) {
-                        let destinationPeerId = makePeerId()
-                        let origin = Analytics.shared.captureContext(engine: context.engine, peerId: destinationPeerId, inherited: schedulingAnalyticsContext.restricting(peerId: results.botId))
-                        let presentation = origin.beginPresentation()
-                        defer { presentation.end() }
-                        guard let message = context.engine.messages.outgoingMessageWithChatContextResult(to: destinationPeerId, threadId: threadId64(), botId: results.botId, result: result, replyToMessageId: takeReplyId(), replyToStoryId: nil, hideVia: false, silentPosting: silent, scheduleTime: atDate, sendPaidMessageStars: takePaidMessageStars(), postpone: false, correlationId: nil) else { return }
-                        let sendObservation = controller.makeMessageSendObservation(chatAnalyticsMessageKind(result), analyticsContext: origin, scheduled: atDate != nil, silent: silent)
-                        _ = origin.preservingPresentation(enqueueMessages(account: context.account, peerId: destinationPeerId, messages: [message])).start(next: { ids in
-                            sendObservation?.complete(expectedCount: 1, resultCount: ids.count, acceptedCount: ids.compactMap { $0 }.count)
-                        })
-                        controller.nextTransaction.set(handler: afterSentTransition)
-                    }
                     switch strongSelf.mode {
                     case .history, .thread, .customChatContents:
-                        apply(strongSelf, atDate: nil)
+                        apply(strongSelf, atDate: nil, silent: silent, schedulingAnalyticsContext: schedulingAnalyticsContext)
                     case .scheduled:
                         if let peer = strongSelf.chatInteraction.peer {
                             showModal(with: chatDateSelector(context: context, mode: .schedule(peer.id), analyticsContext: schedulingAnalyticsContext, selectedAt: { [weak strongSelf] date, _ in
                                 guard deferredSendAction?.takeIfCurrent() == true else { return }
                                 if let strongSelf = strongSelf {
-                                    apply(strongSelf, atDate: Int32(date.timeIntervalSince1970))
+                                    apply(strongSelf, atDate: Int32(date.timeIntervalSince1970), silent: silent, schedulingAnalyticsContext: schedulingAnalyticsContext)
                                 }
                             }), for: context.window)
                         }
@@ -11843,6 +11851,108 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
         return true
     }
     
+    private func confirmInlineGifSend(destination: PeerId, thread: @escaping () -> Int64?, enqueue: @escaping (ChatController, Int32?, Bool, AnalyticsContext) -> Void) {
+        let interaction = chatInteraction
+        let context = self.context
+        let window = context.window
+        let mode = self.mode
+        let threadId = thread()
+        let price = interaction.presentation.sendPaidMessageStars
+        let deferredSendAction = interaction.captureDeferredSendAction()
+        let canSend: () -> Bool = { [weak self] in
+            guard let self, let peer = self.chatInteraction.peer, peer.id == destination,
+                  self.mode == mode, thread() == threadId, deferredSendAction.isAvailable else { return false }
+            let interaction = self.chatInteraction
+            let state = interaction.presentation
+            return (context.isCurrent || context.isExternal) && window.isVisible && !context.isFrozen
+                && interaction.canAnimateUpdates() && state.state == .normal && !state.isNotAccessible && state.isBlocked != true
+                && (mode == .scheduled || (state.slowMode?.hasLocked != true && !state.slowModeMultipleLocked))
+                && (state.threadInfo?.isClosed != true || peer.isAdmin || state.threadInfo?.isOwnedByMe == true)
+                && state.sendPaidMessageStars == price
+                && permissionText(from: peer, for: .banSendGifs, cachedData: state.cachedData) == nil
+                && permissionText(from: peer, for: .banSendInline, cachedData: state.cachedData) == nil
+                && peer.canSendMessage(mode.isThreadMode, threadData: state.threadInfo, cachedData: state.cachedData)
+        }
+        guard canSend(), let request = inlineGifSend.begin(isCurrent: canSend) else { return }
+
+        let lifetime: Signal<Bool, NoError>
+        if context.isExternal {
+            lifetime = window.visibility
+        } else {
+            let accountId = context.account.id
+            let activeAccount = context.sharedContext.activeAccounts |> map { $0.primary?.id == accountId } |> distinctUntilChanged
+            lifetime = combineLatest(window.visibility, activeAccount) |> map { $0 && $1 }
+        }
+        let analyticsContext = interaction.captureAnalyticsContext()
+        let silent = interaction.resolvedSendSound() == .silent
+        let send: (Int32?) -> Void = { [weak self] date in
+            guard let self, request.send() else { return }
+            enqueue(self, date, silent, analyticsContext)
+        }
+        let ready: () -> Void = {
+            if mode == .scheduled {
+                FeatureNavigationHooks.shared.selectDateObserved(context, window, nil, nil, .schedule(destination), analyticsContext: analyticsContext, selectedAt: { date, _ in
+                    send(Int32(date.timeIntervalSince1970))
+                }, cancelled: request.cancel, dismissed: request.cancel)
+            } else {
+                send(nil)
+            }
+        }
+        let afterConfirmation: () -> Void = { [weak interaction] in
+            guard let interaction, request.confirm() else { return }
+            request.observeLifetime(lifetime)
+            guard let price else {
+                if request.acceptPayment() { ready() }
+                return
+            }
+            let state = interaction.presentation
+            guard let peer = state.peer, let stars = state.starsState else {
+                request.cancel()
+                return
+            }
+            let starsPrice = Int(price.value)
+            let purchase: () -> Void = {
+                request.cancel()
+                FeatureNavigationHooks.shared.showStarsPurchaseWithContext(context, window, .stars, nil, Int64(starsPrice), analyticsContext)
+            }
+            if state.alwaysPaidMessage {
+                guard request.acceptPayment() else { return }
+                if stars.balance.value > starsPrice {
+                    ready()
+                } else {
+                    purchase()
+                }
+                return
+            }
+
+            guard request.canRespondToPayment() else { return }
+            let amount = strings().starListItemCountOther(starsPrice)
+            let count = strings().chatPayStarsConfirmMessagesOther(1)
+            verifyChatSendPayment(for: window, header: strings().chatPayStarsConfirmTitle, information: strings().chatPayStarsConfirmText(peer.displayTitle, amount, amount, count), ok: strings().chatPayStarsConfirmPayOther(1), option: strings().chatPayStarsConfirmCheckbox, analyticsContext: analyticsContext, successHandler: { [weak interaction] result in
+                guard request.canRespondToPayment() else { return }
+                guard let interaction, chatPaidMessagePriceIsCurrent(interaction, price) else {
+                    request.cancel()
+                    return
+                }
+                guard request.acceptPayment() else { return }
+                if let balance = interaction.presentation.starsState?.balance.value, balance > starsPrice {
+                    interaction.update { $0.withUpdatedAlwaysPaidMessage(result == .thrid) }
+                    if result == .thrid {
+                        FastSettings.toggleCofirmPaid(peer.id, price: starsPrice)
+                    }
+                    ready()
+                } else {
+                    purchase()
+                }
+            }, cancelHandler: request.cancel, dismissed: request.cancel)
+        }
+
+        let data = ModalAlertData(title: localizedString("Gergram.Chat.ConfirmGifSend"), info: "", ok: strings().modalSend, mode: .confirm(text: strings().modalCancel, isThird: false))
+        mediaSendConfirmation.start(lifetime: lifetime, present: { accept, cancel, dismiss in
+            showDismissableModalAlert(for: window, data: data, completion: { _ in accept() }, cancel: cancel, onDeinit: dismiss)
+        }, accepted: afterConfirmation, cancelled: request.cancel, dismissed: request.cancel)
+    }
+
     private func confirmRecordingSendIfEnabled(_ recording: ChatRecordingState, via: AnalyticsRecordingJourney.Spec.SubmitVia) -> Bool {
         let isVoice = recording is ChatRecordingAudioState
         let video = recording as? ChatRecordingVideoState
@@ -12132,6 +12242,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
     public override func readyToDetach() {
         mediaSendConfirmation.cancel()
+        inlineGifSend.cancel()
         cancelAlwaysUseAIRequest()
         chatInteraction.voiceTranscription?.stopForNavigation()
         chatInteraction.receivedAudioTranscription.cancel()
@@ -12146,6 +12257,7 @@ open class ChatController<Context: AccountContextProtocol>: TelegramGenericViewC
 
     public override func viewWillDisappear(_ animated: Bool) {
         mediaSendConfirmation.cancel()
+        inlineGifSend.cancel()
         channelDiscussionNavigationDisposable.set(nil)
         bulkDeleteSelection.cancel()
         cancelAlwaysUseAIRequest()

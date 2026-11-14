@@ -593,7 +593,7 @@ public final class GifKeyboardController<Context: AccountContextProtocol> : Tele
             if let slowMode = self?.chatInteraction?.presentationSlowMode, slowMode.hasLocked {
                 showSlowModeTimeoutTooltip(slowMode, for: view)
             } else {
-                if let chatInteraction = self?.chatInteraction {
+                if let chatInteraction = self?.chatInteraction, !chatInteraction.shouldDeferInlineResultSendFlight(result) {
                     EntertainmentUIHooks.shared.launchSendFlight(chatInteraction, view, view.bounds, view.layer)
                 }
                 self?.chatInteraction?.sendInlineResult(results, result)

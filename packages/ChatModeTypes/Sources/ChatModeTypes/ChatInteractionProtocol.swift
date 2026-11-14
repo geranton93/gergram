@@ -25,6 +25,7 @@ public protocol ChatInteractionProtocol: AnyObject {
     var appendAttributedText: (NSAttributedString) -> Void { get }
     var showEmojiUseTooltip: () -> Void { get }
     func shouldDeferFileSendFlight(_ file: TelegramMediaFile) -> Bool
+    func shouldDeferInlineResultSendFlight(_ result: ChatContextResult) -> Bool
     func sendFile(_ file: TelegramMediaFile, silent: Bool, query: String?, scheduled: Bool, collectionId: ItemCollectionId?)
     @discardableResult func appendText(_ text: NSAttributedString, selectedRange: Range<Int>?) -> Range<Int>
     func setIsEmojiSection(_ value: Bool)
@@ -34,6 +35,10 @@ public protocol ChatInteractionProtocol: AnyObject {
 
 public extension ChatInteractionProtocol {
     func shouldDeferFileSendFlight(_ file: TelegramMediaFile) -> Bool {
+        false
+    }
+
+    func shouldDeferInlineResultSendFlight(_ result: ChatContextResult) -> Bool {
         false
     }
 }

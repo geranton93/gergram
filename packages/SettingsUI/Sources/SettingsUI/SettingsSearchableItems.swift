@@ -568,6 +568,12 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(11), title: localizedString("Gergram.Appearance.StreamerModeMenuBar"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .streamerModeMenuBar)
         }),
+        SettingsSearchableItem(id: .appearance(31), title: localizedString("Gergram.Appearance.MyProfileMenuBar"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .myProfileMenuBar)
+        }),
+        SettingsSearchableItem(id: .appearance(32), title: localizedString("Gergram.Appearance.SavedMessagesMenuBar"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .savedMessagesMenuBar)
+        }),
         SettingsSearchableItem(id: .appearance(14), title: localizedString("Gergram.Chat.HideMessageTails"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .messageTails)
         }),

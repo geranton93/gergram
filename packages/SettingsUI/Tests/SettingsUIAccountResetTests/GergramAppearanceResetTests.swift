@@ -20,7 +20,10 @@ final class GergramAppearanceResetTests: XCTestCase {
         ComposerGiftButtonPreferences(defaults: defaults).setHidden(true)
         ComposerAIToolsButtonPreferences(defaults: defaults).setHidden(true)
         ComposerAutoDeleteButtonPreferences(defaults: defaults).setHidden(true)
-        StreamerModeMenuBarPreferences(defaults: defaults).setVisible(false)
+        let menuBarPreferences = StreamerModeMenuBarPreferences(defaults: defaults)
+        menuBarPreferences.setVisible(false)
+        menuBarPreferences.setVisible(true, for: .myProfile)
+        menuBarPreferences.setVisible(true, for: .savedMessages)
         PremiumStatusVisibilityPreferences(defaults: defaults).setHidden(true)
         ChatReplyAppearancePreferences(defaults: defaults).setSimplified(true)
         ChatReactionVisibilityPreferences(defaults: defaults).setHiddenKinds(Set(ChatReactionVisibilityPreferences.ChatKind.allCases))
@@ -36,7 +39,7 @@ final class GergramAppearanceResetTests: XCTestCase {
         AvatarCornerPreferences(defaults: defaults).setRadius(0)
         AvatarCornerPreferences(defaults: defaults).setUsesSingleRadius(true)
         let changed = defaults.persistentDomain(forName: name) ?? [:]
-        XCTAssertEqual(changed.count - initial.count, 24)
+        XCTAssertEqual(changed.count - initial.count, 26)
         defaults.set("archive data", forKey: "gergram.archive.synthetic")
         defaults.set("native palette", forKey: "telegram.appearance.synthetic")
 

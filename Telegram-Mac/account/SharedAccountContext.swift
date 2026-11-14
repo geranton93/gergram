@@ -145,8 +145,13 @@ class SharedAccountContext {
     private var statusItem: NSStatusItem?
     #if !SHARE
     private weak var streamerModeStatusItem: NSMenuItem?
-    private let streamerModeMenuVisibilityDisposable = MetaDisposable()
-    private var showsStreamerModeMenuItem = true
+    private let statusMenuVisibilityDisposable = MetaDisposable()
+    private var visibleStatusMenuActions = StreamerModeMenuBarPreferences.defaultActions
+
+    func canOpenStatusMenuAction(_ action: StreamerModeMenuBarPreferences.Action, accountId: AccountRecordId, item: NSMenuItem) -> Bool {
+        guard let menu = statusItem?.menu, item.menu === menu else { return false }
+        return !isLocked && callStatusBarMenuItems == nil && visibleStatusMenuActions.contains(action) && activeAccountsValue?.primary?.id == accountId
+    }
 
     func updateStreamerModeMenuState(_ state: NSControl.StateValue) {
         streamerModeStatusItem?.state = state
@@ -206,8 +211,9 @@ class SharedAccountContext {
                         image = nil
                     }
                     
-                    menu.addItem(ContextMenuItem(account.peer.displayTitle, handler: {
-                        self.switchToAccount(id: account.account.id, action: nil)
+                    let accountId = account.account.id
+                    menu.addItem(ContextMenuItem(account.peer.displayTitle, handler: { [weak self] in
+                        self?.switchToAccount(id: accountId, action: nil)
                     }, image: image, state: state))
                     
                     if account.account.id == activeAccountsInfoValue.primary {
@@ -232,7 +238,14 @@ class SharedAccountContext {
             }))
 
             #if !SHARE
-            if showsStreamerModeMenuItem, let streamerModeItem = appDelegate?.makeStreamerModeMenuItem() {
+            if !isLocked, let appDelegate, let accountId = activeAccountsValue?.primary?.id {
+                for action in StreamerModeMenuBarPreferences.Action.allCases where action != .streamerMode && visibleStatusMenuActions.contains(action) {
+                    if let item = appDelegate.makeAccountStatusMenuItem(action, accountId: accountId) {
+                        menu.addItem(item)
+                    }
+                }
+            }
+            if visibleStatusMenuActions.contains(.streamerMode), let streamerModeItem = appDelegate?.makeStreamerModeMenuItem() {
                 streamerModeStatusItem = streamerModeItem
                 menu.addItem(streamerModeItem)
             }
@@ -281,9 +294,9 @@ class SharedAccountContext {
             forceUpdateStatusBarIconByDockTile(sharedContext: self)
             self.syncLiquidGlassWithLite()
         })
-        streamerModeMenuVisibilityDisposable.set((StreamerModeMenuBarPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] visible in
-            guard let self, self.showsStreamerModeMenuItem != visible else { return }
-            self.showsStreamerModeMenuItem = visible
+        statusMenuVisibilityDisposable.set((StreamerModeMenuBarPreferences.shared.actionsSignal |> deliverOnMainQueue).start(next: { [weak self] visible in
+            guard let self, self.visibleStatusMenuActions != visible else { return }
+            self.visibleStatusMenuActions = visible
             if self.statusItem != nil, self.callStatusBarMenuItems == nil {
                 self.updateStatusBarMenuItem()
             }
@@ -834,7 +847,7 @@ class SharedAccountContext {
     
     deinit {
         #if !SHARE
-        streamerModeMenuVisibilityDisposable.dispose()
+        statusMenuVisibilityDisposable.dispose()
         #endif
         batteryLevelTimer?.invalidate()
     }

@@ -2,23 +2,54 @@ import Foundation
 import SwiftSignalKit
 
 public final class StreamerModeMenuBarPreferences {
-    public static let shared = StreamerModeMenuBarPreferences(defaults: .standard)
+    public enum Action: String, CaseIterable {
+        case myProfile, savedMessages, streamerMode
 
-    private static let key = "gergram.menuBar.showsStreamerMode"
+        fileprivate var key: String {
+            switch self {
+            case .myProfile: return "gergram.menuBar.showsMyProfile"
+            case .savedMessages: return "gergram.menuBar.showsSavedMessages"
+            case .streamerMode: return "gergram.menuBar.showsStreamerMode"
+            }
+        }
+    }
+
+    public static let shared = StreamerModeMenuBarPreferences(defaults: .standard)
+    public static let defaultActions: Set<Action> = [.streamerMode]
+
     private let defaults: UserDefaults
-    private let visibility: ValuePromise<Bool>
+    private let actions: ValuePromise<Set<Action>>
 
     public init(defaults: UserDefaults) {
         self.defaults = defaults
-        self.visibility = ValuePromise(defaults.object(forKey: Self.key) as? Bool ?? true, ignoreRepeated: true)
+        self.actions = ValuePromise(Self.visibleActions(in: defaults), ignoreRepeated: true)
+    }
+
+    private static func visibleActions(in defaults: UserDefaults) -> Set<Action> {
+        return Set(Action.allCases.filter { defaults.object(forKey: $0.key) as? Bool ?? defaultActions.contains($0) })
+    }
+
+    public var actionsSignal: Signal<Set<Action>, NoError> {
+        actions.get()
+    }
+
+    public func setVisible(_ visible: Bool, for action: Action) {
+        defaults.set(visible, forKey: action.key)
+        actions.set(Self.visibleActions(in: defaults))
+    }
+
+    public func reset() {
+        for action in Action.allCases {
+            defaults.set(Self.defaultActions.contains(action), forKey: action.key)
+        }
+        actions.set(Self.defaultActions)
     }
 
     public var signal: Signal<Bool, NoError> {
-        visibility.get()
+        actionsSignal |> map { $0.contains(.streamerMode) } |> distinctUntilChanged
     }
 
     public func setVisible(_ visible: Bool) {
-        defaults.set(visible, forKey: Self.key)
-        visibility.set(visible)
+        setVisible(visible, for: .streamerMode)
     }
 }

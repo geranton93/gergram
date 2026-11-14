@@ -23,6 +23,7 @@ import TGModernGrowingTextView
 import FoundationUtils
 import InAppSettings
 import ThemeSettings
+import TelegramTheme
 import ColorPalette
 import WebKit
 import CodeSyntax
@@ -1346,6 +1347,61 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         item.state = StreamerModeController.shared.isEnabled ? .on : .off
         item.toolTip = strings().appMenuStreamerModeDescription
         return item
+    }
+
+    private struct AccountStatusMenuSelection {
+        let action: StreamerModeMenuBarPreferences.Action
+        let accountId: AccountRecordId
+    }
+
+    func makeAccountStatusMenuItem(_ action: StreamerModeMenuBarPreferences.Action, accountId: AccountRecordId) -> NSMenuItem? {
+        let title: String
+        switch action {
+        case .myProfile: title = strings().accountSettingsMyProfile
+        case .savedMessages: title = strings().peerSavedMessages
+        case .streamerMode: return nil
+        }
+        let item = NSMenuItem(title: title, action: #selector(openAccountStatusMenuAction(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = AccountStatusMenuSelection(action: action, accountId: accountId)
+        return item
+    }
+
+    @objc func openAccountStatusMenuAction(_ item: NSMenuItem) {
+        guard let selection = item.representedObject as? AccountStatusMenuSelection, selection.action != .streamerMode,
+              authContextValue == nil, let application = sharedApplicationContextValue,
+              !application.notificationManager.isLocked,
+              let context = contextValue?.context, context.isCurrent, !context.isExternal,
+              context.account.id == selection.accountId,
+              application.sharedContext.canOpenStatusMenuAction(selection.action, accountId: selection.accountId, item: item),
+              context.window.attachedSheet == nil, !hasModals(context.window) else { return }
+
+        NSApp.activate(ignoringOtherApps: true)
+        context.window.deminiaturize(nil)
+        context.window.makeKeyAndOrderFront(nil)
+        let navigation = context.bindings.rootNavigation()
+        switch selection.action {
+        case .myProfile:
+            if context.isFrozen {
+                context.freezeAlert()
+                return
+            }
+            if let current = navigation.controller as? PeerInfoController, current.peerId == context.peerId {
+                current.view.shake(beep: true)
+                return
+            }
+            guard let peer = context.myPeer as? TelegramUser, peer.id == context.peerId,
+                  peer.restrictionText(context.contentSettings) == nil else { return }
+            navigation.push(PeerInfoController(context: context, peer: peer), false)
+        case .savedMessages:
+            let location = ChatLocation.peer(context.peerId)
+            if let current = navigation.controller as? ChatController, current.chatLocation == location, current.mode == .history {
+                return
+            }
+            navigation.push(ChatController(context: context, chatLocation: location))
+        case .streamerMode:
+            break
+        }
     }
 
     @objc private func toggleStreamerMode(_ item: NSMenuItem) {

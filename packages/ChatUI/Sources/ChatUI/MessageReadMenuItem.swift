@@ -139,10 +139,10 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
  
         
         public func text(_ message: Message, context: any AccountContextProtocol) -> String {
-            return text(message, relativeTo: context.timestamp, excluding: [])
+            return text(message, relativeTo: context.timestamp, excluding: [], showsTimestampSeconds: FastSettings.showMessageTimestampSeconds)
         }
 
-        func text(_ message: Message, relativeTo timestamp: Int32, excluding hidden: Set<PeerId>) -> String {
+        func text(_ message: Message, relativeTo timestamp: Int32, excluding hidden: Set<PeerId>, showsTimestampSeconds: Bool) -> String {
             switch self {
             case let .stats(read, readTimestamps, reactions, _):
                 if let reactions = reactions, !reactions.items.isEmpty {
@@ -159,8 +159,8 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
                             return strings().chatMessageReadStatsEmptyViews
                         }
                     } else if peers.count == 1 && !hidden.contains(peers[0].id) {
-                        if message.id.peerId.namespace == Namespaces.Peer.CloudUser, let readTimestamp = readTimestamps[peers[0].id] {
-                            return stringForRelativeTimestamp(relativeTimestamp: readTimestamp, relativeTo: timestamp)
+                        if message.id.peerId.namespace == Namespaces.Peer.CloudUser, let readTimestamp = readTimestamps[peers[0].id], readTimestamp > 0 {
+                            return relativeTimestampText(readTimestamp, relativeTo: timestamp, showsSeconds: showsTimestampSeconds)
                         }
                         return peers[0].compactDisplayTitle.prefixWithDots(20)
                     } else {
@@ -215,10 +215,14 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
     fileprivate let context: any AccountContextProtocol
     private let disposable = MetaDisposable()
     private let chatInteraction: ChatInteraction
+    private var timestampPrecisionDisposable: Disposable?
+    private var showsTimestampSeconds = FastSettings.showMessageTimestampSeconds
     
     fileprivate var state: State = .loading
     fileprivate var visiblePhotos: [Peer] { state.photos(message, excluding: hiddenParticipants) }
-    fileprivate var visibleText: String { state.text(message, relativeTo: context.timestamp, excluding: hiddenParticipants) }
+    fileprivate var visibleText: String {
+        state.text(message, relativeTo: context.timestamp, excluding: hiddenParticipants, showsTimestampSeconds: showsTimestampSeconds)
+    }
     fileprivate private(set) var hiddenParticipants: Set<PeerId> = []
     private let availableReactions: AvailableReactions?
     private let reactions: EngineMessageReactionListContext
@@ -240,6 +244,16 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
         self.availableReactions = availableReactions
         super.init(.zero, item: item, interaction: interaction, presentation: presentation)
         
+        if message.id.peerId.namespace == Namespaces.Peer.CloudUser {
+            timestampPrecisionDisposable = (FastSettings.showMessageTimestampSecondsSignal |> deliverOnMainQueue).start(next: { [weak self] showsSeconds in
+                guard let self, self.showsTimestampSeconds != showsSeconds else { return }
+                self.showsTimestampSeconds = showsSeconds
+                let title = self.visibleText
+                if self.item.title != title {
+                    self.item.title = title
+                }
+            })
+        }
         self.load()
     }
     
@@ -397,6 +411,7 @@ public final class MessageReadMenuRowItem : AppMenuRowItem {
     
     deinit {
         disposable.dispose()
+        timestampPrecisionDisposable?.dispose()
     }
     
     public override var effectiveSize: NSSize {
@@ -1055,9 +1070,8 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
     }
     
     fileprivate var timestampText: String? {
-        readTimestamp.map {
-            relativeTimestampText($0, relativeTo: context.timestamp, reactionShowsSeconds: reaction == nil ? nil : FastSettings.showMessageTimestampSeconds)
-        }
+        guard let readTimestamp, readTimestamp > 0 else { return nil }
+        return relativeTimestampText(readTimestamp, relativeTo: context.timestamp, showsSeconds: FastSettings.showMessageTimestampSeconds)
     }
 
     override var accessibilityValue: String? {
@@ -1114,16 +1128,16 @@ private final class ReactionPeerMenuItem : AppMenuRowItem {
 
 
 public func stringForRelativeTimestamp(relativeTimestamp: Int32, relativeTo timestamp: Int32) -> String {
-    relativeTimestampText(relativeTimestamp, relativeTo: timestamp, reactionShowsSeconds: nil)
+    relativeTimestampText(relativeTimestamp, relativeTo: timestamp, showsSeconds: nil)
 }
 
-private func relativeTimestampText(_ relativeTimestamp: Int32, relativeTo timestamp: Int32, reactionShowsSeconds: Bool?) -> String {
+private func relativeTimestampText(_ relativeTimestamp: Int32, relativeTo timestamp: Int32, showsSeconds: Bool?) -> String {
     let date = Date(timeIntervalSince1970: TimeInterval(relativeTimestamp))
     let reference = Date(timeIntervalSince1970: TimeInterval(timestamp))
     guard Calendar.current.isDate(date, inSameDayAs: reference) else {
-        return ChatDisplayTimestamp.fullDate(for: date, showsSeconds: reactionShowsSeconds ?? true)
+        return ChatDisplayTimestamp.fullDate(for: date, showsSeconds: showsSeconds ?? true)
     }
-    if reactionShowsSeconds == true {
+    if showsSeconds == true {
         return strings().timeTodayAt(ChatDisplayTimestamp.time(for: date, showsSeconds: true))
     }
     let time = Calendar.current.dateComponents([.hour, .minute], from: date)

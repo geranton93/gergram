@@ -6,6 +6,7 @@ final class GergramSettingsRouteTests: XCTestCase {
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/general/message-context-menu"), .messageContextMenu)
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/general/on-device-transcription-language"), .transcriptionLanguage)
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/appearance/message-bubble-corners"), .messageBubbleCorners)
+        XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/appearance/avatar-corners"), .avatarCorners)
         XCTAssertEqual(GergramSettingsRoute(url: "GERGRAM://SETTINGS/privacy/locally-hidden-senders"), .locallyHiddenSenders)
         XCTAssertEqual(GergramSettingsRoute(url: "gergram://settings/privacy/message-filters"), .messageFilters)
         XCTAssertEqual(GergramSettingsRoute(url: "GERGRAM://SETTINGS/privacy/local-message-archive"), .localMessageArchive)
@@ -45,6 +46,9 @@ final class GergramSettingsRouteTests: XCTestCase {
             "gergram://settings/general/on-device-transcription-language?locale=en_US",
             "gergram://settings/appearance/message-bubble-corners#0",
             "gergram://settings/appearance/message-bubble-corners/reset",
+            "gergram://settings/appearance/avatar-corners/reset",
+            "gergram://settings/appearance/avatar-corners?level=0",
+            "gergram://settings/appearance/reset",
             "gergram://settings/devices/terminate-sessions"
         ]
         for url in urls {

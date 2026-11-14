@@ -268,6 +268,7 @@ final class LinkParsingTests: XCTestCase {
     func testGergramSettingsLinksStayLocalAndRequireAccountContext() {
         let cases: [(String, GergramSettingsRoute)] = [
             ("gergram://settings/general/message-context-menu", .messageContextMenu),
+            ("gergram://settings/appearance/avatar-corners", .avatarCorners),
             ("gergram://settings/privacy/locally-hidden-senders", .locallyHiddenSenders),
             ("gergram://settings/privacy/message-filters", .messageFilters),
             ("gergram://settings/privacy/local-message-archive", .localMessageArchive)

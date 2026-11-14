@@ -10,6 +10,8 @@ public func gergramSettingsController(_ route: GergramSettingsRoute, context: an
         return receivedAudioTranscriptionLanguageController()
     case .messageBubbleCorners:
         return AppAppearanceViewController(context: context, focusOnItemTag: .messageBubbleRadius)
+    case .avatarCorners:
+        return AppAppearanceViewController(context: context, focusOnItemTag: .avatarRadius)
     case .locallyHiddenSenders:
         guard !context.isFrozen else { return nil }
         return localShadowBannedSendersController(context: context)

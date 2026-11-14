@@ -79,6 +79,7 @@ public final class ChatInputAttachButton: View, MorphHoldObserving {
     /// AI (rephrase/translate) button — present only while the input has grown to several lines.
     public private(set) var aiButton: ImageButton?
     public var isAIVisible: Bool { aiButton != nil }
+    var canOpenAIEditorFromMenu: (() -> Bool)?
 
     public private(set) var isMorphHeld = false
     public var onMorphHoldChange: ((Bool) -> Void)?
@@ -442,6 +443,13 @@ public final class ChatInputAttachButton: View, MorphHoldObserving {
                 }
             }
 
+
+            if self.canOpenAIEditorFromMenu?() == true {
+                items.append(ContextMenuItem(strings().translateAIEditor, handler: { [weak self] in
+                    guard let self, self.canOpenAIEditorFromMenu?() == true else { return }
+                    self.chatInteraction.openAIEditor(morphSource: { [weak self] in self?.button })
+                }, itemImage: MenuAnimation.menu_translate.value))
+            }
 
             if !items.isEmpty {
                 let menu = ContextMenu(betterInside: true)

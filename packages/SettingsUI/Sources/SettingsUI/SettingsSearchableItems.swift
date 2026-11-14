@@ -613,6 +613,9 @@ private func appearanceSearchableItems<Context: AccountContextProtocol>(context:
         SettingsSearchableItem(id: .appearance(28), title: localizedString("Gergram.Chat.EditedIndicator.CustomText"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
             presentAppearanceSettings(context, present, .editedIndicatorText)
         }),
+        SettingsSearchableItem(id: .appearance(29), title: localizedString("Gergram.Composer.HideAITools"), alternate: [], icon: icon, breadcrumbs: [strings().accountSettingsTheme], present: { context, _, present in
+            presentAppearanceSettings(context, present, .aiToolsButton)
+        }),
     ]
 }
 

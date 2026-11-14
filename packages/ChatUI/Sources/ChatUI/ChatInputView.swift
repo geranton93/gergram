@@ -210,6 +210,11 @@ public final class ChatInputContainerView: FlippableView {
         bottomView.backgroundColor = .clear
         self.addSubview(keyboardGlass)
         self.addSubview(bottomView)
+
+        attachView.canOpenAIEditorFromMenu = { [weak self] in
+            guard let self, self.hasComposerAIEditorMenuAlternative else { return false }
+            return self.isComposerAIEditorEligible(lineCount: self.textView.numberOfLines(for: self.textViewSize(self.bounds.width).0.width))
+        }
     }
 
     public required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -324,6 +329,23 @@ public final class ChatInputContainerView: FlippableView {
         return (gap + sendButton.desiredSize.width, 0)
     }
 
+    private func isComposerAIEditorEligible(lineCount: Int) -> Bool {
+        let presentation = chatInteraction.presentation
+        return (presentation.state == .normal || presentation.state == .editing)
+            && (presentation.interfaceState.editState?.loadingState ?? EditStateLoading.none) == EditStateLoading.none
+            && presentation.peer?.isSecretChat != true
+            && lineCount >= 4
+    }
+
+    private var hasComposerAIEditorMenuAlternative: Bool {
+        ComposerAIToolsButtonPreferences.shared.hidesButton
+            && chatInteraction.presentation.peer != nil
+            && !attachView.button.isHiddenOrHasHiddenAncestor
+            && attachView.button.isEnabled
+            && attachView.button.userInteractionEnabled
+            && chatInteraction.presentation.slowMode?.hasLocked != true
+    }
+
     public override func layout() {
         super.layout()
         updateLayout(transition: .immediate)
@@ -383,10 +405,8 @@ public final class ChatInputContainerView: FlippableView {
 
         // The AI (rephrase) button lives in the attach view and appears once the input has grown to 4+
         // lines; the attach view then expands into a vertical pill to hold it (glass ghost follows).
-        let showAi = (chatInteraction.presentation.state == .normal || chatInteraction.presentation.state == .editing)
-            && (chatInteraction.presentation.interfaceState.editState?.loadingState ?? EditStateLoading.none) == EditStateLoading.none
-            && chatInteraction.presentation.peer?.isSecretChat != true
-            && textView.numberOfLines(for: textSize.width) >= 4
+        let isAIEditorEligible = isComposerAIEditorEligible(lineCount: textView.numberOfLines(for: textSize.width))
+        let showAi = isAIEditorEligible && !hasComposerAIEditorMenuAlternative
 
         let sendAsInset: CGFloat = sendAsView != nil ? 34 + 3 : 0
         let sendSize = sendButton.desiredSize
@@ -519,7 +539,7 @@ public final class ChatInputContainerView: FlippableView {
             textView.updateLayout(size: textRect.size, textHeight: textHeight, transition: transition)
         }
 
-        let showExpand = ((showAi && chatInteraction.presentation.state == .normal) || richDraftPreview != nil) && chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled
+        let showExpand = ((isAIEditorEligible && chatInteraction.presentation.state == .normal) || richDraftPreview != nil) && chatInteraction.interactionContext.appConfiguration.isRichTextEditorEnabled
         if showExpand {
             let current: ImageButton
             var isNew = false
@@ -637,6 +657,7 @@ public class ChatInputView: View, Notifable {
     private let sendActivityDisposable = MetaDisposable()
     private let channelBottomActionDisposable = MetaDisposable()
     private let composerBotCommandsDisposable = MetaDisposable()
+    private let composerAIToolsDisposable = MetaDisposable()
     private var channelBottomAction = ChannelBottomActionPreferences.shared.action
     private(set) var isChannelBottomActionRowHidden = false
     public let ready = Promise<Bool>()
@@ -928,6 +949,9 @@ public class ChatInputView: View, Notifable {
         }))
         composerBotCommandsDisposable.set((ComposerBotCommandsPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] hidesButton in
             self?.updateComposerBotCommandsVisibility(hidesButton)
+        }))
+        composerAIToolsDisposable.set((ComposerAIToolsButtonPreferences.shared.signal |> deliverOnMainQueue).start(next: { [weak self] _ in
+            self?.container.needsLayout = true
         }))
     }
 
@@ -2410,6 +2434,7 @@ public class ChatInputView: View, Notifable {
         self.incomingTypingDraftDisposable.dispose()
         self.channelBottomActionDisposable.dispose()
         self.composerBotCommandsDisposable.dispose()
+        self.composerAIToolsDisposable.dispose()
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Return)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Delete)
         self.chatInteraction.interactionContext.window.remove(object: self, for: .Z, modifierFlags: [.command], forceCheckFlags: true)

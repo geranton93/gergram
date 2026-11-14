@@ -316,7 +316,8 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
     
     public override func menuItems(in location: NSPoint) -> Signal<[ContextMenuItem], NoError> {
         var items: [ContextMenuItem] = []
-        if let preview = (self.view as? EmojiesSectionRowView)?.previewAction(at: location) {
+        let rowView = self.view as? EmojiesSectionRowView
+        if let preview = rowView?.previewAction(at: location) {
             items.append(ContextMenuItem(preview.name, handler: {
                 _ = preview.perform()
             }, itemImage: MenuAnimation.menu_show.value))
@@ -326,9 +327,14 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
         let context = self.context
         
         var copyItem: ContextMenuItem?
-        var copyIdItem: ContextMenuItem?
+        let copyIdItem: ContextMenuItem?
+        if mode == .preview || mode == .panel, let file = rowView?.item(at: location)?.file._parse() {
+            copyIdItem = StickerPackIdentifier(customEmoji: file)?.copyMenuItem(context: context)
+        } else {
+            copyIdItem = nil
+        }
         var setStatus: ContextMenuItem?
-        if let view = self.view as? EmojiesSectionRowView, let file = view.itemUnderMouse?.0.file {
+        if let file = rowView?.itemUnderMouse?.0.file {
             let input: ChatTextInputState
             if let bundle = file.stickerText {
                 input = .init(inputText: bundle, selectionRange: 0..<bundle.length, attributes: [])
@@ -339,9 +345,6 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
             copyItem = ContextMenuItem(strings().contextCopy, handler: {
                 copyToClipboard(input)
             }, itemImage: MenuAnimation.menu_copy.value)
-            if mode == .preview || mode == .panel {
-                copyIdItem = StickerPackIdentifier(customEmoji: file)?.copyMenuItem(context: context)
-            }
         }
         
         if context.isPremium {
@@ -468,6 +471,9 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
             }, itemMode: .destruct, itemImage: MenuAnimation.menu_delete.value))
         }
 
+        if let copyIdItem {
+            items.append(copyIdItem)
+        }
         if stableId == AnyHashable(0) || self.viewSet == nil {
             return .single(items)
         }
@@ -480,9 +486,6 @@ public final class EmojiesSectionRowItem : GeneralRowItem {
             
             if let copyItem = copyItem {
                 items.append(copyItem)
-            }
-            if let copyIdItem {
-                items.append(copyIdItem)
             }
         }
        

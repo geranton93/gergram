@@ -1,0 +1,4 @@
+module GergramWhisperRuntime {
+    header "WhisperRuntime.h"
+    export *
+}

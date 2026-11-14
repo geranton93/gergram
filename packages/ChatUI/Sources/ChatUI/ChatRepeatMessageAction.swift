@@ -16,15 +16,27 @@ import TelegramUtils
 import TGUIKit
 
 struct ChatRepeatMessagePayload: Equatable {
+    enum Attachment: Equatable {
+        case photo(MediaId)
+        case video(MediaResourceId, accessHash: Int64)
+
+        var requiredPermission: TelegramChatBannedRightsFlags {
+            switch self {
+            case .photo: return .banSendPhotos
+            case .video: return .banSendVideos
+            }
+        }
+    }
+
     let text: String
     let entities: [MessageTextEntity]
-    let photoId: MediaId?
+    let attachment: Attachment?
 
-    init?(text: String, entities: [MessageTextEntity], photoId: MediaId? = nil, captionLimit: Int = 4096) {
+    init?(text: String, entities: [MessageTextEntity], attachment: Attachment? = nil, captionLimit: Int = 4096) {
         let utf16 = text.utf16
         let length = utf16.count
         guard length <= 4096 else { return nil }
-        if photoId != nil {
+        if attachment != nil {
             guard length <= captionLimit else { return nil }
         } else if !text.unicodeScalars.contains(where: {
             !CharacterSet.whitespacesAndNewlines.contains($0)
@@ -45,11 +57,11 @@ struct ChatRepeatMessagePayload: Equatable {
         }
         self.text = text
         self.entities = entities
-        self.photoId = photoId
+        self.attachment = attachment
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.text.utf16.elementsEqual(rhs.text.utf16) && lhs.entities == rhs.entities && lhs.photoId == rhs.photoId
+        lhs.text.utf16.elementsEqual(rhs.text.utf16) && lhs.entities == rhs.entities && lhs.attachment == rhs.attachment
     }
 
     private static func isScalarBoundary(_ offset: Int, in text: String.UTF16View) -> Bool {
@@ -60,10 +72,15 @@ struct ChatRepeatMessagePayload: Equatable {
 
     func outgoing(source: Message, threadId: Int64?, threadRoot: MessageId?, silent: Bool) -> EnqueueMessage? {
         let mediaReference: AnyMediaReference?
-        if let photoId {
+        if let attachment {
             let reference = MessageReference(source)
-            guard let image = Self.photo(in: source), image.imageId == photoId, reference.id == source.id else { return nil }
-            mediaReference = .message(message: reference, media: image)
+            guard reference.id == source.id,
+                  let (identity, media) = Self.eligibleAttachment(in: source), identity == attachment else { return nil }
+            if let file = media as? TelegramMediaFile {
+                mediaReference = .message(message: reference, media: file.withUpdatedPartialReference(.message(message: reference)))
+            } else {
+                mediaReference = .message(message: reference, media: media)
+            }
         } else {
             guard source.media.isEmpty else { return nil }
             mediaReference = nil
@@ -80,7 +97,34 @@ struct ChatRepeatMessagePayload: Equatable {
                         replyToStoryId: nil, localGroupingKey: nil, correlationId: nil, bubbleUpEmojiOrStickersets: [])
     }
 
-    static func photo(in message: Message) -> TelegramMediaImage? {
+    static func eligibleAttachment(in message: Message) -> (Attachment, Media)? {
+        if let image = Self.photo(in: message) {
+            return (.photo(image.imageId), image)
+        }
+        guard message.media.count == 1, let file = message.media.first as? TelegramMediaFile,
+              file.mimeType == "video/mp4", file.videoCover == nil,
+              file.fileId.namespace == Namespaces.Media.CloudFile, file.fileId.id > 0,
+              let resource = file.resource as? CloudDocumentMediaResource,
+              resource.datacenterId > 0, resource.fileId == file.fileId.id, resource.fileReference?.isEmpty == false,
+              !message.attributes.contains(where: { $0 is ForwardVideoTimestampAttribute }) else { return nil }
+        var hasVideo = false
+        for attribute in file.attributes {
+            switch attribute {
+            case let .Video(duration, dimensions, flags, _, coverTime, _):
+                guard !hasVideo, duration.isFinite, duration > 0, dimensions.width > 0, dimensions.height > 0,
+                      !flags.contains(.instantRoundVideo), coverTime == nil else { return nil }
+                hasVideo = true
+            case .FileName, .ImageSize, .hintFileIsLarge, .hintIsValidated:
+                break
+            default:
+                return nil
+            }
+        }
+        guard hasVideo else { return nil }
+        return (.video(resource.id, accessHash: resource.accessHash), file)
+    }
+
+    private static func photo(in message: Message) -> TelegramMediaImage? {
         guard message.media.count == 1, let image = message.media.first as? TelegramMediaImage,
               image.imageId.namespace == Namespaces.Media.CloudImage, image.imageId.id > 0,
               let reference = image.reference,
@@ -209,19 +253,19 @@ final class ChatRepeatMessageAction {
         if message.media.isEmpty {
             return ChatRepeatMessagePayload(text: message.text, entities: entities)
         }
-        guard let photo = ChatRepeatMessagePayload.photo(in: message), MessageReference(message).id == id,
+        guard let (attachment, media) = ChatRepeatMessagePayload.eligibleAttachment(in: message), MessageReference(message).id == id,
               !message.isMediaSpoilered, !message.isSensitiveContent(platform: "ios", contentSettings: context.contentSettings),
               let currentPeer = interaction.peer,
-              Self.canSendPhoto(photo, to: peer, cachedData: cachedData, interaction: interaction),
-              Self.canSendPhoto(photo, to: currentPeer, cachedData: state.cachedData, interaction: interaction) else { return nil }
+              Self.canSendMedia(media, requiring: attachment.requiredPermission, to: peer, cachedData: cachedData, interaction: interaction),
+              Self.canSendMedia(media, requiring: attachment.requiredPermission, to: currentPeer, cachedData: state.cachedData, interaction: interaction) else { return nil }
         let limits = context.premiumLimits
         let captionLimit = Int(context.isPremium ? limits.caption_length_limit_premium : limits.caption_length_limit_default)
-        return ChatRepeatMessagePayload(text: message.text, entities: entities, photoId: photo.imageId, captionLimit: captionLimit)
+        return ChatRepeatMessagePayload(text: message.text, entities: entities, attachment: attachment, captionLimit: captionLimit)
     }
 
-    private static func canSendPhoto(_ photo: TelegramMediaImage, to peer: Peer, cachedData: CachedPeerData?, interaction: ChatInteraction) -> Bool {
-        permissionText(from: peer, for: .banSendPhotos, cachedData: cachedData) == nil
-            && peer.canSendMessage(interaction.mode.isThreadMode, media: photo, threadData: interaction.presentation.threadInfo, cachedData: cachedData)
+    private static func canSendMedia(_ media: Media, requiring permission: TelegramChatBannedRightsFlags, to peer: Peer, cachedData: CachedPeerData?, interaction: ChatInteraction) -> Bool {
+        permissionText(from: peer, for: permission, cachedData: cachedData) == nil
+            && peer.canSendMessage(interaction.mode.isThreadMode, media: media, threadData: interaction.presentation.threadInfo, cachedData: cachedData)
     }
 
     private func start(id: MessageId, original: ChatRepeatMessagePayload, scope: Scope, interaction: ChatInteraction) {

@@ -18,7 +18,7 @@ struct MessageId: Equatable, Hashable {
 enum Namespaces {
     enum Peer { static let CloudUser = 0; static let CloudGroup = 1; static let CloudChannel = 2 }
     enum Message { static let Cloud = 0 }
-    enum Media { static let CloudImage = 1 }
+    enum Media { static let CloudImage = 1; static let CloudFile = 2 }
 }
 struct Stars { let value: Int64 }
 protocol CachedPeerData {}
@@ -45,8 +45,10 @@ class Peer {
     func isCopyProtected(cachedData: CachedPeerData?) -> Bool { (cachedData as? CachedUserData)?.protected == true }
     var canSendPhoto = true
     var bannedPhoto = false
+    var canSendVideo = true
+    var bannedVideo = false
     func canSendMessage(_ inThread: Bool, media: Any? = nil, threadData: ThreadInfo?, cachedData: CachedPeerData?) -> Bool {
-        canSend && (!(media is TelegramMediaImage) || canSendPhoto)
+        canSend && (!(media is TelegramMediaImage) || canSendPhoto) && (!(media is TelegramMediaFile) || canSendVideo)
     }
 }
 final class TelegramUser: Peer {}
@@ -123,6 +125,7 @@ struct RestrictedContentMessageAttribute: MessageAttribute {}
 struct RichTextMessageAttribute: MessageAttribute {}
 struct PaidStarsMessageAttribute: MessageAttribute {}
 struct InlineBotMessageAttribute: MessageAttribute {}
+struct ForwardVideoTimestampAttribute: MessageAttribute {}
 struct MessageFlags: OptionSet {
     let rawValue: Int
     static let Sending = Self(rawValue: 1)
@@ -168,6 +171,12 @@ struct MessageReference {
     let id: MessageId?
     init(_ source: Message) { id = source.hasMessageReference ? source.id : nil }
 }
+enum PartialMediaReference {
+    case message(message: MessageReference)
+}
+struct MediaResourceId: Equatable {
+    let key: String
+}
 struct CloudPhotoSizeMediaResource {}
 struct TelegramMediaImageRepresentation {
     var resource: Any = CloudPhotoSizeMediaResource()
@@ -180,6 +189,49 @@ struct TelegramMediaImage {
     var video: Int?
     var videoRepresentations: [Int] = []
     var emojiMarkup: Int?
+}
+typealias Media = Any
+struct CloudDocumentMediaResource {
+    var datacenterId = 4
+    var fileId: Int64 = 20
+    var accessHash: Int64 = 42
+    var fileReference: Data? = Data([1])
+    var id: MediaResourceId { .init(key: "\(datacenterId)-\(fileId)") }
+}
+struct TelegramMediaVideoFlags: OptionSet {
+    let rawValue: Int32
+    static let instantRoundVideo = Self(rawValue: 1 << 0)
+    static let supportsStreaming = Self(rawValue: 1 << 1)
+    static let isSilent = Self(rawValue: 1 << 3)
+}
+struct VideoDimensions {
+    var width: Int32 = 640
+    var height: Int32 = 360
+}
+enum TelegramMediaFileAttribute {
+    case FileName(fileName: String)
+    case ImageSize
+    case hintFileIsLarge
+    case hintIsValidated
+    case Video(Double, VideoDimensions, TelegramMediaVideoFlags, Int32?, Double?, String?)
+    case Animated
+    case Audio
+    case Sticker
+    case CustomEmoji
+    case HasLinkedStickers
+}
+struct TelegramMediaFile {
+    var fileId = MediaId(namespace: Namespaces.Media.CloudFile, id: 20)
+    var mimeType = "video/mp4"
+    var resource: Any = CloudDocumentMediaResource()
+    var videoCover: TelegramMediaImage?
+    var attributes: [TelegramMediaFileAttribute] = [.Video(15, .init(), .supportsStreaming, nil, nil, nil)]
+    var partialReference: PartialMediaReference?
+    func withUpdatedPartialReference(_ partial: PartialMediaReference?) -> Self {
+        var copy = self
+        copy.partialReference = partial
+        return copy
+    }
 }
 enum AnyMediaReference {
     case message(message: MessageReference, media: Any)
@@ -221,9 +273,15 @@ struct Presentation {
     var cachedData: CachedPeerData?
     var threadInfo: ThreadInfo?
 }
-enum Right { case banSendText, banSendPhotos }
-func permissionText(from peer: Peer, for right: Right, cachedData: CachedPeerData?) -> String? {
-    (right == .banSendText ? peer.bannedText : peer.bannedPhoto) ? "Banned" : nil
+enum TelegramChatBannedRightsFlags { case banSendText, banSendPhotos, banSendVideos }
+func permissionText(from peer: Peer, for right: TelegramChatBannedRightsFlags, cachedData: CachedPeerData?) -> String? {
+    let banned: Bool
+    switch right {
+    case .banSendText: banned = peer.bannedText
+    case .banSendPhotos: banned = peer.bannedPhoto
+    case .banSendVideos: banned = peer.bannedVideo
+    }
+    return banned ? "Banned" : nil
 }
 func canForwardMessage(_ message: Message, chatInteraction: ChatInteraction) -> Bool { !message.protected }
 
@@ -661,5 +719,134 @@ final class RepeatMessageTests: XCTestCase {
         Fixture.prompts[1].accept()
         XCTAssertTrue(Fixture.sent.isEmpty)
         XCTAssertEqual(Fixture.alerts.count, 2)
+    }
+
+    func testCloudVideoKeepsCaptionAndTopicAndUsesTheCurrentOriginalReference() throws {
+        let owner = ChatInteraction(peer: TelegramChannel(.forum), topic: true)
+        let postbox = owner.interactionContext.account.postbox
+        postbox.source?.media = [TelegramMediaFile()]
+        try XCTUnwrap(owner.menu()).handler()
+        let unrelatedReference = MessageReference(Message(id: .init(peerId: .user)))
+        postbox.source?.media = [TelegramMediaFile(
+            resource: CloudDocumentMediaResource(fileReference: Data([9])),
+            partialReference: .message(message: unrelatedReference)
+        )]
+        Fixture.prompts[0].accept()
+        Fixture.prompts[0].accept()
+        XCTAssertEqual(Fixture.sent.count, 1)
+        let sent = try XCTUnwrap(Fixture.sent.first)
+        XCTAssertEqual(sent.0, .forum)
+        guard case let .message(text, attributes, _, media, thread, reply, _, grouping, _, _) = sent.1,
+              case let .message(reference, attachment) = media,
+              let file = attachment as? TelegramMediaFile,
+              let cloud = file.resource as? CloudDocumentMediaResource else {
+            return XCTFail("Expected a message-backed cloud video")
+        }
+        XCTAssertEqual(reference.id, postbox.source?.id)
+        guard case let .message(retainedReference) = file.partialReference else {
+            return XCTFail("Expected the original message as the retry source")
+        }
+        XCTAssertEqual(retainedReference.id, postbox.source?.id)
+        XCTAssertEqual(cloud.fileReference, Data([9]))
+        XCTAssertEqual(cloud.fileId, 20)
+        XCTAssertEqual(text, "👋  formatted  ")
+        XCTAssertEqual((attributes.first as? TextEntitiesMessageAttribute)?.entities, [.init(range: 4..<13, type: .Bold)])
+        XCTAssertTrue(attributes.contains { ($0 as? NotificationInfoMessageAttribute)?.flags.contains(.muted) == true })
+        XCTAssertEqual(thread, 21)
+        XCTAssertEqual(reply, .init(messageId: .init(peerId: .forum, id: 21), quote: nil, innerSubject: nil))
+        XCTAssertNil(grouping)
+        XCTAssertEqual(owner.draft, "Existing draft")
+    }
+
+    func testCloudVideoRequiresAnExactRegularCloudDocumentAndVideoPermission() {
+        let owner = ChatInteraction()
+        let postbox = owner.interactionContext.account.postbox
+        let regularVideo = TelegramMediaFile()
+        let video = regularVideo.attributes
+        let unsupported: [[Any]] = [
+            [regularVideo, regularVideo],
+            [TelegramMediaFile(fileId: .init(namespace: 0, id: 20))],
+            [TelegramMediaFile(resource: "Local media")],
+            [TelegramMediaFile(resource: CloudDocumentMediaResource(fileId: 200))],
+            [TelegramMediaFile(resource: CloudDocumentMediaResource(fileReference: nil))],
+            [TelegramMediaFile(resource: CloudDocumentMediaResource(fileReference: Data()))],
+            [TelegramMediaFile(mimeType: "image/gif")],
+            [TelegramMediaFile(videoCover: TelegramMediaImage())],
+            [TelegramMediaFile(attributes: [])],
+            [TelegramMediaFile(attributes: [.Video(15, .init(), .instantRoundVideo, nil, nil, nil)])],
+            [TelegramMediaFile(attributes: [.Video(15, .init(), .supportsStreaming, nil, 3, nil)])],
+            [TelegramMediaFile(attributes: [.Video(.infinity, .init(), .supportsStreaming, nil, nil, nil)])],
+            [TelegramMediaFile(attributes: video + video)],
+            [TelegramMediaFile(attributes: video + [.Animated])],
+            [TelegramMediaFile(attributes: video + [.Audio])],
+            [TelegramMediaFile(attributes: video + [.Sticker])],
+            [TelegramMediaFile(attributes: video + [.CustomEmoji])],
+            [TelegramMediaFile(attributes: video + [.HasLinkedStickers])]
+        ]
+        for attachments in unsupported {
+            postbox.source?.media = attachments
+            XCTAssertNil(owner.menu())
+        }
+        postbox.source?.media = [regularVideo]
+        postbox.source?.attributes = [ForwardVideoTimestampAttribute()]
+        XCTAssertNil(owner.menu())
+        postbox.source?.attributes = []
+        owner.peer?.bannedVideo = true
+        XCTAssertNil(owner.menu())
+        owner.peer?.bannedVideo = false
+        owner.peer?.canSendVideo = false
+        XCTAssertNil(owner.menu())
+        owner.peer?.canSendVideo = true
+        owner.peer?.bannedPhoto = true
+        XCTAssertNotNil(owner.menu())
+    }
+
+    func testCloudVideoRevalidatesAccessHashDestinationPermissionsAndCaptionLength() throws {
+        let owner = ChatInteraction()
+        let postbox = owner.interactionContext.account.postbox
+        postbox.source?.media = [TelegramMediaFile()]
+        postbox.source?.textEntities = nil
+        postbox.source?.text = String(repeating: "a", count: 1025)
+        XCTAssertNil(owner.menu())
+        owner.interactionContext.isPremium = true
+        XCTAssertNotNil(owner.menu())
+        postbox.source?.text = ""
+        try XCTUnwrap(owner.menu()).handler()
+        postbox.source?.media = [TelegramMediaFile(resource: CloudDocumentMediaResource(accessHash: 200))]
+        Fixture.prompts[0].accept()
+        XCTAssertEqual(Fixture.alerts, ["Gergram.Chat.RepeatMessageUnavailable"])
+        XCTAssertTrue(Fixture.sent.isEmpty)
+
+        postbox.source?.media = [TelegramMediaFile()]
+        try XCTUnwrap(owner.menu()).handler()
+        let freshPeer = TelegramGroup(.group)
+        freshPeer.bannedVideo = true
+        postbox.peer = freshPeer
+        Fixture.prompts[1].accept()
+        XCTAssertTrue(Fixture.sent.isEmpty)
+        XCTAssertEqual(Fixture.alerts.count, 2)
+
+        freshPeer.bannedVideo = false
+        try XCTUnwrap(owner.menu()).handler()
+        owner.peer?.canSendVideo = false
+        Fixture.prompts[2].accept()
+        XCTAssertTrue(Fixture.sent.isEmpty)
+        XCTAssertEqual(Fixture.alerts.count, 3)
+
+        owner.peer?.canSendVideo = true
+        try XCTUnwrap(owner.menu()).handler()
+        postbox.source?.media = [TelegramMediaFile(resource: CloudDocumentMediaResource(datacenterId: 5))]
+        Fixture.prompts[3].accept()
+        XCTAssertTrue(Fixture.sent.isEmpty)
+        XCTAssertEqual(Fixture.alerts.count, 4)
+
+        postbox.source?.media = [TelegramMediaFile()]
+        try XCTUnwrap(owner.menu()).handler()
+        Fixture.prompts[4].accept()
+        guard case let .message(text, _, _, media, _, _, _, _, _, _) = try XCTUnwrap(Fixture.sent.first).1 else {
+            return XCTFail("Expected a cloud video")
+        }
+        XCTAssertEqual(text, "")
+        XCTAssertNotNil(media)
     }
 }

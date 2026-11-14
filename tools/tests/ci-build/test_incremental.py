@@ -156,6 +156,7 @@ class FrameworkTests(TemporaryTest):
             shutil.copy2(ROOT / "scripts" / name, destination)
         for name in ["prepare-telegram-api.py", "prepare-flat-serialization.py"]:
             write(self.root / "scripts" / name, "")
+        write(self.root / "scripts/prepare-telegram-ios.sh", "#!/bin/sh\nexit 0\n")
         write(self.root / "scripts/rebuild", "no")
         write(self.root / "core-xprojects/tlottie/build.sh", "exit 0\n")
         for lib, project in zip(self.libraries, self.projects):

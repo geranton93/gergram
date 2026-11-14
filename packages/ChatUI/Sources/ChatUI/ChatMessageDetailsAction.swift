@@ -6,6 +6,7 @@ import MessageUtils
 import Postbox
 import SwiftSignalKit
 import TelegramCore
+import TelegramTheme
 import TelegramUtils
 import TGUIKit
 

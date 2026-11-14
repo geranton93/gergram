@@ -74,8 +74,8 @@ public final class ChatEditedIndicatorPreferences {
     }
 
     private static func validCustomText(_ value: String) -> String? {
-        guard value.utf16.prefix(maximumCustomTextUTF16Length + 1).count <= maximumCustomTextUTF16Length,
-              !value.unicodeScalars.contains(where: { scalar in
+        guard value.utf16.prefix(maximumCustomTextUTF16Length + 1).count <= maximumCustomTextUTF16Length else { return nil }
+        let containsForbiddenScalar = value.unicodeScalars.contains { scalar in
             switch scalar.properties.generalCategory {
             case .control, .lineSeparator, .paragraphSeparator:
                 return true
@@ -85,8 +85,11 @@ public final class ChatEditedIndicatorPreferences {
             default:
                 return false
             }
-        }) else { return nil }
+        }
+        guard !containsForbiddenScalar else { return nil }
         let text = value.trimmingCharacters(in: .whitespaces)
-        return text.count <= maximumCustomTextLength ? text : nil
+        guard text.count <= maximumCustomTextLength,
+              text.isEmpty || text.unicodeScalars.contains(where: { !$0.properties.isDefaultIgnorableCodePoint }) else { return nil }
+        return text
     }
 }

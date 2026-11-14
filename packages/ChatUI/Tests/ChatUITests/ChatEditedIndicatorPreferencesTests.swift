@@ -92,7 +92,8 @@ final class ChatEditedIndicatorPreferencesTests: XCTestCase {
         try withDefaults { defaults in
             let preferences = ChatEditedIndicatorPreferences(defaults: defaults)
             XCTAssertTrue(preferences.setCustomText("👩🏽‍💻 revised"))
-            for value in ["line\nbreak", "left\u{202e}right", String(repeating: "x", count: 17),
+            for value in ["line\nbreak", "left\u{202e}right", "\u{200d}\u{200c}", "\u{fe0f}",
+                          String(repeating: "x", count: 17),
                           String(repeating: "👩🏽‍💻", count: 7)] {
                 XCTAssertFalse(preferences.setCustomText(value))
                 XCTAssertEqual(preferences.appearance.customText, "👩🏽‍💻 revised")

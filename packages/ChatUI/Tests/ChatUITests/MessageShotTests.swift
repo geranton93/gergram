@@ -147,6 +147,34 @@ final class MessageShotTests: XCTestCase {
         XCTAssertNil(label(nil, nil, nil))
     }
 
+    func testAuthorRankUsesCachedChannelTitleBeforeTopicOrMessageTitle() {
+        func rank(_ cached: MessageShotOptions.CachedAuthorRank?, topic: Int? = 7, embedded: String? = "Message rank") -> String? {
+            MessageShotOptions.authorRankLabel(directAuthor: 7, displayedAuthor: 7, cached: cached, topicAuthor: topic,
+                                               messageRank: embedded, ownerLabel: "Owner", adminLabel: "Admin", topicLabel: "Topic author")
+        }
+        XCTAssertEqual(rank(.owner("  Team\n lead ")), "Team lead")
+        XCTAssertEqual(rank(.owner(nil)), "Owner")
+        XCTAssertEqual(rank(.admin(nil)), "Admin")
+        XCTAssertEqual(rank(.admin(String(repeating: "x", count: 65))), "Admin")
+        XCTAssertEqual(rank(.member("Moderator")), "Moderator")
+        XCTAssertEqual(rank(.member(nil)), "Message rank")
+        XCTAssertEqual(rank(nil), "Topic author")
+        XCTAssertEqual(rank(nil, topic: 8), "Message rank")
+        XCTAssertNil(rank(nil, topic: nil, embedded: " \n "))
+    }
+
+    func testAuthorRankDoesNotIdentifyAnAuthorDifferentFromTheHeader() {
+        XCTAssertNil(MessageShotOptions.authorRankLabel(directAuthor: 7, displayedAuthor: 8, cached: .owner("Owner name"), topicAuthor: 7,
+                                                        messageRank: "Message rank", ownerLabel: "Owner", adminLabel: "Admin", topicLabel: "Topic author"))
+    }
+
+    func testForumAuthorBadgeRequiresAnExactTopicAndExcludesItsRoot() {
+        XCTAssertEqual(MessageShotOptions.forumTopicAuthor(author: 7, topicId: 12, messageThreadId: 12, isRoot: false), 7)
+        XCTAssertNil(MessageShotOptions.forumTopicAuthor(author: 7, topicId: 12, messageThreadId: 12, isRoot: true))
+        XCTAssertNil(MessageShotOptions.forumTopicAuthor(author: 7, topicId: 12, messageThreadId: 13, isRoot: false))
+        XCTAssertNil(MessageShotOptions.forumTopicAuthor(author: 7, topicId: 12, messageThreadId: nil, isRoot: false))
+    }
+
     func testHiddenHeaderDecorationMatchesUndecoratedExport() throws {
         let suiteName = "MessageShotTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

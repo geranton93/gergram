@@ -62,6 +62,37 @@ struct MessageShotOptions {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    enum CachedAuthorRank {
+        case owner(String?)
+        case admin(String?)
+        case member(String?)
+    }
+
+    static func authorRankLabel<AuthorID: Equatable>(
+        directAuthor: AuthorID,
+        displayedAuthor: AuthorID,
+        cached: CachedAuthorRank?,
+        topicAuthor: AuthorID?,
+        messageRank: String?,
+        ownerLabel: String,
+        adminLabel: String,
+        topicLabel: String
+    ) -> String? {
+        guard directAuthor == displayedAuthor else { return nil }
+        let label: String?
+        switch cached {
+        case let .owner(title): label = normalizedDecoration(title, limit: 64) ?? ownerLabel
+        case let .admin(title): label = normalizedDecoration(title, limit: 64) ?? adminLabel
+        case let .member(title): label = normalizedDecoration(title, limit: 64)
+        case nil: label = topicAuthor == directAuthor ? topicLabel : nil
+        }
+        return label ?? normalizedDecoration(messageRank, limit: 64)
+    }
+
+    static func forumTopicAuthor<AuthorID>(author: AuthorID, topicId: Int64, messageThreadId: Int64?, isRoot: Bool) -> AuthorID? {
+        messageThreadId == topicId && !isRoot ? author : nil
+    }
+
     private static func normalizedDecoration(_ label: String?, limit: Int) -> String? {
         guard let label, label.utf16.prefix(limit + 1).count <= limit else { return nil }
         let plain = label.split(whereSeparator: \.isWhitespace).joined(separator: " ")

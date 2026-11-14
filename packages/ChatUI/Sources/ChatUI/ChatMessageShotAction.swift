@@ -9,6 +9,7 @@ import MessageUtils
 import Postbox
 import Strings
 import SwiftSignalKit
+import TelegramContext
 import TelegramCore
 import TelegramMediaUtils
 import TelegramTheme
@@ -17,10 +18,19 @@ import TGUIKit
 import UniformTypeIdentifiers
 
 enum ChatMessageShotAction {
+    private struct ForumTopic {
+        let id: Int64
+        let root: MessageId
+        let author: PeerId
+    }
+
     private struct Snapshot {
         let messages: [Message]
         let replyTargets: [MessageId: Message]
         let cachedData: CachedPeerData?
+        let peer: Peer
+        let authorRanks: CachedChannelAdminRanks?
+        let forumTopic: ForumTopic?
     }
 
     private struct ReplyExcerpt: Equatable {
@@ -85,7 +95,11 @@ enum ChatMessageShotAction {
             options.showsBackground.toggle()
             options.save()
         }, state: options.showsBackground ? .on : .off))
-        if messages.contains(where: { headerDecorationLabel(for: $0, interaction: interaction) != nil }) {
+        if messages.contains(where: { message in
+            let peer = message.peers[message.id.peerId]
+            return headerDecorationLabel(for: message, peer: peer, interaction: interaction) != nil
+                || (peer?.isSupergroup == true && self.directAuthorCanHaveRank(message))
+        }) {
             menu.addItem(ContextMenuItem(localizedString("Gergram.Chat.MessageShotShowHeaderDecorations"), handler: {
                 var options = MessageShotOptions()
                 options.showsHeaderDecorations.toggle()
@@ -125,18 +139,48 @@ enum ChatMessageShotAction {
         }
     }
 
-    private static func headerDecorationLabel(for message: Message, interaction: ChatInteraction) -> String? {
+    private static func directAuthorCanHaveRank(_ message: Message) -> Bool {
+        guard let author = message.author, author is TelegramUser,
+              let displayed = message.effectiveAuthor, displayed.id == author.id else { return false }
+        return !displayed.displayTitle.isEmpty && message.forwardInfo == nil
+            && !message.attributes.contains(where: { $0 is SourceReferenceMessageAttribute || $0 is SourceAuthorInfoMessageAttribute })
+            && message.guestChatAttribute == nil
+    }
+
+    private static func headerDecorationLabel(for message: Message, peer: Peer?, ranks: CachedChannelAdminRanks? = nil, forumTopic: ForumTopic? = nil, interaction: ChatInteraction) -> String? {
         guard let author = message.author, let displayed = message.effectiveAuthor,
               author.id == displayed.id, !displayed.displayTitle.isEmpty else { return nil }
-        let peer = message.peers[message.id.peerId]
         let showsChannel = ChatChannelAuthorBadge.showsDirectAuthor(
             in: (peer as? TelegramChannel)?.info,
             author: (author as? TelegramChannel)?.info,
             displaysAuthor: true,
             isIncoming: message.isIncoming(interaction.interactionContext.account, true)
         )
-        let rank = (peer is TelegramGroup || peer?.isSupergroup == true)
-            ? message.attributes.lazy.compactMap { ($0 as? ParticipantRankMessageAttribute)?.rank }.first : nil
+        let rank: String?
+        if (peer is TelegramGroup || peer?.isSupergroup == true), directAuthorCanHaveRank(message) {
+            let cached: MessageShotOptions.CachedAuthorRank?
+            switch ranks?.ranks[author.id] {
+            case let .owner(title): cached = .owner(title)
+            case let .admin(title): cached = .admin(title)
+            case let .member(title): cached = .member(title)
+            case nil: cached = nil
+            }
+            let topicAuthor = forumTopic.flatMap { topic in
+                MessageShotOptions.forumTopicAuthor(author: topic.author, topicId: topic.id, messageThreadId: message.threadId, isRoot: message.id == topic.root)
+            }
+            rank = MessageShotOptions.authorRankLabel(
+                directAuthor: author.id,
+                displayedAuthor: displayed.id,
+                cached: cached,
+                topicAuthor: topicAuthor,
+                messageRank: message.attributes.lazy.compactMap { ($0 as? ParticipantRankMessageAttribute)?.rank }.first,
+                ownerLabel: strings().chatOwnerBadge,
+                adminLabel: strings().chatAdminBadge,
+                topicLabel: strings().chatTopicBadge
+            )
+        } else {
+            rank = nil
+        }
         let boost = message.boostAttribute?.count
         let boostLabel = boost.flatMap { count in
             count > 0 ? translate(key: "Gergram.Chat.MessageShotBoostCount", [count]) : nil
@@ -144,10 +188,10 @@ enum ChatMessageShotAction {
         return MessageShotOptions.headerDecorationLabel(rank: rank, channel: showsChannel ? strings().chatChannelBadge : nil, boost: boostLabel)
     }
 
-    private static func headerDecorations(for messages: [Message], interaction: ChatInteraction, options: MessageShotOptions) -> [MessageId: String] {
+    private static func headerDecorations(in snapshot: Snapshot, interaction: ChatInteraction, options: MessageShotOptions) -> [MessageId: String] {
         guard options.showsHeaderDecorations else { return [:] }
-        return Dictionary(uniqueKeysWithValues: messages.compactMap { message in
-            headerDecorationLabel(for: message, interaction: interaction).map { (message.id, $0) }
+        return Dictionary(uniqueKeysWithValues: snapshot.messages.compactMap { message in
+            headerDecorationLabel(for: message, peer: snapshot.peer, ranks: snapshot.authorRanks, forumTopic: snapshot.forumTopic, interaction: interaction).map { (message.id, $0) }
         })
     }
 
@@ -346,7 +390,24 @@ enum ChatMessageShotAction {
                         }
                     }
                 }
-                return Snapshot(messages: messages, replyTargets: replyTargets, cachedData: cachedData)
+                let ranks: CachedChannelAdminRanks?
+                let topic: ForumTopic?
+                if options.showsHeaderDecorations, peer.isSupergroup, messages.contains(where: Self.directAuthorCanHaveRank) {
+                    ranks = transaction.retrieveItemCacheEntry(id: cachedChannelAdminRanksEntryId(peerId: peerId))?.get(CachedChannelAdminRanks.self)
+                    if (peer as? TelegramChannel)?.flags.contains(.isForum) == true,
+                       mode.isTopicMode, let thread = location.threadMessage, thread.isForumPost,
+                       let root = location.threadMsgId,
+                       root.peerId == peerId, root.namespace == Namespaces.Message.Cloud,
+                       let data = transaction.getMessageHistoryThreadInfo(peerId: peerId, threadId: thread.threadId)?.data.get(MessageHistoryThreadData.self) {
+                        topic = ForumTopic(id: thread.threadId, root: root, author: data.author)
+                    } else {
+                        topic = nil
+                    }
+                } else {
+                    ranks = nil
+                    topic = nil
+                }
+                return Snapshot(messages: messages, replyTargets: replyTargets, cachedData: cachedData, peer: peer, authorRanks: ranks, forumTopic: topic)
             }
         }
 
@@ -392,7 +453,7 @@ enum ChatMessageShotAction {
                 return
             }
             let replies = replyExcerpts(in: snapshot, interaction: interaction)
-            let decorations = headerDecorations(for: snapshot.messages, interaction: interaction, options: options)
+            let decorations = headerDecorations(in: snapshot, interaction: interaction, options: options)
             let canvasBackground = options.showsBackground ? palette.background : nil
             guard snapshot.messages.reduce(0, { $0 + $1.text.utf16.count }) <= 16_000,
                   let png = MessageShotRenderer.png(rows: rows(for: snapshot.messages, replies: replies, previews: previews, decorations: decorations, interaction: interaction, options: options, palette: palette, fontSize: presentationTheme.fontSize), background: canvasBackground) else {
@@ -409,7 +470,7 @@ enum ChatMessageShotAction {
                     guard let interaction, isCurrent(interaction) else { return nil }
                     guard let current, unchanged(current, since: renderedVersions),
                           supportsSnapshot(current, ids: ids, interaction: interaction),
-                          headerDecorations(for: current.messages, interaction: interaction, options: options) == decorations else { return false }
+                          headerDecorations(in: current, interaction: interaction, options: options) == decorations else { return false }
                     if !replies.isEmpty {
                         let currentReplies = replyExcerpts(in: current, interaction: interaction)
                         guard replies.allSatisfy({ currentReplies[$0.key] == $0.value }) else { return false }

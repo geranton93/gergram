@@ -30,3 +30,15 @@ Use a separate build directory and `-DGERGRAM_WHISPER_ASAN=ON` to run with Addre
 Feed the decoder's 48 kHz signed-16 mono or interleaved stereo CoreMedia buffers to one `WhisperPCMBuffer` per job. Finish the stream to drain the resampler and get at most 960,000 mono Float32 samples at 16 kHz. Use the same cancellation check for decoding, conversion and inference.
 
 Compile `NativeRuntime/WhisperNativeTranscription.swift` with the optional C module from an application target that links the runtime. Its synchronous `recognize` call borrows the verified model descriptor from `WhisperModelCache` and copies the UTF-8 transcript inside the native callback. Run one inference job at a time on a background queue. Cancellation is checked during model reads and inference. [Runtime source and MIT license](https://github.com/ggml-org/whisper.cpp/blob/d1be6fde11ac6e0407606b4e42fe72d34add8037/LICENSE)
+
+### Export the optional universal library
+
+Build the pinned runtime in separate `arm64` and `x86_64` CMake directories using the same macOS SDK and deployment target of 11.0 or later. The Intel slice can be cross-compiled on Apple Silicon. The export contains one static archive, its C header and module map, and the pinned upstream license.
+
+```sh
+runtime=packages/SpeechModelSupport/NativeRuntime
+bash "$runtime/export-universal-archive.sh" /tmp/gergram-whisper-arm64 /tmp/gergram-whisper-x86_64 /tmp/gergram-whisper-universal
+bash "$runtime/verify-swift-bridge.sh" /tmp/gergram-whisper-arm64 --archive /tmp/gergram-whisper-universal
+```
+
+For sanitizer verification, use two Address Sanitizer builds and pass `--asan` to the export command. To link the exported library, make its `include` directory visible to Swift and link `libGergramWhisperRuntime.a` with `libc++`. Use a deployment target at least as high as the one selected for the archive. Intel execution requires an Intel Mac or Rosetta.

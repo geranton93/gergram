@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-if [[ $# -lt 1 || $# -gt 2 || ( $# -eq 2 && "$2" != "--asan" ) ]]; then
-    printf 'Usage: %s CMAKE_BUILD_DIRECTORY [--asan]\n' "$0" >&2
+if [[ $# -lt 1 || $# -gt 3 || ( $# -eq 2 && "$2" != "--asan" ) || ( $# -eq 3 && "$2" != "--archive" ) ]]; then
+    printf 'Usage: %s CMAKE_BUILD_DIRECTORY [--asan | --archive EXPORT_DIRECTORY]\n' "$0" >&2
     exit 2
 fi
 
@@ -53,6 +53,12 @@ archives=(
     "$build/whisper/ggml/src/libggml-cpu.a"
     "$build/whisper/ggml/src/libggml-base.a"
 )
+headers="$runtime"
+if [[ "${2:-}" == "--archive" ]]; then
+    exportDirectory=$(cd "$3" && pwd)
+    archives=("$exportDirectory/libGergramWhisperRuntime.a")
+    headers="$exportDirectory/include"
+fi
 for archive in "${archives[@]}"; do
     if ! xcrun lipo -verify_arch "$architecture" "$archive" > /dev/null 2>&1; then
         printf 'Missing native archive or %s slice: %s\n' "$architecture" "$archive" >&2
@@ -69,7 +75,7 @@ xcrun swiftc -emit-library -emit-module -enable-testing -module-name SpeechModel
     "${flags[@]}" "$runtime/../Sources/SpeechModelSupport/"*.swift
 mkdir executable
 cp "$runtime/SwiftCacheFixture.swift" executable/main.swift
-xcrun swiftc -I . -I "$runtime" -L . -lSpeechModelSupport -lc++ \
+xcrun swiftc -I . -I "$headers" -L . -lSpeechModelSupport -lc++ \
     "${flags[@]}" executable/main.swift "$runtime/WhisperNativeTranscription.swift" "${archives[@]}" \
     -Xlinker -rpath -Xlinker "$swiftFixture" -o verify-swift
 /usr/bin/arch "-$architecture" ./verify-swift "$build/verified-whisper-source/models/for-tests-ggml-tiny.bin"

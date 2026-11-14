@@ -20,6 +20,7 @@ READ_THROUGH_PATCH = ROOT / "scripts/telegram-ios-read-through.patch"
 READ_FORUM_THROUGH_PATCH = ROOT / "scripts/telegram-ios-read-forum-through.patch"
 REPEAT_PHOTO_REFERENCE_PATCH = ROOT / "scripts/telegram-ios-repeat-photo-reference.patch"
 SPEED_NOTICE_DOWNLOAD_PATCH = ROOT / "scripts/telegram-ios-speed-notice-download.patch"
+SWIFTPM_PATHS_PATCH = ROOT / "scripts/telegram-ios-swiftpm-paths.patch"
 PINNED = {
     POSTBOX / "Postbox.swift": "72585b34e1b31c181fd178f32a6d62fcb4ecb26e",
     POSTBOX / "ValueBoxKey.swift": "021adfaa69b980a4e83a2da644dcb86ba01f54ff",
@@ -106,6 +107,7 @@ def run_preparation_fixture(directory):
         CORE / "State/AccountStateManager.swift", POSTBOX / "MessageHistoryReadStateTable.swift",
         POSTBOX / "MessageHistoryTable.swift", CORE / "PendingMessages/PendingMessageUploadedContent.swift",
         CORE / "Network/FetchV2.swift", CORE / "Network/Network.swift",
+        Path("submodules/ManagedFile/Package.swift"),
     )
     for path in paths:
         target = ios / path
@@ -132,6 +134,7 @@ def run_preparation_fixture(directory):
     (scripts / READ_FORUM_THROUGH_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[6])]))
     (scripts / REPEAT_PHOTO_REFERENCE_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[7])]))
     (scripts / SPEED_NOTICE_DOWNLOAD_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[8]), str(paths[9])]))
+    (scripts / SWIFTPM_PATHS_PATCH.name).write_bytes(subprocess.check_output([*diff, "--", str(paths[10])]))
     prepare = ["sh", str(scripts / "prepare-telegram-ios.sh")]
     for _ in range(2):
         subprocess.run([*prepare, "--reverse"], check=True)

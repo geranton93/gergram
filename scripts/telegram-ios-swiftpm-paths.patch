@@ -1,0 +1,18 @@
+diff --git a/submodules/ManagedFile/Package.swift b/submodules/ManagedFile/Package.swift
+index 48bde4e5b6f091bf53bb7fa8a08b4874bdecbfd9..3d5a7461d3cec9268469f6794f4e3e03cd5e9404 100644
+--- a/submodules/ManagedFile/Package.swift
++++ b/submodules/ManagedFile/Package.swift
+@@ -17,3 +17,3 @@ let package = Package(
+         // .package(url: /* package url */, from: "1.0.0"),
+-        .package(name: "SSignalKit", path: "../../submodules/telegram-ios/submodules/SSignalKit"),
++        .package(name: "SSignalKit", path: "../SSignalKit"),
+     ],
+diff --git a/submodules/MediaPlayer/Package.swift b/submodules/MediaPlayer/Package.swift
+index 8fb647e978d694851c2eba7f5bbbb7faa9bb5a56..a3f42bb6c525ab0fb37ef2c3c534d7d64673182a 100644
+--- a/submodules/MediaPlayer/Package.swift
++++ b/submodules/MediaPlayer/Package.swift
+@@ -19,3 +19,3 @@ let package = Package(
+         .package(name: "YuvConversion", path: "../YuvConversion"),
+-        .package(name: "RingBuffer", path: "../RingBuffer"),
++        .package(name: "RingBuffer", path: "../../../../packages/RingBuffer"),
+         .package(name: "TGUIKit", path: "../../../../packages/TGUIKit"),

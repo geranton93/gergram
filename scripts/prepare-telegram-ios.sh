@@ -11,6 +11,7 @@ read_through_patch="$scripts_dir/telegram-ios-read-through.patch"
 read_forum_through_patch="$scripts_dir/telegram-ios-read-forum-through.patch"
 repeat_photo_reference_patch="$scripts_dir/telegram-ios-repeat-photo-reference.patch"
 speed_notice_download_patch="$scripts_dir/telegram-ios-speed-notice-download.patch"
+swiftpm_paths_patch="$scripts_dir/telegram-ios-swiftpm-paths.patch"
 
 if [ ! -f "$ios/submodules/TelegramVoip/Package.swift" ]; then
     printf 'Initialize the telegram-ios submodule before preparing the macOS build.\n' >&2
@@ -46,11 +47,12 @@ apply_group() {
         read_forum_through) git -C "$ios" apply "$@" "$read_forum_through_patch" ;;
         repeat_photo_reference) git -C "$ios" apply "$@" "$repeat_photo_reference_patch" ;;
         speed_notice_download) git -C "$ios" apply "$@" "$speed_notice_download_patch" ;;
+        swiftpm_paths) git -C "$ios" apply "$@" "$swiftpm_paths_patch" ;;
     esac
 }
 
 groups_to_apply=""
-for patch_group in base archive capture maintenance notification read_through read_forum_through repeat_photo_reference speed_notice_download; do
+for patch_group in base archive capture maintenance notification read_through read_forum_through repeat_photo_reference speed_notice_download swiftpm_paths; do
     if ! apply_group "$patch_group" "$current_direction" --check 2>/dev/null; then
         apply_group "$patch_group" "$target_direction" --check
         groups_to_apply="$groups_to_apply $patch_group"
